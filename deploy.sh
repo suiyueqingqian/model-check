@@ -332,9 +332,9 @@ init_database() {
     info "等待应用容器就绪..."
     sleep 5
 
-    # 执行数据库迁移（直接调用本地安装的 prisma，避免版本不兼容问题）
+    # 执行数据库迁移
     info "执行 Prisma 迁移..."
-    if $compose_cmd exec -T app node node_modules/prisma/build/index.js db push; then
+    if $compose_cmd exec -T app npx prisma db push; then
         success "数据库初始化完成"
     else
         error "数据库初始化失败，请检查日志: docker logs newapi-model-check"
