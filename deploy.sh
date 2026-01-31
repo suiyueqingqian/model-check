@@ -326,18 +326,17 @@ init_database() {
         if [ $attempt -eq $max_attempts ]; then
             warn "等待数据库超时，尝试继续..."
         fi
-    fi
 
-    # 等待 app 容器就绪
-    info "等待应用容器就绪..."
-    sleep 5
-
-    # 执行数据库迁移
-    info "执行 Prisma 迁移..."
-    if $compose_cmd exec -T app npx prisma db push; then
-        success "数据库初始化完成"
+        # 使用项目自带的 SQL 脚本初始化数据库（避免 Prisma CLI 版本兼容问题）
+        info "创建数据库表..."
+        if cat prisma/init.postgresql.sql | $compose_cmd exec -T postgres psql -U newapi -d newapi_monitor; then
+            success "数据库初始化完成"
+        else
+            error "数据库初始化失败"
+        fi
     else
-        error "数据库初始化失败，请检查日志: docker logs newapi-model-check"
+        # 云数据库模式，跳过自动初始化
+        warn "未检测到本地 PostgreSQL 容器，请手动执行 prisma/init.postgresql.sql"
     fi
 }
 
