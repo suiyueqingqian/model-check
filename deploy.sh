@@ -308,14 +308,37 @@ init_database() {
         compose_cmd="docker-compose"
     fi
 
-    # 等待数据库就绪
-    sleep 3
+    # 检查是否有本地 PostgreSQL 容器
+    if docker ps --format '{{.Names}}' | grep -q "newapi-postgres"; then
+        info "等待数据库就绪..."
+        local max_attempts=30
+        local attempt=0
+        while [ $attempt -lt $max_attempts ]; do
+            if $compose_cmd exec -T postgres pg_isready -U newapi -d newapi_monitor &>/dev/null; then
+                break
+            fi
+            attempt=$((attempt + 1))
+            echo -n "."
+            sleep 2
+        done
+        echo ""
+
+        if [ $attempt -eq $max_attempts ]; then
+            warn "等待数据库超时，尝试继续..."
+        fi
+    fi
+
+    # 等待 app 容器就绪
+    info "等待应用容器就绪..."
+    sleep 5
 
     # 执行数据库迁移
-    $compose_cmd exec -T app npx prisma db push --skip-generate 2>/dev/null || \
-    $compose_cmd exec app npx prisma db push --skip-generate
-
-    success "数据库初始化完成"
+    info "执行 Prisma 迁移..."
+    if $compose_cmd exec -T app npx prisma db push --skip-generate; then
+        success "数据库初始化完成"
+    else
+        error "数据库初始化失败，请检查日志: docker logs newapi-model-check"
+    fi
 }
 
 # 显示部署结果

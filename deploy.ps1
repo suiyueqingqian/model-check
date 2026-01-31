@@ -126,7 +126,8 @@ function Update-EnvValue {
     )
 
     $content = Get-Content $FilePath -Raw
-    $escapedValue = $Value -replace '\\', '\\' -replace '"', '\"'
+    # 转义替换字符串中的特殊字符: $ -> $$, \ -> \\, " -> \"
+    $escapedValue = $Value -replace '\$', '$$$$' -replace '\\', '\\' -replace '"', '\"'
 
     if ($Uncomment) {
         # 取消注释并设置值
@@ -271,20 +272,39 @@ function Start-Services {
 function Initialize-Database {
     Write-Info "初始化数据库..."
 
-    # 等待数据库就绪
+    # 检查是否有本地 PostgreSQL 容器
+    $pgContainer = docker ps --format '{{.Names}}' | Select-String "newapi-postgres"
+    if ($pgContainer) {
+        Write-Info "等待数据库就绪..."
+        $maxAttempts = 30
+        $attempt = 0
+
+        while ($attempt -lt $maxAttempts) {
+            $null = docker compose exec -T postgres pg_isready -U newapi -d newapi_monitor 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                break
+            }
+            $attempt++
+            Write-Host "." -NoNewline
+            Start-Sleep -Seconds 2
+        }
+        Write-Host ""
+
+        if ($attempt -eq $maxAttempts) {
+            Write-Warn "等待数据库超时，尝试继续..."
+        }
+    }
+
+    # 等待 app 容器就绪
+    Write-Info "等待应用容器就绪..."
     Start-Sleep -Seconds 5
 
     # 执行数据库迁移
-    docker compose exec -T app npx prisma db push --skip-generate 2>$null
+    Write-Info "执行 Prisma 迁移..."
+    docker compose exec -T app npx prisma db push --skip-generate
 
     if ($LASTEXITCODE -ne 0) {
-        # 重试一次
-        Start-Sleep -Seconds 3
-        docker compose exec app npx prisma db push --skip-generate
-    }
-
-    if ($LASTEXITCODE -ne 0) {
-        Write-Err "数据库初始化失败，请检查连接配置"
+        Write-Err "数据库初始化失败，请检查日志: docker logs newapi-model-check"
     }
 
     Write-Success "数据库初始化完成"
