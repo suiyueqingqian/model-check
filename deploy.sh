@@ -194,7 +194,8 @@ setup_env() {
 
     # 生成 JWT 密钥
     local jwt_secret=$(generate_secret)
-    sed -i "s/^JWT_SECRET=.*/JWT_SECRET=\"$jwt_secret\"/" .env
+    local jwt_secret_escaped=$(echo "$jwt_secret" | sed 's/[&/\]/\\&/g')
+    sed -i "s|^JWT_SECRET=.*|JWT_SECRET=\"$jwt_secret_escaped\"|" .env
     success "已生成 JWT 密钥"
 
     # 设置管理员密码
@@ -202,10 +203,11 @@ setup_env() {
     read -sp "请输入管理员密码 (留空使用默认 admin123): " admin_pwd
     echo ""
     if [ -n "$admin_pwd" ]; then
-        sed -i "s/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD=\"$admin_pwd\"/" .env
+        local admin_pwd_escaped=$(echo "$admin_pwd" | sed 's/[&/\]/\\&/g')
+        sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=\"$admin_pwd_escaped\"|" .env
         success "已设置管理员密码"
     else
-        sed -i 's/^ADMIN_PASSWORD=.*/ADMIN_PASSWORD="admin123"/' .env
+        sed -i 's|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD="admin123"|' .env
         warn "使用默认密码 admin123，建议后续修改"
     fi
 
