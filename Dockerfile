@@ -60,8 +60,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
-# Install prisma CLI for database migrations (production needs this for db push)
-RUN npm install prisma@6 --save-exact --omit=dev
+# Install prisma CLI for database migrations (must match @prisma/client version)
+RUN npm install prisma@6.19.2 --save-exact
 
 USER nextjs
 
