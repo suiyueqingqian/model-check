@@ -42,6 +42,30 @@ USE_EXTERNAL_POSTGRES=false
 REDIS_PORT_TO_USE=6379
 POSTGRES_PORT_TO_USE=5432
 
+# 获取 Docker 宿主机地址（从容器内访问宿主机）
+get_docker_host() {
+    # Linux: 使用 docker0 网桥网关地址
+    local docker_gateway=$(docker network inspect bridge --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null || true)
+    if [ -n "$docker_gateway" ]; then
+        echo "$docker_gateway"
+    else
+        # 回退到常见的 Docker 网桥地址
+        echo "172.17.0.1"
+    fi
+}
+
+# 获取容器的宿主机映射端口
+get_container_host_port() {
+    local container_name=$1
+    local container_port=$2
+    # 获取映射到宿主机的端口，格式如 "0.0.0.0:6379->6379/tcp"
+    local port_mapping=$(docker port "$container_name" "$container_port" 2>/dev/null | head -n 1 || true)
+    if [ -n "$port_mapping" ]; then
+        # 提取端口号
+        echo "$port_mapping" | sed 's/.*://'
+    fi
+}
+
 # 检查端口是否被占用
 check_port_in_use() {
     local port=$1
@@ -83,23 +107,46 @@ detect_docker_redis() {
 
         # 尝试获取 Redis 容器的网络信息
         local redis_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container_name" 2>/dev/null || true)
-        local redis_port=$(docker inspect -f '{{range $p, $conf := .NetworkSettings.Ports}}{{if eq $p "6379/tcp"}}{{(index $conf 0).HostPort}}{{end}}{{end}}' "$container_name" 2>/dev/null || true)
 
         if [ -n "$redis_ip" ]; then
             success "检测到 Docker Redis 容器: $container_name (IP: $redis_ip)"
 
             # 检查是否可以连接
             if docker exec "$container_name" redis-cli ping &>/dev/null; then
-                # 获取容器所在的网络
-                local redis_network=$(docker inspect -f '{{range $key, $val := .NetworkSettings.Networks}}{{$key}}{{end}}' "$container_name" 2>/dev/null | head -n 1)
+                # 检查是否有端口映射到宿主机
+                local host_port=$(get_container_host_port "$container_name" "6379")
 
-                if [ -n "$redis_network" ]; then
-                    DETECTED_REDIS_URL="redis://${container_name}:6379"
-                    USE_EXTERNAL_REDIS=true
-                    EXTERNAL_REDIS_NETWORK="$redis_network"
-                    EXTERNAL_REDIS_CONTAINER="$container_name"
-                    success "可复用 Redis 容器: $container_name (网络: $redis_network)"
-                    return 0
+                if [ -n "$host_port" ]; then
+                    # 有端口映射，使用宿主机地址（更可靠）
+                    local docker_host=$(get_docker_host)
+                    echo ""
+                    read -p "是否复用此 Redis? (Y/n): " reuse_redis
+                    if [[ ! "$reuse_redis" =~ ^[Nn]$ ]]; then
+                        DETECTED_REDIS_URL="redis://${docker_host}:${host_port}"
+                        USE_EXTERNAL_REDIS=true
+                        success "可复用 Redis: ${docker_host}:${host_port}"
+                        return 0
+                    else
+                        info "跳过复用，将启动新的 Redis 容器"
+                    fi
+                else
+                    # 无端口映射，需要网络连接（仅脚本部署时有效）
+                    local redis_network=$(docker inspect -f '{{range $key, $val := .NetworkSettings.Networks}}{{$key}}{{end}}' "$container_name" 2>/dev/null | head -n 1)
+                    if [ -n "$redis_network" ]; then
+                        warn "Redis 容器无端口映射，需要通过 Docker 网络连接"
+                        echo ""
+                        read -p "是否复用此 Redis? (注意: docker compose restart 后需重新运行脚本) (y/N): " reuse_redis
+                        if [[ "$reuse_redis" =~ ^[Yy]$ ]]; then
+                            DETECTED_REDIS_URL="redis://${container_name}:6379"
+                            USE_EXTERNAL_REDIS=true
+                            EXTERNAL_REDIS_NETWORK="$redis_network"
+                            EXTERNAL_REDIS_CONTAINER="$container_name"
+                            success "可复用 Redis 容器: $container_name (网络: $redis_network)"
+                            return 0
+                        else
+                            info "跳过复用，将启动新的 Redis 容器"
+                        fi
+                    fi
                 fi
             fi
         fi
@@ -109,16 +156,23 @@ detect_docker_redis() {
     if check_port_in_use 6379; then
         # 尝试连接本地 Redis
         if command -v redis-cli &>/dev/null && redis-cli ping &>/dev/null; then
-            DETECTED_REDIS_URL="redis://host.docker.internal:6379"
-            USE_EXTERNAL_REDIS=true
-            success "检测到本地 Redis 服务，将使用 host.docker.internal:6379"
-            return 0
+            local docker_host=$(get_docker_host)
+            echo ""
+            read -p "检测到本地 Redis 服务，是否复用? (Y/n): " reuse_redis
+            if [[ ! "$reuse_redis" =~ ^[Nn]$ ]]; then
+                DETECTED_REDIS_URL="redis://${docker_host}:6379"
+                USE_EXTERNAL_REDIS=true
+                success "将使用本地 Redis: ${docker_host}:6379"
+                return 0
+            else
+                info "跳过复用，将启动新的 Redis 容器"
+            fi
         else
             warn "端口 6379 被占用但无法连接，将使用其他端口"
-            REDIS_PORT_TO_USE=$(find_available_port 6380)
-            if [ "$REDIS_PORT_TO_USE" != "6380" ] || ! check_port_in_use 6380; then
-                warn "Redis 将使用端口: $REDIS_PORT_TO_USE"
-            fi
+        fi
+        REDIS_PORT_TO_USE=$(find_available_port 6380)
+        if [ "$REDIS_PORT_TO_USE" != "6379" ]; then
+            warn "Redis 将使用端口: $REDIS_PORT_TO_USE"
         fi
     fi
 
@@ -144,54 +198,80 @@ detect_docker_postgres() {
         if [ -n "$postgres_ip" ]; then
             success "检测到 Docker PostgreSQL 容器: $container_name (IP: $postgres_ip)"
 
-            # 获取容器所在的网络
-            local postgres_network=$(docker inspect -f '{{range $key, $val := .NetworkSettings.Networks}}{{$key}}{{end}}' "$container_name" 2>/dev/null | head -n 1)
+            # 尝试从容器环境变量获取连接信息
+            local pg_user=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$container_name" 2>/dev/null | grep -E '^POSTGRES_USER=' | cut -d= -f2 || true)
+            local pg_password=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$container_name" 2>/dev/null | grep -E '^POSTGRES_PASSWORD=' | cut -d= -f2 || true)
+            local pg_db=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$container_name" 2>/dev/null | grep -E '^POSTGRES_DB=' | cut -d= -f2 || true)
 
-            if [ -n "$postgres_network" ]; then
-                EXTERNAL_POSTGRES_CONTAINER="$container_name"
-                EXTERNAL_POSTGRES_NETWORK="$postgres_network"
+            # 使用默认值
+            pg_user=${pg_user:-postgres}
+            pg_db=${pg_db:-postgres}
 
-                # 尝试从容器环境变量获取连接信息
-                local pg_user=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$container_name" 2>/dev/null | grep -E '^POSTGRES_USER=' | cut -d= -f2 || true)
-                local pg_password=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$container_name" 2>/dev/null | grep -E '^POSTGRES_PASSWORD=' | cut -d= -f2 || true)
-                local pg_db=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$container_name" 2>/dev/null | grep -E '^POSTGRES_DB=' | cut -d= -f2 || true)
+            if [ -n "$pg_password" ]; then
+                success "自动识别 PostgreSQL 连接信息"
+                info "  用户: $pg_user, 数据库: $pg_db"
 
-                # 使用默认值
-                pg_user=${pg_user:-postgres}
-                pg_db=${pg_db:-postgres}
+                # 验证连接
+                if docker exec "$container_name" psql -U "$pg_user" -d "$pg_db" -c "SELECT 1" &>/dev/null; then
+                    # 检查是否有端口映射到宿主机
+                    local host_port=$(get_container_host_port "$container_name" "5432")
 
-                if [ -n "$pg_password" ]; then
-                    # 自动构建连接字符串
-                    local auto_url="postgresql://${pg_user}:${pg_password}@${container_name}:5432/${pg_db}"
-                    success "自动识别 PostgreSQL 连接信息"
-                    info "  用户: $pg_user, 数据库: $pg_db"
-
-                    # 验证连接
-                    if docker exec "$container_name" psql -U "$pg_user" -d "$pg_db" -c "SELECT 1" &>/dev/null; then
-                        DETECTED_POSTGRES_URL="$auto_url"
-                        USE_EXTERNAL_POSTGRES=true
-                        success "可复用 PostgreSQL 容器: $container_name (网络: $postgres_network)"
-                        return 0
+                    if [ -n "$host_port" ]; then
+                        # 有端口映射，使用宿主机地址（更可靠）
+                        local docker_host=$(get_docker_host)
+                        local auto_url="postgresql://${pg_user}:${pg_password}@${docker_host}:${host_port}/${pg_db}"
+                        echo ""
+                        read -p "是否复用此 PostgreSQL? (Y/n): " reuse_pg
+                        if [[ ! "$reuse_pg" =~ ^[Nn]$ ]]; then
+                            DETECTED_POSTGRES_URL="$auto_url"
+                            USE_EXTERNAL_POSTGRES=true
+                            success "可复用 PostgreSQL: ${docker_host}:${host_port}"
+                            return 0
+                        else
+                            info "跳过复用，将启动新的 PostgreSQL 容器"
+                            return 1
+                        fi
                     else
-                        warn "连接验证失败，可能需要手动配置"
+                        # 无端口映射，需要网络连接（仅脚本部署时有效）
+                        local postgres_network=$(docker inspect -f '{{range $key, $val := .NetworkSettings.Networks}}{{$key}}{{end}}' "$container_name" 2>/dev/null | head -n 1)
+                        local auto_url="postgresql://${pg_user}:${pg_password}@${container_name}:5432/${pg_db}"
+                        warn "PostgreSQL 容器无端口映射，需要通过 Docker 网络连接"
+                        echo ""
+                        read -p "是否复用此 PostgreSQL? (注意: docker compose restart 后需重新运行脚本) (y/N): " reuse_pg
+                        if [[ "$reuse_pg" =~ ^[Yy]$ ]]; then
+                            DETECTED_POSTGRES_URL="$auto_url"
+                            USE_EXTERNAL_POSTGRES=true
+                            EXTERNAL_POSTGRES_NETWORK="$postgres_network"
+                            EXTERNAL_POSTGRES_CONTAINER="$container_name"
+                            success "可复用 PostgreSQL 容器: $container_name (网络: $postgres_network)"
+                            return 0
+                        else
+                            info "跳过复用，将启动新的 PostgreSQL 容器"
+                            return 1
+                        fi
                     fi
                 else
-                    warn "无法获取 PostgreSQL 密码，需要手动输入"
+                    warn "连接验证失败，可能需要手动配置"
                 fi
+            else
+                warn "无法获取 PostgreSQL 密码，需要手动输入"
+            fi
 
-                # 如果自动识别失败，回退到手动输入
-                echo ""
-                read -p "是否手动输入连接信息? (y/N): " reuse_pg
-                if [[ "$reuse_pg" =~ ^[Yy]$ ]]; then
-                    echo "请输入 PostgreSQL 连接字符串"
-                    echo "格式: postgresql://用户名:密码@${container_name}:5432/数据库名"
-                    read -p "连接字符串: " pg_url
-                    if [ -n "$pg_url" ]; then
-                        DETECTED_POSTGRES_URL="$pg_url"
-                        USE_EXTERNAL_POSTGRES=true
-                        success "将复用 PostgreSQL 容器: $container_name"
-                        return 0
-                    fi
+            # 如果自动识别失败，回退到手动输入
+            local docker_host=$(get_docker_host)
+            local host_port=$(get_container_host_port "$container_name" "5432")
+            local host_addr="${docker_host}:${host_port:-5432}"
+            echo ""
+            read -p "是否手动输入连接信息? (y/N): " reuse_pg
+            if [[ "$reuse_pg" =~ ^[Yy]$ ]]; then
+                echo "请输入 PostgreSQL 连接字符串"
+                echo "格式: postgresql://用户名:密码@${host_addr}/数据库名"
+                read -p "连接字符串: " pg_url
+                if [ -n "$pg_url" ]; then
+                    DETECTED_POSTGRES_URL="$pg_url"
+                    USE_EXTERNAL_POSTGRES=true
+                    success "将复用 PostgreSQL: $host_addr"
+                    return 0
                 fi
             fi
         fi
@@ -199,6 +279,7 @@ detect_docker_postgres() {
 
     # 检查端口 5432 是否被占用（非 Docker 方式运行的 PostgreSQL）
     if check_port_in_use 5432; then
+        local docker_host=$(get_docker_host)
         warn "端口 5432 被占用"
         read -p "是否是已有的 PostgreSQL 服务? 输入连接字符串复用，或按 Enter 跳过: " pg_url
         if [ -n "$pg_url" ]; then
@@ -399,13 +480,13 @@ setup_env() {
 
     if [ "$USE_EXTERNAL_REDIS" = true ] && [ "$USE_EXTERNAL_POSTGRES" = true ]; then
         effective_mode="cloud"
-        info "检测到外部 Redis 和 PostgreSQL，切换到全云端模式"
+        info "将复用外部 Redis 和 PostgreSQL，不启动本项目的数据库容器"
     elif [ "$USE_EXTERNAL_POSTGRES" = true ]; then
         effective_mode="cloud-db"
-        info "检测到外部 PostgreSQL，切换到云数据库模式"
+        info "将复用外部 PostgreSQL，仅启动本项目的 Redis"
     elif [ "$USE_EXTERNAL_REDIS" = true ]; then
         effective_mode="cloud-redis"
-        info "检测到外部 Redis，切换到云 Redis 模式"
+        info "将复用外部 Redis，仅启动本项目的 PostgreSQL"
     fi
 
     # 设置部署模式
@@ -643,19 +724,21 @@ show_result() {
     # 显示服务配置信息
     echo "服务配置:"
     if [ "$USE_EXTERNAL_REDIS" = true ]; then
-        echo -e "  Redis:      ${CYAN}外部服务${NC} (${EXTERNAL_REDIS_CONTAINER:-$DETECTED_REDIS_URL})"
+        echo -e "  Redis:      ${CYAN}复用外部${NC} ($DETECTED_REDIS_URL)"
     elif [ "$REDIS_PORT_TO_USE" != "6379" ]; then
-        echo -e "  Redis:      ${CYAN}本地容器${NC} (端口: $REDIS_PORT_TO_USE)"
+        echo -e "  Redis:      ${CYAN}本项目容器${NC} (端口: $REDIS_PORT_TO_USE)"
     else
-        echo -e "  Redis:      ${CYAN}本地容器${NC} (端口: 6379)"
+        echo -e "  Redis:      ${CYAN}本项目容器${NC} (端口: 6379)"
     fi
 
     if [ "$USE_EXTERNAL_POSTGRES" = true ]; then
-        echo -e "  PostgreSQL: ${CYAN}外部服务${NC} (${EXTERNAL_POSTGRES_CONTAINER:-云端})"
+        # 隐藏密码显示
+        local display_url=$(echo "$DETECTED_POSTGRES_URL" | sed 's/:[^:@]*@/:***@/')
+        echo -e "  PostgreSQL: ${CYAN}复用外部${NC} ($display_url)"
     elif [ "$POSTGRES_PORT_TO_USE" != "5432" ]; then
-        echo -e "  PostgreSQL: ${CYAN}本地容器${NC} (端口: $POSTGRES_PORT_TO_USE)"
+        echo -e "  PostgreSQL: ${CYAN}本项目容器${NC} (端口: $POSTGRES_PORT_TO_USE)"
     else
-        echo -e "  PostgreSQL: ${CYAN}本地容器${NC} (端口: 5432)"
+        echo -e "  PostgreSQL: ${CYAN}本项目容器${NC} (端口: 5432)"
     fi
     echo ""
 
