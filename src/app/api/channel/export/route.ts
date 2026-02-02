@@ -11,7 +11,6 @@ export interface ChannelExportData {
     name: string;
     baseUrl: string;
     apiKey: string;
-    type: "NEWAPI" | "DIRECT";
     proxy: string | null;
     enabled: boolean;
   }[];
@@ -28,7 +27,6 @@ export async function GET(request: NextRequest) {
         name: true,
         baseUrl: true,
         apiKey: true,
-        type: true,
         proxy: true,
         enabled: true,
       },
@@ -42,7 +40,6 @@ export async function GET(request: NextRequest) {
         name: ch.name,
         baseUrl: ch.baseUrl,
         apiKey: ch.apiKey,
-        type: ch.type,
         proxy: ch.proxy,
         enabled: ch.enabled,
       })),

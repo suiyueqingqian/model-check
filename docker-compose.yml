@@ -38,7 +38,8 @@ services:
       - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production}
       - DETECT_PROMPT=${DETECT_PROMPT:-1+1=2? yes or no}
       - GLOBAL_PROXY=${GLOBAL_PROXY:-}
-      - CRON_SCHEDULE=${CRON_SCHEDULE:-0 */6 * * *}
+      - PROXY_API_KEY=${PROXY_API_KEY:-}
+      - CRON_SCHEDULE=${CRON_SCHEDULE:-0 8,12,16,20 * * *}
       - CLEANUP_SCHEDULE=${CLEANUP_SCHEDULE:-0 2 * * *}
       - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-7}
     networks:

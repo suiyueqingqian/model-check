@@ -15,7 +15,6 @@ export async function GET(request: NextRequest) {
         id: true,
         name: true,
         baseUrl: authenticated, // Only show baseUrl to authenticated users
-        type: true,
         createdAt: true,
         models: {
           select: {

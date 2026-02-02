@@ -3,7 +3,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Sun, Moon, LogIn, LogOut, Activity, Play, Square, Loader2, Wifi, WifiOff, Clock, Zap, Timer, Search, Filter, X, Github } from "lucide-react";
+import Link from "next/link";
+import { Sun, Moon, LogIn, LogOut, Activity, Play, Square, Loader2, Wifi, WifiOff, Clock, Zap, Timer, Search, Filter, X, Github, FileText } from "lucide-react";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/ui/toast";
@@ -228,6 +229,13 @@ export function Header({
         <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           <Activity className="h-5 w-5 text-primary" />
           <span className="font-semibold hidden sm:inline">NewAPI 监控</span>
+          <Link
+            href="/docs/proxy"
+            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors hidden sm:block"
+            title="API 代理文档"
+          >
+            <FileText className="h-4 w-4" />
+          </Link>
           <a
             href="https://github.com/chxcodepro/newapi-model-check"
             target="_blank"

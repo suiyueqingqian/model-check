@@ -3,7 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAuth } from "@/lib/middleware/auth";
-import { ChannelType, EndpointType } from "@prisma/client";
+import { EndpointType } from "@prisma/client";
 
 // GET /api/channel - List all channels (authenticated)
 export async function GET(request: NextRequest) {
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { name, baseUrl, apiKey, type, proxy, models } = body;
+    const { name, baseUrl, apiKey, proxy, models } = body;
 
     // Validate required fields
     if (!name || !baseUrl || !apiKey) {
@@ -53,16 +53,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate channel type
-    const channelType: ChannelType = type === "DIRECT" ? "DIRECT" : "NEWAPI";
-
     // Create channel
     const channel = await prisma.channel.create({
       data: {
         name,
         baseUrl: baseUrl.replace(/\/$/, ""), // Remove trailing slash
         apiKey,
-        type: channelType,
         proxy: proxy || null,
         enabled: true,
       },
@@ -103,7 +99,7 @@ export async function PUT(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { id, name, baseUrl, apiKey, type, proxy, enabled } = body;
+    const { id, name, baseUrl, apiKey, proxy, enabled } = body;
 
     if (!id) {
       return NextResponse.json(
@@ -117,7 +113,6 @@ export async function PUT(request: NextRequest) {
     if (name !== undefined) updateData.name = name;
     if (baseUrl !== undefined) updateData.baseUrl = baseUrl.replace(/\/$/, "");
     if (apiKey !== undefined) updateData.apiKey = apiKey;
-    if (type !== undefined) updateData.type = type === "DIRECT" ? "DIRECT" : "NEWAPI";
     if (proxy !== undefined) updateData.proxy = proxy || null;
     if (enabled !== undefined) updateData.enabled = Boolean(enabled);
 

@@ -10,6 +10,8 @@ import { useSSE } from "@/hooks/use-sse";
 
 // Polling interval for testing status (5 seconds)
 const TESTING_STATUS_POLL_INTERVAL = 5000;
+// Debounce delay for refreshKey updates (ms)
+const REFRESH_DEBOUNCE_DELAY = 500;
 
 export default function Home() {
   const [showLogin, setShowLogin] = useState(false);
@@ -28,6 +30,10 @@ export default function Home() {
 
   // Track if polling should be active
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Debounce timer for refreshKey updates
+  const refreshDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  // Track SSE connection state for polling logic
+  const sseConnectedRef = useRef(false);
 
   // Add models to testing set
   const addTestingModels = useCallback((modelIds: string[]) => {
@@ -47,7 +53,37 @@ export default function Home() {
     });
   }, []);
 
-  // Fetch detection progress (used for initial load and polling)
+  // Debounced refresh function for SSE events
+  const debouncedRefresh = useCallback(() => {
+    // Clear existing debounce timer
+    if (refreshDebounceRef.current) {
+      clearTimeout(refreshDebounceRef.current);
+    }
+    // Set new debounce timer
+    refreshDebounceRef.current = setTimeout(() => {
+      setRefreshKey((k) => k + 1);
+      refreshDebounceRef.current = null;
+    }, REFRESH_DEBOUNCE_DELAY);
+  }, []);
+
+  // SSE for real-time updates - must be before useEffects that depend on isConnected
+  const { isConnected } = useSSE({
+    onProgress: (event) => {
+      // Remove model from testing set when test completes
+      if (event.type === "progress" && event.modelId) {
+        removeTestingModel(event.modelId);
+      }
+      // Trigger dashboard refresh with debounce to avoid rapid re-renders
+      debouncedRefresh();
+    },
+  });
+
+  // Keep ref in sync with isConnected state
+  useEffect(() => {
+    sseConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  // Fetch detection progress (used for initial load and polling fallback)
   const fetchProgress = useCallback(async () => {
     try {
       const response = await fetch("/api/detect");
@@ -55,7 +91,18 @@ export default function Home() {
         const data = await response.json();
         // Update testing model IDs
         if (data.testingModelIds && Array.isArray(data.testingModelIds)) {
-          setTestingModelIds(new Set(data.testingModelIds));
+          if (sseConnectedRef.current) {
+            // SSE is connected: only merge new IDs, don't overwrite
+            // This prevents polling from re-adding models that SSE already removed
+            setTestingModelIds((prev) => {
+              const next = new Set(prev);
+              data.testingModelIds.forEach((id: string) => next.add(id));
+              return next;
+            });
+          } else {
+            // SSE not connected: full replacement (fallback mode)
+            setTestingModelIds(new Set(data.testingModelIds));
+          }
           // Update detection running state
           setIsDetectionRunning(data.testingModelIds.length > 0);
         } else {
@@ -83,7 +130,8 @@ export default function Home() {
     fetchProgress();
   }, [fetchProgress]);
 
-  // Poll for testing status when detection is running
+  // Poll for testing status when detection is running AND SSE is not connected
+  // SSE is the primary source of truth; polling is only a fallback
   useEffect(() => {
     // Clear existing interval
     if (pollIntervalRef.current) {
@@ -91,8 +139,10 @@ export default function Home() {
       pollIntervalRef.current = null;
     }
 
-    // Start polling if detection is running or we have testing models
-    if (isDetectionRunning || testingModelIds.size > 0) {
+    // Only start polling if:
+    // 1. Detection is running or we have testing models
+    // 2. SSE is NOT connected (polling is fallback only)
+    if ((isDetectionRunning || testingModelIds.size > 0) && !isConnected) {
       pollIntervalRef.current = setInterval(fetchProgress, TESTING_STATUS_POLL_INTERVAL);
     }
 
@@ -101,19 +151,16 @@ export default function Home() {
         clearInterval(pollIntervalRef.current);
       }
     };
-  }, [isDetectionRunning, testingModelIds.size, fetchProgress]);
+  }, [isDetectionRunning, testingModelIds.size, isConnected, fetchProgress]);
 
-  // SSE for real-time updates
-  const { isConnected } = useSSE({
-    onProgress: (event) => {
-      // Remove model from testing set when test completes
-      if (event.type === "progress" && event.modelId) {
-        removeTestingModel(event.modelId);
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (refreshDebounceRef.current) {
+        clearTimeout(refreshDebounceRef.current);
       }
-      // Trigger dashboard refresh
-      setRefreshKey((k) => k + 1);
-    },
-  });
+    };
+  }, []);
 
   return (
     <div className="min-h-screen flex flex-col">

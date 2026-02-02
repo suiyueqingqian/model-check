@@ -5,7 +5,12 @@ import prisma from "@/lib/prisma";
 import { requireAuth } from "@/lib/middleware/auth";
 import { syncChannelModels } from "@/lib/queue/service";
 import type { ChannelExportData } from "../export/route";
-import { ChannelType } from "@prisma/client";
+
+// Environment variables for WebDAV configuration
+const ENV_WEBDAV_URL = process.env.WEBDAV_URL;
+const ENV_WEBDAV_USERNAME = process.env.WEBDAV_USERNAME;
+const ENV_WEBDAV_PASSWORD = process.env.WEBDAV_PASSWORD;
+const ENV_WEBDAV_FILENAME = process.env.WEBDAV_FILENAME;
 
 interface WebDAVConfig {
   url: string;
@@ -90,21 +95,32 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { action, url, username, password, filename, mode = "merge" } = body as {
       action: "upload" | "download";
-      url: string;
+      url?: string;
       username?: string;
       password?: string;
       filename?: string;
       mode?: "merge" | "replace";
     };
 
-    if (!action || !url) {
+    // Use environment variables as fallback
+    const finalUrl = url || ENV_WEBDAV_URL;
+    const finalUsername = username || ENV_WEBDAV_USERNAME;
+    const finalPassword = password || ENV_WEBDAV_PASSWORD;
+    const finalFilename = filename || ENV_WEBDAV_FILENAME;
+
+    if (!action || !finalUrl) {
       return NextResponse.json(
-        { error: "Action and URL are required", code: "MISSING_FIELDS" },
+        { error: "Action and URL are required (set WEBDAV_URL env or provide in request)", code: "MISSING_FIELDS" },
         { status: 400 }
       );
     }
 
-    const config: WebDAVConfig = { url, username, password, filename };
+    const config: WebDAVConfig = {
+      url: finalUrl,
+      username: finalUsername,
+      password: finalPassword,
+      filename: finalFilename
+    };
     const webdavUrl = buildWebDAVUrl(config);
     const headers = buildWebDAVHeaders(config);
 
@@ -115,7 +131,6 @@ export async function POST(request: NextRequest) {
           name: true,
           baseUrl: true,
           apiKey: true,
-          type: true,
           proxy: true,
           enabled: true,
         },
@@ -129,7 +144,6 @@ export async function POST(request: NextRequest) {
           name: ch.name,
           baseUrl: ch.baseUrl,
           apiKey: ch.apiKey,
-          type: ch.type,
           proxy: ch.proxy,
           enabled: ch.enabled,
         })),
@@ -184,6 +198,7 @@ export async function POST(request: NextRequest) {
       let imported = 0;
       let updated = 0;
       let skipped = 0;
+      let duplicates = 0;
       const importedChannelIds: string[] = [];
 
       // If replace mode, delete all existing channels first
@@ -191,14 +206,46 @@ export async function POST(request: NextRequest) {
         await prisma.channel.deleteMany({});
       }
 
+      // Build set of existing channels by baseUrl+apiKey for duplicate detection
+      const existingChannels = await prisma.channel.findMany({
+        select: { id: true, name: true, baseUrl: true, apiKey: true },
+      });
+      const existingKeySet = new Set(
+        existingChannels.map((ch) => `${ch.baseUrl.replace(/\/$/, "")}|${ch.apiKey}`)
+      );
+
+      // Also track duplicates within the import data itself
+      const importKeySet = new Set<string>();
+
       for (const ch of data.channels) {
         if (!ch.name || !ch.baseUrl || !ch.apiKey) {
           skipped++;
           continue;
         }
 
-        const channelType: ChannelType = ch.type === "DIRECT" ? "DIRECT" : "NEWAPI";
+        const normalizedBaseUrl = ch.baseUrl.replace(/\/$/, "");
+        const channelKey = `${normalizedBaseUrl}|${ch.apiKey}`;
 
+        // Check for duplicate within import data
+        if (importKeySet.has(channelKey)) {
+          duplicates++;
+          continue;
+        }
+        importKeySet.add(channelKey);
+
+        // Check for duplicate with existing channels (by baseUrl+apiKey)
+        if (mode !== "replace" && existingKeySet.has(channelKey)) {
+          // Find existing channel with same baseUrl+apiKey
+          const existingByKey = existingChannels.find(
+            (ec) => `${ec.baseUrl.replace(/\/$/, "")}|${ec.apiKey}` === channelKey
+          );
+          if (existingByKey) {
+            duplicates++;
+            continue;
+          }
+        }
+
+        // Check if channel with same name exists
         const existing = await prisma.channel.findFirst({
           where: { name: ch.name },
         });
@@ -208,9 +255,8 @@ export async function POST(request: NextRequest) {
             await prisma.channel.update({
               where: { id: existing.id },
               data: {
-                baseUrl: ch.baseUrl.replace(/\/$/, ""),
+                baseUrl: normalizedBaseUrl,
                 apiKey: ch.apiKey,
-                type: channelType,
                 proxy: ch.proxy || null,
                 enabled: ch.enabled ?? true,
               },
@@ -224,9 +270,8 @@ export async function POST(request: NextRequest) {
           const newChannel = await prisma.channel.create({
             data: {
               name: ch.name,
-              baseUrl: ch.baseUrl.replace(/\/$/, ""),
+              baseUrl: normalizedBaseUrl,
               apiKey: ch.apiKey,
-              type: channelType,
               proxy: ch.proxy || null,
               enabled: ch.enabled ?? true,
             },
@@ -260,6 +305,7 @@ export async function POST(request: NextRequest) {
         imported,
         updated,
         skipped,
+        duplicates,
         total: data.channels.length,
         syncedModels,
         remoteVersion: data.version,

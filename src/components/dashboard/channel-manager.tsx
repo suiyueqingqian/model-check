@@ -27,7 +27,6 @@ interface Channel {
   name: string;
   baseUrl: string;
   apiKey: string;
-  type: "NEWAPI" | "DIRECT";
   proxy: string | null;
   enabled: boolean;
   _count?: { models: number };
@@ -42,7 +41,6 @@ interface ChannelFormData {
   name: string;
   baseUrl: string;
   apiKey: string;
-  type: "NEWAPI" | "DIRECT";
   proxy: string;
 }
 
@@ -50,7 +48,6 @@ const initialFormData: ChannelFormData = {
   name: "",
   baseUrl: "",
   apiKey: "",
-  type: "NEWAPI",
   proxy: "",
 };
 
@@ -150,7 +147,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       name: channel.name,
       baseUrl: channel.baseUrl,
       apiKey: "", // Don't pre-fill API key for security
-      type: channel.type,
       proxy: channel.proxy || "",
     });
     setShowModal(true);
@@ -174,7 +170,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
           id: editingChannel.id,
           name: body.name,
           baseUrl: body.baseUrl,
-          type: body.type,
           proxy: body.proxy,
         };
         if (body.apiKey) {
@@ -502,16 +497,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                       <span className="font-medium truncate">
                         {channel.name}
                       </span>
-                      <span
-                        className={cn(
-                          "px-1.5 py-0.5 text-xs rounded shrink-0",
-                          channel.type === "DIRECT"
-                            ? "bg-blue-500/10 text-blue-500"
-                            : "bg-green-500/10 text-green-500"
-                        )}
-                      >
-                        {channel.type}
-                      </span>
                     </div>
                   </div>
                   <div className="text-sm text-muted-foreground truncate">
@@ -665,26 +650,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                   }
                   required={!editingChannel}
                 />
-              </div>
-
-              {/* Type */}
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  渠道类型
-                </label>
-                <select
-                  value={formData.type}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      type: e.target.value as "NEWAPI" | "DIRECT",
-                    })
-                  }
-                  className="w-full px-3 py-2 rounded-md border border-input bg-background"
-                >
-                  <option value="NEWAPI">NewAPI (支持 /v1/models)</option>
-                  <option value="DIRECT">Direct (直连 API)</option>
-                </select>
               </div>
 
               {/* Proxy */}

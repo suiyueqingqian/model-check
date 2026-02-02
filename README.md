@@ -12,6 +12,7 @@ API 渠道可用性检测系统 - 实时监控多个 API 渠道的模型可用�
 ## 功能特性
 
 - **多端点检测** - 支持 OpenAI Chat、Claude、Gemini、Codex 等多种 API 格式
+- **API 代理** - 统一代理入口，自动路由到对应渠道（支持 OpenAI/Claude/Gemini）
 - **实时监控** - SSE 实时推送检测进度
 - **定时任务** - 可配置的周期性检测（默认每 6 小时）
 - **数据清理** - 自动清理过期日志（默认保留 7 天）
@@ -122,6 +123,11 @@ TiDB 是 MySQL 兼容的分布式数据库，适合大规模部署。
 | `CRON_SCHEDULE` | 检测周期（cron 格式） | `0 */6 * * *` |
 | `LOG_RETENTION_DAYS` | 日志保留天数 | `7` |
 | `APP_PORT` | 应用端口 | `3000` |
+| `PROXY_API_KEY` | 代理接口密钥（不设置则自动生成） | 自动生成 |
+| `WEBDAV_URL` | WebDAV 服务器地址 | - |
+| `WEBDAV_USERNAME` | WebDAV 用户名 | - |
+| `WEBDAV_PASSWORD` | WebDAV 密码 | - |
+| `WEBDAV_FILENAME` | WebDAV 同步文件名 | `newapi-channels.json` |
 
 ### 云 Redis
 
@@ -145,13 +151,29 @@ DOCKER_REDIS_URL="redis://default:[PASSWORD]@[ENDPOINT].upstash.io:6379"
 | `/api/scheduler` | GET/POST | 是 | 调度器管理 |
 | `/api/sse/progress` | GET | 否 | SSE 实时进度 |
 
+### 代理接口
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/v1/models` | GET | 获取可用模型列表 |
+| `/v1/chat/completions` | POST | OpenAI Chat API 代理 |
+| `/v1/messages` | POST | Claude Messages API 代理 |
+| `/v1/responses` | POST | OpenAI Responses API 代理 |
+| `/v1beta/models/{model}:generateContent` | POST | Gemini API 代理 |
+| `/v1beta/models/{model}:streamGenerateContent` | POST | Gemini 流式 API 代理 |
+
+代理接口根据请求中的 `model` 字段自动路由到对应渠道。详细文档见 `/docs/proxy`。
+
 ## 项目结构
 
 ```
 newapi-model-check/
 ├── src/
 │   ├── app/                    # Next.js App Router
-│   │   └── api/               # API 路由
+│   │   ├── api/               # API 路由
+│   │   ├── docs/              # 文档页面
+│   │   ├── v1/                # OpenAI/Claude 代理端点
+│   │   └── v1beta/            # Gemini 代理端点
 │   ├── components/            # React 组件
 │   │   ├── dashboard/         # 仪表板
 │   │   ├── layout/           # 布局
@@ -159,6 +181,7 @@ newapi-model-check/
 │   ├── hooks/                 # React Hooks
 │   └── lib/                   # 核心库
 │       ├── detection/        # 检测策略
+│       ├── proxy/            # 代理工具
 │       ├── queue/            # BullMQ 队列
 │       └── scheduler/        # Cron 调度
 ├── prisma/

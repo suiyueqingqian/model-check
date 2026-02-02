@@ -109,6 +109,49 @@ function isModelHealthy(model: Model): boolean {
   return statuses.length > 0 && statuses.every((s) => s === "SUCCESS");
 }
 
+// Helper function to get health counts by endpoint category (Chat vs CLI)
+function getEndpointHealthCounts(models: Model[]): {
+  chat: { healthy: number; total: number };
+  cli: { healthy: number; total: number };
+} {
+  const result = {
+    chat: { healthy: 0, total: 0 },
+    cli: { healthy: 0, total: 0 },
+  };
+
+  for (const model of models) {
+    // Get latest status for each endpoint type
+    const endpointStatuses: Record<string, string> = {};
+    for (const log of model.checkLogs) {
+      if (!endpointStatuses[log.endpointType]) {
+        endpointStatuses[log.endpointType] = log.status;
+      }
+    }
+
+    // Check each detected endpoint
+    const endpoints = model.detectedEndpoints || [];
+    for (const ep of endpoints) {
+      const { type: epCategory } = formatEndpointType(ep);
+      const status = endpointStatuses[ep];
+
+      if (epCategory === "chat") {
+        result.chat.total++;
+        if (status === "SUCCESS") {
+          result.chat.healthy++;
+        }
+      } else {
+        // cli
+        result.cli.total++;
+        if (status === "SUCCESS") {
+          result.cli.healthy++;
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
 export function ChannelCard({ channel, onRefresh, className, onEndpointFilterChange, activeEndpointFilter, testingModelIds = new Set(), onTestModels, onStopModels }: ChannelCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [localEndpointFilter, setLocalEndpointFilter] = useState<string | null>(null);
@@ -122,6 +165,24 @@ export function ChannelCard({ channel, onRefresh, className, onEndpointFilterCha
   // Calculate healthy count based on checkLogs
   const healthyCount = channel.models.filter(isModelHealthy).length;
   const totalCount = channel.models.length;
+
+  // Calculate health counts by endpoint category
+  const endpointHealth = getEndpointHealthCounts(channel.models);
+
+  // Build health summary text for collapsed view
+  const healthSummary = (() => {
+    const parts: string[] = [];
+    if (endpointHealth.chat.total > 0) {
+      parts.push(`Chat: ${endpointHealth.chat.healthy}/${endpointHealth.chat.total}`);
+    }
+    if (endpointHealth.cli.total > 0) {
+      parts.push(`CLI: ${endpointHealth.cli.healthy}/${endpointHealth.cli.total}`);
+    }
+    if (parts.length === 0) {
+      return `${totalCount} 个模型`;
+    }
+    return parts.join(" | ");
+  })();
 
   // Calculate channel status based on new logic
   const channelStatus = (() => {
@@ -285,7 +346,7 @@ export function ChannelCard({ channel, onRefresh, className, onEndpointFilterCha
             <div className="text-left min-w-0">
               <h3 className="font-medium truncate">{channel.name}</h3>
               <p className="text-sm text-muted-foreground">
-                {healthyCount}/{totalCount} 个模型正常
+                {healthSummary}
               </p>
             </div>
           </div>

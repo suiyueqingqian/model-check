@@ -3,6 +3,7 @@
 import { CheckStatus, EndpointType } from "@prisma/client";
 import { buildEndpointDetection } from "./strategies";
 import type { DetectionJobData, DetectionResult } from "./types";
+import { proxyFetch } from "@/lib/utils/proxy-fetch";
 
 // Detection timeout in milliseconds
 const DETECTION_TIMEOUT = 30000;
@@ -183,20 +184,19 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
     const timeoutId = setTimeout(() => controller.abort(), DETECTION_TIMEOUT);
 
     // Build fetch options
-    const fetchOptions: RequestInit = {
-      method: "POST",
+    const fetchOptions = {
+      method: "POST" as const,
       headers: endpoint.headers,
       body: JSON.stringify(endpoint.requestBody),
       signal: controller.signal,
     };
 
-    // Execute request (proxy handling would need additional library like undici/node-fetch with agent)
-    // For now, we log proxy info but native fetch doesn't support proxy directly
     if (proxy) {
       console.log(`[Detector] Using proxy: ${proxy} for ${job.modelName}`);
     }
 
-    const response = await fetch(endpoint.url, fetchOptions);
+    // Use proxyFetch for proxy support
+    const response = await proxyFetch(endpoint.url, fetchOptions, proxy);
     clearTimeout(timeoutId);
 
     const latency = Date.now() - startTime;

@@ -4,12 +4,6 @@
 
 -- 创建枚举类型（Prisma 需要原生 ENUM 类型）
 DO $$ BEGIN
-    CREATE TYPE "ChannelType" AS ENUM ('NEWAPI', 'DIRECT');
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
-END $$;
-
-DO $$ BEGIN
     CREATE TYPE "EndpointType" AS ENUM ('CHAT', 'CLAUDE', 'GEMINI', 'CODEX');
 EXCEPTION
     WHEN duplicate_object THEN NULL;
@@ -26,7 +20,6 @@ CREATE TABLE IF NOT EXISTS "channels" (
   "name" VARCHAR(100) NOT NULL,
   "base_url" VARCHAR(500) NOT NULL,
   "api_key" TEXT NOT NULL,
-  "type" "ChannelType" NOT NULL DEFAULT 'NEWAPI',
   "proxy" VARCHAR(500),
   "enabled" BOOLEAN NOT NULL DEFAULT true,
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

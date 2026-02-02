@@ -17,7 +17,6 @@ model Channel {
   name      String   @db.VarChar(100)
   baseUrl   String   @map("base_url") @db.VarChar(500)
   apiKey    String   @map("api_key") @db.Text
-  type      ChannelType @default(NEWAPI)
   proxy     String?  @db.VarChar(500)
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
@@ -67,11 +66,6 @@ model CheckLog {
 }
 
 // Enums
-enum ChannelType {
-  NEWAPI  // Aggregated API (supports /v1/models)
-  DIRECT  // Direct API endpoint
-}
-
 enum EndpointType {
   CHAT      // /v1/chat/completions (OpenAI compatible)
   CLAUDE    // /v1/messages (Claude format)

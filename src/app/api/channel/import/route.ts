@@ -3,7 +3,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAuth } from "@/lib/middleware/auth";
-import { ChannelType } from "@prisma/client";
 import { syncChannelModels } from "@/lib/queue/service";
 import type { ChannelExportData } from "../export/route";
 
@@ -43,6 +42,7 @@ export async function POST(request: NextRequest) {
     let imported = 0;
     let updated = 0;
     let skipped = 0;
+    let duplicates = 0;
     const importedChannelIds: string[] = [];
 
     // If replace mode, delete all existing channels first
@@ -50,8 +50,39 @@ export async function POST(request: NextRequest) {
       await prisma.channel.deleteMany({});
     }
 
+    // Build set of existing channels by baseUrl+apiKey for duplicate detection
+    const existingChannels = await prisma.channel.findMany({
+      select: { id: true, name: true, baseUrl: true, apiKey: true },
+    });
+    const existingKeySet = new Set(
+      existingChannels.map((ch) => `${ch.baseUrl.replace(/\/$/, "")}|${ch.apiKey}`)
+    );
+
+    // Also track duplicates within the import data itself
+    const importKeySet = new Set<string>();
+
     for (const ch of channelsToImport) {
-      const channelType: ChannelType = ch.type === "DIRECT" ? "DIRECT" : "NEWAPI";
+      const normalizedBaseUrl = ch.baseUrl.replace(/\/$/, "");
+      const channelKey = `${normalizedBaseUrl}|${ch.apiKey}`;
+
+      // Check for duplicate within import data
+      if (importKeySet.has(channelKey)) {
+        duplicates++;
+        continue;
+      }
+      importKeySet.add(channelKey);
+
+      // Check for duplicate with existing channels (by baseUrl+apiKey)
+      if (mode !== "replace" && existingKeySet.has(channelKey)) {
+        // Find existing channel with same baseUrl+apiKey
+        const existingByKey = existingChannels.find(
+          (ec) => `${ec.baseUrl.replace(/\/$/, "")}|${ec.apiKey}` === channelKey
+        );
+        if (existingByKey) {
+          duplicates++;
+          continue;
+        }
+      }
 
       // Check if channel with same name exists
       const existing = await prisma.channel.findFirst({
@@ -64,9 +95,8 @@ export async function POST(request: NextRequest) {
           await prisma.channel.update({
             where: { id: existing.id },
             data: {
-              baseUrl: ch.baseUrl.replace(/\/$/, ""),
+              baseUrl: normalizedBaseUrl,
               apiKey: ch.apiKey,
-              type: channelType,
               proxy: ch.proxy || null,
               enabled: ch.enabled ?? true,
             },
@@ -81,9 +111,8 @@ export async function POST(request: NextRequest) {
         const newChannel = await prisma.channel.create({
           data: {
             name: ch.name,
-            baseUrl: ch.baseUrl.replace(/\/$/, ""),
+            baseUrl: normalizedBaseUrl,
             apiKey: ch.apiKey,
-            type: channelType,
             proxy: ch.proxy || null,
             enabled: ch.enabled ?? true,
           },
@@ -123,6 +152,7 @@ export async function POST(request: NextRequest) {
       imported,
       updated,
       skipped,
+      duplicates,
       total: channelsToImport.length,
       syncedModels,
       syncErrors: syncErrors.length > 0 ? syncErrors : undefined,

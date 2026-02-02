@@ -14,7 +14,6 @@ async function main() {
       name: "Test OpenAI Channel",
       baseUrl: "https://api.openai.com",
       apiKey: "sk-test-key-placeholder",
-      type: "NEWAPI",
       enabled: true,
     },
   });

@@ -8,16 +8,43 @@ import { EndpointType } from "@prisma/client";
 
 /**
  * Trigger detection for all enabled channels
+ * Optionally sync models from remote API before detection
  */
-export async function triggerFullDetection(): Promise<{
+export async function triggerFullDetection(syncModelsFirst: boolean = false): Promise<{
   channelCount: number;
   modelCount: number;
   jobIds: string[];
+  syncResults?: { channelId: string; added: number; total: number }[];
 }> {
   console.log("[Service] Starting full detection...");
 
-  // Fetch all enabled channels with their models
+  // Fetch all enabled channels
   const channels = await prisma.channel.findMany({
+    where: { enabled: true },
+  });
+
+  // Optionally sync models from remote API first
+  let syncResults: { channelId: string; added: number; total: number }[] | undefined;
+  if (syncModelsFirst) {
+    console.log("[Service] Syncing models from remote APIs...");
+    syncResults = [];
+    for (const channel of channels) {
+      try {
+        const result = await syncChannelModels(channel.id);
+        syncResults.push({
+          channelId: channel.id,
+          added: result.added,
+          total: result.total,
+        });
+      } catch (error) {
+        console.error(`[Service] Failed to sync models for channel ${channel.name}:`, error);
+      }
+    }
+    console.log(`[Service] Model sync complete for ${syncResults.length} channels`);
+  }
+
+  // Re-fetch channels with updated models
+  const channelsWithModels = await prisma.channel.findMany({
     where: { enabled: true },
     include: {
       models: {
@@ -32,7 +59,7 @@ export async function triggerFullDetection(): Promise<{
 
   const jobs: DetectionJobData[] = [];
 
-  for (const channel of channels) {
+  for (const channel of channelsWithModels) {
     for (const model of channel.models) {
       // Get all endpoints to test for this model (CHAT + CLI if applicable)
       const endpointsToTest = getEndpointsToTest(model.modelName);
@@ -53,7 +80,7 @@ export async function triggerFullDetection(): Promise<{
 
   if (jobs.length === 0) {
     console.log("[Service] No models to detect");
-    return { channelCount: 0, modelCount: 0, jobIds: [] };
+    return { channelCount: 0, modelCount: 0, jobIds: [], syncResults };
   }
 
   // Add all jobs to queue
@@ -62,9 +89,10 @@ export async function triggerFullDetection(): Promise<{
   console.log(`[Service] Queued ${jobs.length} detection jobs`);
 
   return {
-    channelCount: channels.length,
+    channelCount: channelsWithModels.length,
     modelCount: jobs.length,
     jobIds,
+    syncResults,
   };
 }
 

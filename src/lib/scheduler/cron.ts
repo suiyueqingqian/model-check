@@ -7,8 +7,8 @@ import prisma from "@/lib/prisma";
 // Auto detection switch (default: enabled)
 const AUTO_DETECT_ENABLED = process.env.AUTO_DETECT_ENABLED !== "false";
 
-// Default: every 6 hours
-const DETECTION_SCHEDULE = process.env.CRON_SCHEDULE || "0 */6 * * *";
+// Default: at 0:00, 8:00, 12:00, 16:00, 20:00 every day
+const DETECTION_SCHEDULE = process.env.CRON_SCHEDULE || "0 0,8,12,16,20 * * *";
 
 // Cleanup: daily at 2 AM
 const CLEANUP_SCHEDULE = process.env.CLEANUP_SCHEDULE || "0 2 * * *";
@@ -39,12 +39,19 @@ export function startDetectionCron(): CronJob | null {
   detectionJob = new CronJob(
     DETECTION_SCHEDULE,
     async () => {
-      console.log("[Cron] Starting scheduled detection...");
+      console.log("[Cron] Starting scheduled detection with model sync...");
       try {
-        const result = await triggerFullDetection();
+        // Sync models from remote API before detection
+        const result = await triggerFullDetection(true);
         console.log(
           `[Cron] Detection scheduled: ${result.channelCount} channels, ${result.modelCount} models`
         );
+        if (result.syncResults) {
+          const totalAdded = result.syncResults.reduce((sum, r) => sum + r.added, 0);
+          if (totalAdded > 0) {
+            console.log(`[Cron] Model sync: ${totalAdded} new models added`);
+          }
+        }
       } catch (error) {
         console.error("[Cron] Detection failed:", error);
       }
