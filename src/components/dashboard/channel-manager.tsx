@@ -734,8 +734,11 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                     setFormData({ ...formData, proxy: e.target.value })
                   }
                   className="w-full px-3 py-2 rounded-md border border-input bg-background"
-                  placeholder="http://127.0.0.1:7890（可选）"
+                  placeholder="http://... 或 socks5://...（可选）"
                 />
+                <p className="text-xs text-muted-foreground mt-1">
+                  支持 HTTP/HTTPS/SOCKS5 代理
+                </p>
               </div>
 
               {/* Error in modal */}
@@ -892,6 +895,11 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                 </div>
               )}
 
+              {/* Jianguoyun hint */}
+              <div className="p-3 rounded-md bg-blue-500/10 border border-blue-500/20 text-sm text-blue-600 dark:text-blue-400">
+                坚果云用户：需先在网页端创建同步文件夹，URL 填写到该文件夹路径。密码需使用应用密码（非登录密码）。
+              </div>
+
               {/* WebDAV URL */}
               <div>
                 <label className="block text-sm font-medium mb-1">
@@ -902,7 +910,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                   value={webdavConfig.url}
                   onChange={(e) => setWebdavConfig({ ...webdavConfig, url: e.target.value })}
                   className="w-full px-3 py-2 rounded-md border border-input bg-background"
-                  placeholder="https://dav.example.com/path"
+                  placeholder="https://dav.jianguoyun.com/dav/你的文件夹"
                 />
               </div>
 
@@ -914,7 +922,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                   value={webdavConfig.username}
                   onChange={(e) => setWebdavConfig({ ...webdavConfig, username: e.target.value })}
                   className="w-full px-3 py-2 rounded-md border border-input bg-background"
-                  placeholder="可选"
+                  placeholder="邮箱或用户名"
                 />
               </div>
 
@@ -926,13 +934,13 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                   value={webdavConfig.password}
                   onChange={(e) => setWebdavConfig({ ...webdavConfig, password: e.target.value })}
                   className="w-full px-3 py-2 rounded-md border border-input bg-background"
-                  placeholder={webdavEnvConfigured ? "留空使用环境变量密码" : "可选"}
+                  placeholder={webdavEnvConfigured ? "留空使用环境变量密码" : "应用密码"}
                 />
               </div>
 
               {/* Filename */}
               <div>
-                <label className="block text-sm font-medium mb-1">文件名</label>
+                <label className="block text-sm font-medium mb-1">文件路径</label>
                 <input
                   type="text"
                   value={webdavConfig.filename}
@@ -940,6 +948,9 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                   className="w-full px-3 py-2 rounded-md border border-input bg-background"
                   placeholder="newapi-channels.json"
                 />
+                <p className="text-xs text-muted-foreground mt-1">
+                  可包含子目录（如 backup/channels.json），子目录会自动创建
+                </p>
               </div>
 
               {/* Download mode */}
