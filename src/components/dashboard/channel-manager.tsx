@@ -410,6 +410,10 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const handleWebDAVSync = async (action: "upload" | "download") => {
     setWebdavSyncing(true);
     setError(null);
+
+    // Save config to localStorage before request (so password is preserved even on failure)
+    localStorage.setItem("webdav-config", JSON.stringify(webdavConfig));
+
     try {
       const response = await fetch("/api/channel/webdav", {
         method: "POST",
@@ -422,9 +426,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "同步失败");
-
-      // Save WebDAV config to localStorage on success
-      localStorage.setItem("webdav-config", JSON.stringify(webdavConfig));
 
       if (action === "download") {
         fetchChannels();

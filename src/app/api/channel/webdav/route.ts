@@ -44,44 +44,57 @@ function buildWebDAVUrl(config: WebDAVConfig): string {
 }
 
 // Helper function to ensure parent directories exist
-async function ensureParentDirectories(fileUrl: string, headers: HeadersInit): Promise<void> {
-  // Parse URL to get the path
-  const url = new URL(fileUrl);
-  const pathParts = url.pathname.split("/").filter(Boolean);
+// baseUrl: the WebDAV base URL (e.g., https://dav.jianguoyun.com/dav)
+// filename: the filename which may contain subdirectories (e.g., "subdir/file.json")
+async function ensureParentDirectories(baseUrl: string, filename: string, headers: HeadersInit): Promise<void> {
+  // Extract subdirectory path from filename (e.g., "subdir/file.json" -> ["subdir"])
+  const filenameParts = filename.split("/").filter(Boolean);
 
-  // Remove the filename (last part) to get directory path
-  pathParts.pop();
+  // Remove the actual filename, keeping only directory parts
+  filenameParts.pop();
 
-  if (pathParts.length === 0) {
-    return; // No parent directories needed
+  if (filenameParts.length === 0) {
+    return; // No subdirectories in filename, nothing to create
   }
 
-  // Create each directory level
-  let currentPath = "";
-  for (const part of pathParts) {
+  // Normalize base URL (remove trailing slash)
+  const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
+
+  // Create each subdirectory level under the base URL
+  let currentPath = normalizedBaseUrl;
+  for (const part of filenameParts) {
     currentPath += "/" + part;
-    const dirUrl = `${url.origin}${currentPath}`;
+    // Ensure directory URL ends with / for MKCOL
+    const dirUrl = currentPath.endsWith("/") ? currentPath : currentPath + "/";
 
     try {
       // Try to create directory with MKCOL
       const response = await fetch(dirUrl, {
         method: "MKCOL",
-        headers,
+        headers: {
+          ...headers,
+          "Content-Type": "application/xml", // Some WebDAV servers require this for MKCOL
+        },
       });
 
-      // 201 = Created, 405 = Already exists (Method Not Allowed), 409 = Already exists (坚果云)
-      if (response.ok || response.status === 201 || response.status === 405 || response.status === 409) {
-        console.log(`[WebDAV] Directory ensured: ${currentPath}`);
-      } else if (response.status === 401 || response.status === 403) {
-        throw new Error(`WebDAV authentication failed: ${response.status}`);
+      // 201 = Created, 405 = Already exists (Method Not Allowed)
+      // 301/302 = Redirect (坚果云 already exists)
+      // 409 = Conflict (坚果云 already exists or parent missing)
+      if (response.ok || response.status === 201 || response.status === 405 ||
+          response.status === 301 || response.status === 302 || response.status === 409) {
+        console.log(`[WebDAV] Directory ensured: ${part} (status: ${response.status})`);
+      } else if (response.status === 401) {
+        throw new Error(`WebDAV authentication failed: invalid credentials`);
+      } else if (response.status === 403) {
+        // 403 on MKCOL usually means directory already exists or is the root sync folder
+        // Try to continue - the actual PUT will fail if there's a real permission issue
+        console.log(`[WebDAV] MKCOL returned 403 for ${part}, assuming directory exists`);
+      } else {
+        console.log(`[WebDAV] MKCOL returned ${response.status} for ${part}, continuing...`);
       }
-      // Other errors are ignored - directory might already exist
     } catch (error) {
-      // Network errors or auth errors should be thrown
-      if (error instanceof Error && error.message.includes("authentication")) {
-        throw error;
-      }
-      console.log(`[WebDAV] MKCOL for ${currentPath}: ${error}`);
+      // Network errors should be logged but not thrown - let PUT fail with clearer error
+      console.log(`[WebDAV] MKCOL error for ${part}: ${error}`);
     }
   }
 }
@@ -117,11 +130,21 @@ export async function POST(request: NextRequest) {
       mode?: "merge" | "replace";
     };
 
-    // Use environment variables as fallback
+    // Use environment variables as fallback (empty string also falls back to env)
     const finalUrl = url || ENV_WEBDAV_URL;
     const finalUsername = username || ENV_WEBDAV_USERNAME;
     const finalPassword = password || ENV_WEBDAV_PASSWORD;
     const finalFilename = filename || ENV_WEBDAV_FILENAME;
+
+    // Debug logging (remove in production)
+    console.log("[WebDAV] Config resolution:", {
+      urlSource: url ? "request" : "env",
+      usernameSource: username ? "request" : "env",
+      passwordSource: password ? "request" : "env",
+      filenameSource: filename ? "request" : "env",
+      hasPassword: !!finalPassword,
+      envPasswordSet: !!ENV_WEBDAV_PASSWORD,
+    });
 
     if (!action || !finalUrl) {
       return NextResponse.json(
@@ -165,7 +188,8 @@ export async function POST(request: NextRequest) {
       };
 
       // Ensure parent directories exist before uploading
-      await ensureParentDirectories(webdavUrl, headers);
+      // Pass base URL and filename separately so MKCOL only creates subdirs in filename
+      await ensureParentDirectories(finalUrl, finalFilename || "newapi-channels.json", headers);
 
       const response = await fetch(webdavUrl, {
         method: "PUT",
