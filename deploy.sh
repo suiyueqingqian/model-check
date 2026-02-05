@@ -552,7 +552,7 @@ start_services() {
         $compose_cmd up -d --build
     else
         info "拉取预构建镜像..."
-        if $compose_cmd pull app 2>/dev/null; then
+        if $compose_cmd pull app; then
             $compose_cmd up -d
         else
             error "无法拉取镜像，已中止启动"
