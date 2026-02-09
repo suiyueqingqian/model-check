@@ -30,6 +30,7 @@ interface Channel {
   apiKey: string;
   proxy: string | null;
   enabled: boolean;
+  models?: { lastStatus: boolean | null }[];
   sortOrder?: number;
   _count?: { models: number };
 }
@@ -52,6 +53,34 @@ const initialFormData: ChannelFormData = {
   apiKey: "",
   proxy: "",
 };
+
+function getChannelBorderClass(channel: Channel): string {
+  if ((channel._count?.models ?? 0) === 0) {
+    return "border-red-500";
+  }
+
+  const statuses = channel.models?.map((m) => m.lastStatus) || [];
+  if (statuses.length === 0) {
+    return "border-border";
+  }
+
+  const availableCount = statuses.filter((status) => status === true).length;
+  const unavailableCount = statuses.filter((status) => status === false).length;
+
+  if (availableCount === statuses.length) {
+    return "border-green-500";
+  }
+
+  if (unavailableCount === statuses.length) {
+    return "border-red-500";
+  }
+
+  if (availableCount > 0 && availableCount < statuses.length) {
+    return "border-yellow-500";
+  }
+
+  return "border-border";
+}
 
 export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const { token } = useAuth();
@@ -722,7 +751,8 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                   onDrop={() => handleDropChannel(channel.id)}
                   onDragEnd={() => setDraggingChannelId(null)}
                   className={cn(
-                    "flex flex-col p-3 rounded-md border border-border bg-background",
+                    "flex flex-col p-3 rounded-md border bg-background",
+                    getChannelBorderClass(channel),
                     draggingChannelId === channel.id && "opacity-60"
                   )}
                 >

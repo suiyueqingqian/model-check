@@ -2,9 +2,9 @@
 
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, FormEvent } from "react";
 import Link from "next/link";
-import { Sun, Moon, LogIn, LogOut, Activity, Play, Square, Loader2, Wifi, WifiOff, Clock, Zap, Timer, Search, Filter, X, Github, FileText, Settings } from "lucide-react";
+import { Sun, Moon, LogIn, LogOut, Activity, Play, Square, Loader2, Wifi, WifiOff, Clock, Zap, Timer, Search, Filter, X, Github, FileText, Settings, Upload } from "lucide-react";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/ui/toast";
@@ -36,8 +36,15 @@ interface SchedulerStatus {
   };
 }
 
+interface GuestUploadForm {
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+}
+
 interface HeaderProps {
   onLoginClick: () => void;
+  onGuestUploadSuccess?: () => void;
   isConnected?: boolean;
   isDetectionRunning?: boolean;
   // Filter props
@@ -54,6 +61,7 @@ interface HeaderProps {
 
 export function Header({
   onLoginClick,
+  onGuestUploadSuccess,
   isConnected = false,
   isDetectionRunning = false,
   search = "",
@@ -75,6 +83,13 @@ export function Header({
   const [showFilters, setShowFilters] = useState(false);
   const [countdown, setCountdown] = useState<string>("-");
   const [showSchedulerModal, setShowSchedulerModal] = useState(false);
+  const [showGuestUploadModal, setShowGuestUploadModal] = useState(false);
+  const [guestUploading, setGuestUploading] = useState(false);
+  const [guestUploadForm, setGuestUploadForm] = useState<GuestUploadForm>({
+    name: "",
+    baseUrl: "",
+    apiKey: "",
+  });
   const filterRef = useRef<HTMLDivElement>(null);
 
   // Close filter panel when clicking outside
@@ -223,6 +238,45 @@ export function Header({
       update(toastId, "网络错误", "error");
     } finally {
       setIsStopping(false);
+    }
+  };
+
+  const handleGuestUpload = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (guestUploading) return;
+
+    setGuestUploading(true);
+
+    try {
+      const response = await fetch("/api/channel/public-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(guestUploadForm),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const message = data?.code === "MODEL_FETCH_FAILED"
+          ? "请检查你的渠道是否可用"
+          : data?.error || "上传失败";
+        toast(message, "error");
+        return;
+      }
+
+      toast("上传成功，等待审核", "success");
+      onGuestUploadSuccess?.();
+      setShowGuestUploadModal(false);
+      setGuestUploadForm({
+        name: "",
+        baseUrl: "",
+        apiKey: "",
+      });
+    } catch {
+      const message = "上传失败，请稍后重试";
+      toast(message, "error");
+    } finally {
+      setGuestUploading(false);
     }
   };
 
@@ -486,6 +540,20 @@ export function Header({
             )
           )}
 
+          {/* Guest Upload (unauthenticated only) */}
+          {!isAuthenticated && (
+            <button
+              onClick={() => {
+                setShowGuestUploadModal(true);
+              }}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-sm font-medium border border-input bg-background hover:bg-accent transition-colors"
+              title="上传渠道"
+            >
+              <Upload className="h-4 w-4" />
+              <span className="hidden sm:inline">上传渠道</span>
+            </button>
+          )}
+
           {/* Theme Toggle */}
           <button
             onClick={toggleTheme}
@@ -520,6 +588,106 @@ export function Header({
         </div>
       </div>
     </header>
+
+    {/* Guest Upload Modal */}
+    {showGuestUploadModal && (
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="guest-upload-modal-title"
+      >
+        <div
+          className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+          onClick={() => {
+            if (!guestUploading) {
+              setShowGuestUploadModal(false);
+            }
+          }}
+          aria-hidden="true"
+        />
+        <div className="relative w-full max-w-lg mx-4 bg-card rounded-lg shadow-lg border border-border max-h-[90vh] overflow-y-auto">
+          <div className="flex items-center justify-between p-4 border-b border-border">
+            <h2 id="guest-upload-modal-title" className="text-lg font-semibold">上传渠道</h2>
+            <button
+              onClick={() => setShowGuestUploadModal(false)}
+              disabled={guestUploading}
+              className="p-1 rounded-md hover:bg-accent transition-colors disabled:opacity-50"
+              aria-label="关闭"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <form onSubmit={handleGuestUpload} className="p-4 space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                渠道名称 <span className="text-destructive">*</span>
+              </label>
+              <input
+                type="text"
+                value={guestUploadForm.name}
+                onChange={(e) => setGuestUploadForm((prev) => ({ ...prev, name: e.target.value }))}
+                className="w-full px-3 py-2 rounded-md border border-input bg-background"
+                placeholder="例如：我的 OpenAI 渠道"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                Base URL <span className="text-destructive">*</span>
+              </label>
+              <input
+                type="url"
+                value={guestUploadForm.baseUrl}
+                onChange={(e) => setGuestUploadForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
+                className="w-full px-3 py-2 rounded-md border border-input bg-background"
+                placeholder="https://api.openai.com"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">
+                Key <span className="text-destructive">*</span>
+              </label>
+              <input
+                type="password"
+                value={guestUploadForm.apiKey}
+                onChange={(e) => setGuestUploadForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+                className="w-full px-3 py-2 rounded-md border border-input bg-background"
+                placeholder="sk-..."
+                required
+              />
+            </div>
+
+            <div className="p-3 rounded-md bg-yellow-500/10 border border-yellow-500/20 text-sm text-yellow-700 dark:text-yellow-300">
+              请不要上传请求受限的渠道，防止渠道被封，本站概不负责。
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowGuestUploadModal(false)}
+                disabled={guestUploading}
+                className="px-4 py-2 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                disabled={guestUploading}
+                className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors flex items-center gap-2"
+              >
+                {guestUploading && <Loader2 className="h-4 w-4 animate-spin" />}
+                上传
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
 
     {/* Scheduler Modal - outside header to avoid sticky positioning issues */}
     <SchedulerModal

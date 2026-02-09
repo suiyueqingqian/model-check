@@ -99,9 +99,9 @@ export async function GET(request: NextRequest) {
                 latency: true,
                 statusCode: true,
                 endpointType: true,
-                // Only include sensitive fields for authenticated users
-                responseContent: authenticated,
-                errorMsg: authenticated,
+                // Detection messages should be visible even when not logged in
+                responseContent: true,
+                errorMsg: true,
                 createdAt: true,
               },
               orderBy: { createdAt: "desc" },

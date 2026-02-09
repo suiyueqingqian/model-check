@@ -9,13 +9,89 @@ import http from "http";
 // Cache proxy agents to avoid creating new ones for each request
 const httpProxyAgentCache = new Map<string, ProxyAgent>();
 const socksProxyAgentCache = new Map<string, SocksProxyAgent>();
+const SUPPORTED_PROXY_PROTOCOLS = new Set(["http:", "https:", "socks5:", "socks4:"]);
 
 /**
- * Check if a proxy URL is SOCKS5
+ * Normalize and validate proxy URL.
+ * - trims spaces
+ * - strips URL fragment (e.g. #note)
+ * - maps socks:// and socks5h:// to socks5://
+ */
+function normalizeProxyUrl(rawProxyUrl: string): string {
+  const trimmed = rawProxyUrl.trim();
+  if (!trimmed) {
+    throw new Error("代理地址不能为空");
+  }
+
+  // Allow users to append notes via fragment (#xxx)
+  const withoutFragment = trimmed.replace(/#.*$/, "");
+
+  let url: URL;
+  try {
+    url = new URL(withoutFragment);
+  } catch {
+    throw new Error("代理地址格式不正确，请使用 http://、https://、socks5://");
+  }
+
+  const protocol = url.protocol.toLowerCase();
+  if (protocol === "socks:" || protocol === "socks5h:") {
+    url.protocol = "socks5:";
+  }
+
+  if (!SUPPORTED_PROXY_PROTOCOLS.has(url.protocol.toLowerCase())) {
+    throw new Error("不支持的代理协议，请使用 http://、https://、socks5://、socks4://");
+  }
+
+  return url.toString();
+}
+
+/**
+ * Check if a proxy URL is SOCKS proxy
  */
 function isSocksProxy(proxyUrl: string): boolean {
-  const lower = proxyUrl.toLowerCase();
-  return lower.startsWith("socks5://") || lower.startsWith("socks4://") || lower.startsWith("socks://");
+  const protocol = new URL(proxyUrl).protocol.toLowerCase();
+  return protocol === "socks5:" || protocol === "socks4:";
+}
+
+function maskProxyUrl(proxyUrl: string): string {
+  try {
+    const url = new URL(proxyUrl);
+    if (url.password) {
+      url.password = "****";
+    }
+    return url.toString();
+  } catch {
+    return proxyUrl;
+  }
+}
+
+function wrapProxyError(error: unknown, proxyUrl: string): Error {
+  if (error instanceof Error && error.name === "AbortError") {
+    return error;
+  }
+
+  const maskedProxy = maskProxyUrl(proxyUrl);
+  if (error instanceof Error) {
+    const errnoError = error as Error & { code?: string; cause?: { code?: string } };
+    const code = errnoError.code || errnoError.cause?.code;
+    const message = error.message || "";
+
+    if (code === "ECONNREFUSED") {
+      return new Error(`代理连接被拒绝: ${maskedProxy}`);
+    }
+    if (code === "ENOTFOUND") {
+      return new Error(`代理地址无法解析: ${maskedProxy}`);
+    }
+    if (code === "ETIMEDOUT" || code === "ESOCKETTIMEDOUT") {
+      return new Error(`代理连接超时: ${maskedProxy}`);
+    }
+    if (/auth|authentication|unauthorized|407/i.test(message)) {
+      return new Error(`代理认证失败: ${maskedProxy}`);
+    }
+    return new Error(`代理请求失败: ${message}`);
+  }
+
+  return new Error(`代理请求失败: ${maskedProxy}`);
 }
 
 /**
@@ -160,19 +236,24 @@ export async function proxyFetch(
   proxy?: string | null
 ): Promise<Response> {
   if (proxy) {
-    if (isSocksProxy(proxy)) {
-      // Use SOCKS proxy
-      const agent = getSocksProxyAgent(proxy);
-      return socksFetch(url, options, agent);
-    } else {
-      // Use HTTP/HTTPS proxy via undici
-      const agent = getHttpProxyAgent(proxy);
-      const response = await undiciFetch(url, {
-        ...options,
-        dispatcher: agent,
-      });
-      // Convert undici Response to standard Response for compatibility
-      return response as unknown as Response;
+    const normalizedProxy = normalizeProxyUrl(proxy);
+    try {
+      if (isSocksProxy(normalizedProxy)) {
+        // Use SOCKS proxy
+        const agent = getSocksProxyAgent(normalizedProxy);
+        return socksFetch(url, options, agent);
+      } else {
+        // Use HTTP/HTTPS proxy via undici
+        const agent = getHttpProxyAgent(normalizedProxy);
+        const response = await undiciFetch(url, {
+          ...options,
+          dispatcher: agent,
+        });
+        // Convert undici Response to standard Response for compatibility
+        return response as unknown as Response;
+      }
+    } catch (error) {
+      throw wrapProxyError(error, normalizedProxy);
     }
   }
 

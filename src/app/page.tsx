@@ -232,6 +232,7 @@ export default function Home() {
     <div className="min-h-screen flex flex-col">
       <Header
         onLoginClick={() => setShowLogin(true)}
+        onGuestUploadSuccess={() => setRefreshKey((k) => k + 1)}
         isConnected={isConnected}
         isDetectionRunning={isDetectionRunning}
         search={search}
