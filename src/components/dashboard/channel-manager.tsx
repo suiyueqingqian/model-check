@@ -18,9 +18,11 @@ import {
   Download,
   Upload,
   Cloud,
+  Key,
 } from "lucide-react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/ui/toast";
+import { ModelFilterModal } from "@/components/dashboard/model-filter-modal";
 import { cn } from "@/lib/utils";
 
 interface Channel {
@@ -32,7 +34,9 @@ interface Channel {
   enabled: boolean;
   models?: { lastStatus: boolean | null }[];
   sortOrder?: number;
-  _count?: { models: number };
+  keyMode?: string;
+  routeStrategy?: string;
+  _count?: { models: number; channelKeys: number };
 }
 
 interface ChannelManagerProps {
@@ -43,15 +47,33 @@ interface ChannelManagerProps {
 interface ChannelFormData {
   name: string;
   baseUrl: string;
-  apiKey: string;
   proxy: string;
+  routeStrategy: "round_robin" | "random";
+  multiKeys: string;
+}
+
+interface ChannelKeyInfo {
+  id: string;
+  maskedKey: string;
+  fullKey: string;
+  lastValid: boolean | null;
+}
+
+interface ValidateResult {
+  keyId: string | null;
+  maskedKey: string;
+  valid: boolean;
+  modelCount: number;
+  models: string[];
+  error?: string;
 }
 
 const initialFormData: ChannelFormData = {
   name: "",
   baseUrl: "",
-  apiKey: "",
   proxy: "",
+  routeStrategy: "round_robin",
+  multiKeys: "",
 };
 
 function getChannelBorderClass(channel: Channel): string {
@@ -117,6 +139,29 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
   const [importText, setImportText] = useState("");
 
+  // Channel keys info (for multi-key edit display)
+  const [channelKeysInfo, setChannelKeysInfo] = useState<ChannelKeyInfo[]>([]);
+  const [validating, setValidating] = useState(false);
+  const [validateResults, setValidateResults] = useState<ValidateResult[]>([]);
+  const [maskedApiKey, setMaskedApiKey] = useState<string>("");
+
+  // Key management in edit modal
+  const [keyViewMode, setKeyViewMode] = useState<"list" | "edit">("list");
+  const [newSingleKey, setNewSingleKey] = useState("");
+  const [addingSingleKey, setAddingSingleKey] = useState(false);
+  const [deletingKeyId, setDeletingKeyId] = useState<string | null>(null);
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const [mainKeyFull, setMainKeyFull] = useState<string>("");
+  const [editingKeyTarget, setEditingKeyTarget] = useState<string | null>(null); // "main" | keyId
+  const [editKeyValue, setEditKeyValue] = useState("");
+  const [savingKeys, setSavingKeys] = useState(false);
+
+  // Model filter modal state
+  const [showFilterModal, setShowFilterModal] = useState(false);
+  const [filterChannels, setFilterChannels] = useState<{ id: string; name: string }[]>([]);
+  const [syncAllMode, setSyncAllMode] = useState(false);
+  const [filterFromEdit, setFilterFromEdit] = useState(false);
+
   // Pagination state
   const [channelPage, setChannelPage] = useState(1);
   const CHANNELS_PER_PAGE = 12;
@@ -141,11 +186,12 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         if (showModal) setShowModal(false);
         if (showImportModal) setShowImportModal(false);
         if (showWebDAVModal) setShowWebDAVModal(false);
+        if (showFilterModal) setShowFilterModal(false);
       }
     };
     document.addEventListener("keydown", handleEsc);
     return () => document.removeEventListener("keydown", handleEsc);
-  }, [showModal, showImportModal, showWebDAVModal]);
+  }, [showModal, showImportModal, showWebDAVModal, showFilterModal]);
 
   // Load cloud sync config from localStorage and API
   useEffect(() => {
@@ -249,19 +295,61 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const handleAdd = () => {
     setEditingChannel(null);
     setFormData(initialFormData);
+    setMaskedApiKey("");
+    setMainKeyFull("");
+    setChannelKeysInfo([]);
+    setValidateResults([]);
     setShowModal(true);
   };
 
   // Open edit modal
-  const handleEdit = (channel: Channel) => {
+  const handleEdit = async (channel: Channel) => {
     setEditingChannel(channel);
+    setMaskedApiKey(channel.apiKey);
+    setMainKeyFull("");
     setFormData({
       name: channel.name,
       baseUrl: channel.baseUrl,
-      apiKey: "", // Don't pre-fill API key for security
       proxy: channel.proxy || "",
+      routeStrategy: (channel.routeStrategy as "round_robin" | "random") || "round_robin",
+      multiKeys: "",
     });
+    setChannelKeysInfo([]);
+    setValidateResults([]);
+    setKeyViewMode("list");
+    setNewSingleKey("");
+    setEditingKeyTarget(null);
     setShowModal(true);
+    // Load existing keys (full values) + main key
+    try {
+      const [keysRes, mainKeyRes] = await Promise.all([
+        fetch(`/api/channel/${channel.id}/keys`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`/api/channel/${channel.id}/key`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
+      if (keysRes.ok) {
+        const data = await keysRes.json();
+        if (data.keys?.length > 0) {
+          setChannelKeysInfo(data.keys.map((k: { id: string; maskedKey: string; fullKey: string; lastValid?: boolean | null }) => ({
+            id: k.id,
+            maskedKey: k.maskedKey,
+            fullKey: k.fullKey,
+            lastValid: k.lastValid ?? null,
+          })));
+        }
+      }
+      if (mainKeyRes.ok) {
+        const data = await mainKeyRes.json();
+        if (data.apiKey) {
+          setMainKeyFull(data.apiKey);
+        }
+      }
+    } catch {
+      // ignore
+    }
   };
 
   // Submit form (create or update)
@@ -271,22 +359,28 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     setError(null);
 
     try {
-      const body = {
-        ...formData,
-        proxy: formData.proxy || null,
-      };
-
       if (editingChannel) {
-        // Update - only include apiKey if provided
+        // Update
         const updateBody: Record<string, unknown> = {
           id: editingChannel.id,
-          name: body.name,
-          baseUrl: body.baseUrl,
-          proxy: body.proxy,
+          name: formData.name,
+          baseUrl: formData.baseUrl,
+          proxy: formData.proxy || null,
+          keyMode: "multi",
+          routeStrategy: formData.routeStrategy,
         };
-        if (body.apiKey) {
-          updateBody.apiKey = body.apiKey;
+
+        // Send keys if textarea has content (works in both edit and list mode after editing)
+        let keysSubmitted = false;
+        if (formData.multiKeys.trim()) {
+          const keyList = formData.multiKeys.split(/[,\n]/).map((k: string) => k.trim()).filter(Boolean);
+          if (keyList.length > 0) {
+            updateBody.apiKey = keyList[0];
+            updateBody.keys = formData.multiKeys;
+            keysSubmitted = true;
+          }
         }
+        // In list mode, keys are managed individually via API, no need to send
 
         const response = await fetch("/api/channel", {
           method: "PUT",
@@ -297,43 +391,286 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
           const data = await response.json();
           throw new Error(data.error || "更新渠道失败");
         }
-      } else {
-        // Create
-        if (!body.apiKey) {
-          throw new Error("API Key 不能为空");
+
+        setShowModal(false);
+        // 只有本次提交了 keys 才打开模型选择页面，否则直接保存关闭
+        if (keysSubmitted) {
+          setFilterChannels([{ id: editingChannel.id, name: editingChannel.name }]);
+          setFilterFromEdit(true);
+          setSyncAllMode(false);
+          setShowFilterModal(true);
         }
+      } else {
+        // Create - always use textarea
+        const keyList = formData.multiKeys.split(/[,\n]/).map((k: string) => k.trim()).filter(Boolean);
+        if (keyList.length === 0) {
+          throw new Error("请至少输入一个 API Key");
+        }
+        const createBody: Record<string, unknown> = {
+          name: formData.name,
+          baseUrl: formData.baseUrl,
+          apiKey: keyList[0],
+          proxy: formData.proxy || null,
+          keyMode: "multi",
+          routeStrategy: formData.routeStrategy,
+          keys: formData.multiKeys,
+        };
+
         const response = await fetch("/api/channel", {
           method: "POST",
           headers,
-          body: JSON.stringify(body),
+          body: JSON.stringify(createBody),
         });
         if (!response.ok) {
           const data = await response.json();
           throw new Error(data.error || "创建渠道失败");
         }
 
-        // Auto sync models after creating channel
         const createData = await response.json();
-
         if (createData.channel?.id) {
-          try {
-            await fetch(`/api/channel/${createData.channel.id}/sync`, {
-              method: "POST",
-              headers,
-            });
-          } catch {
-            // Ignore sync errors, channel is created
-          }
+          setShowModal(false);
+          setFilterChannels([{ id: createData.channel.id, name: formData.name }]);
+          setFilterFromEdit(false);
+          setSyncAllMode(false);
+          setShowFilterModal(true);
+        } else {
+          setShowModal(false);
         }
       }
 
-      setShowModal(false);
       fetchChannels();
       onUpdate();
     } catch (err) {
       setError(err instanceof Error ? err.message : "操作失败");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // Validate keys
+  const handleValidateKeys = async () => {
+    if (!editingChannel || validating) return;
+    setValidating(true);
+    setValidateResults([]);
+    try {
+      const res = await fetch(`/api/channel/${editingChannel.id}/validate-keys`, {
+        method: "POST",
+        headers,
+      });
+      if (!res.ok) throw new Error("验证失败");
+      const data = await res.json();
+      const results: ValidateResult[] = data.results || [];
+      setValidateResults(results);
+      // Update channelKeysInfo lastValid based on results
+      setChannelKeysInfo((prev) =>
+        prev.map((k) => {
+          const result = results.find((r) => r.keyId === k.id);
+          if (result) return { ...k, lastValid: result.valid };
+          return k;
+        })
+      );
+      // Simplified result toast
+      const validCount = results.filter((r) => r.valid).length;
+      const invalidCount = results.filter((r) => !r.valid).length;
+      toast(`验证完成：${validCount} 个有效，${invalidCount} 个无效`, validCount > 0 ? "success" : "error");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "验证失败", "error");
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  // Add single key to existing channel
+  const handleAddSingleKey = async () => {
+    if (!editingChannel || !newSingleKey.trim() || addingSingleKey) return;
+    setAddingSingleKey(true);
+    try {
+      const res = await fetch(`/api/channel/${editingChannel.id}/keys`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ apiKey: newSingleKey.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "添加失败");
+      }
+      const data = await res.json();
+      const fullKeyValue = newSingleKey.trim();
+      setChannelKeysInfo((prev) => [
+        ...prev,
+        {
+          id: data.key.id,
+          maskedKey: data.key.apiKey,
+          fullKey: fullKeyValue,
+          lastValid: null,
+        },
+      ]);
+      setNewSingleKey("");
+      toast("Key 已添加", "success");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "添加失败", "error");
+    } finally {
+      setAddingSingleKey(false);
+    }
+  };
+
+  // Delete single key
+  const handleDeleteSingleKey = async (keyId: string) => {
+    if (!editingChannel) return;
+    setDeletingKeyId(keyId);
+    try {
+      const res = await fetch(`/api/channel/${editingChannel.id}/keys?keyId=${keyId}`, {
+        method: "DELETE",
+        headers,
+      });
+      if (!res.ok) throw new Error("删除失败");
+      setChannelKeysInfo((prev) => prev.filter((k) => k.id !== keyId));
+      setValidateResults((prev) => prev.filter((r) => r.keyId !== keyId));
+      toast("Key 已删除", "success");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "删除失败", "error");
+    } finally {
+      setDeletingKeyId(null);
+    }
+  };
+
+  // Delete main key: promote first extra key to main, then delete it from channelKey
+  const [deletingMainKey, setDeletingMainKey] = useState(false);
+  const handleDeleteMainKey = async () => {
+    if (!editingChannel || deletingMainKey) return;
+    if (channelKeysInfo.length === 0) {
+      toast("没有其他 Key 可提升为主 Key，无法删除", "error");
+      return;
+    }
+    setDeletingMainKey(true);
+    try {
+      const firstExtra = channelKeysInfo[0];
+      // Promote first extra key to main key
+      const res = await fetch("/api/channel", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ id: editingChannel.id, apiKey: firstExtra.fullKey }),
+      });
+      if (!res.ok) throw new Error("更新失败");
+      // Delete the promoted key from channelKey table
+      await fetch(`/api/channel/${editingChannel.id}/keys?keyId=${firstExtra.id}`, {
+        method: "DELETE",
+        headers,
+      });
+      // Update local state
+      setMainKeyFull(firstExtra.fullKey);
+      const masked = firstExtra.fullKey.length > 12
+        ? firstExtra.fullKey.slice(0, 8) + "..." + firstExtra.fullKey.slice(-4)
+        : "***";
+      setMaskedApiKey(masked);
+      setChannelKeysInfo((prev) => prev.filter((k) => k.id !== firstExtra.id));
+      toast("主 Key 已删除，已提升下一个 Key 为主 Key", "success");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "删除失败", "error");
+    } finally {
+      setDeletingMainKey(false);
+    }
+  };
+
+  // Batch delete invalid keys
+  const handleBatchDeleteInvalid = async () => {
+    if (!editingChannel) return;
+    const invalidKeys = channelKeysInfo.filter((k) => k.lastValid === false);
+    if (invalidKeys.length === 0) return;
+    setBatchDeleting(true);
+    let deleted = 0;
+    for (const k of invalidKeys) {
+      try {
+        await fetch(`/api/channel/${editingChannel.id}/keys?keyId=${k.id}`, {
+          method: "DELETE",
+          headers,
+        });
+        deleted++;
+      } catch {
+        // continue
+      }
+    }
+    const deletedIds = new Set(invalidKeys.map((k) => k.id));
+    setChannelKeysInfo((prev) => prev.filter((k) => !deletedIds.has(k.id)));
+    setValidateResults((prev) => prev.filter((r) => !r.keyId || !deletedIds.has(r.keyId)));
+    toast(`已删除 ${deleted} 个无效 Key`, "success");
+    setBatchDeleting(false);
+  };
+
+  // Save inline key edit
+  const handleEditKeySave = async () => {
+    if (!editingChannel || !editingKeyTarget || !editKeyValue.trim()) return;
+    try {
+      if (editingKeyTarget === "main") {
+        // Update main key via channel API
+        const res = await fetch("/api/channel", {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({ id: editingChannel.id, apiKey: editKeyValue.trim() }),
+        });
+        if (!res.ok) throw new Error("更新失败");
+        setMainKeyFull(editKeyValue.trim());
+        const masked = editKeyValue.trim().length > 12
+          ? editKeyValue.trim().slice(0, 8) + "..." + editKeyValue.trim().slice(-4)
+          : "***";
+        setMaskedApiKey(masked);
+      } else {
+        // Update extra key
+        const res = await fetch(`/api/channel/${editingChannel.id}/keys`, {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({ keyId: editingKeyTarget, apiKey: editKeyValue.trim() }),
+        });
+        if (!res.ok) throw new Error("更新失败");
+        const masked = editKeyValue.trim().length > 12
+          ? editKeyValue.trim().slice(0, 8) + "..." + editKeyValue.trim().slice(-4)
+          : "***";
+        setChannelKeysInfo((prev) =>
+          prev.map((k) =>
+            k.id === editingKeyTarget
+              ? { ...k, fullKey: editKeyValue.trim(), maskedKey: masked }
+              : k
+          )
+        );
+      }
+      setEditingKeyTarget(null);
+      toast("Key 已更新", "success");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "更新失败", "error");
+    }
+  };
+
+  // Save keys from textarea (edit mode) without closing modal
+  const handleSaveKeysFromTextarea = async () => {
+    if (!editingChannel || savingKeys) return;
+    const keyList = formData.multiKeys.split(/[,\n]/).map((k: string) => k.trim()).filter(Boolean);
+    if (keyList.length === 0) {
+      toast("请至少输入一个 Key", "error");
+      return;
+    }
+    setSavingKeys(true);
+    try {
+      const res = await fetch("/api/channel", {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({
+          id: editingChannel.id,
+          apiKey: keyList[0],
+          keyMode: "multi",
+          keys: formData.multiKeys,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "保存失败");
+      }
+      toast(`已保存 ${keyList.length} 个 Key`, "success");
+      setFormData((prev) => ({ ...prev, multiKeys: "" }));
+      fetchChannels();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "保存失败", "error");
+    } finally {
+      setSavingKeys(false);
     }
   };
 
@@ -693,14 +1030,17 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              handleSyncAll();
+              setSyncAllMode(true);
+              setFilterFromEdit(false);
+              setFilterChannels(channels.map((c) => ({ id: c.id, name: c.name })));
+              setShowFilterModal(true);
             }}
-            disabled={syncingAll || channels.length === 0}
+            disabled={channels.length === 0}
             className="inline-flex items-center justify-center w-8 h-8 rounded-md border border-input bg-background hover:bg-accent transition-colors disabled:opacity-50"
             title="全量同步模型"
             aria-label="全量同步模型"
           >
-            {syncingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            <RefreshCw className="h-4 w-4" />
           </button>
 
           {/* 云通知按钮 */}
@@ -767,8 +1107,14 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                     {channel.baseUrl}
                   </div>
                   <div className="text-xs text-muted-foreground mt-1">
-                    {channel._count?.models || 0} 个模型 | Key:{" "}
-                    {channel.apiKey}
+                    {channel._count?.models || 0} 个模型
+                    {(channel._count?.channelKeys ?? 0) > 0 && (
+                      <> | <Key className="inline h-3 w-3" /> {(channel._count?.channelKeys ?? 0) + 1} 个 Key</>
+                    )}
+                    {channel.keyMode === "multi" && (
+                      <> | {channel.routeStrategy === "random" ? "随机" : "轮询"}</>
+                    )}
+                    {" "}| Key: {channel.apiKey}
                   </div>
                   {/* Sync status message */}
                   {syncStatus[channel.id] && (
@@ -800,18 +1146,17 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                       )}
                     </button>
                     <button
-                      onClick={() => handleSync(channel.id)}
-                      disabled={syncingId === channel.id}
-                      className="p-2 rounded-md hover:bg-accent transition-colors disabled:opacity-50"
+                      onClick={() => {
+                        setSyncAllMode(false);
+                        setFilterFromEdit(false);
+                        setFilterChannels([{ id: channel.id, name: channel.name }]);
+                        setShowFilterModal(true);
+                      }}
+                      className="p-2 rounded-md hover:bg-accent transition-colors"
                       title="同步模型列表"
                       aria-label="同步模型列表"
                     >
-                      <RefreshCw
-                        className={cn(
-                          "h-4 w-4 text-blue-500",
-                          syncingId === channel.id && "animate-spin"
-                        )}
-                      />
+                      <RefreshCw className="h-4 w-4 text-blue-500" />
                     </button>
                     <button
                       onClick={() => handleEdit(channel)}
@@ -952,26 +1297,320 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                 />
               </div>
 
-              {/* API Key */}
+              {/* API Key + View Toggle + Route Strategy (same line) */}
               <div>
-                <label className="block text-sm font-medium mb-1">
-                  API Key{" "}
-                  {!editingChannel && (
-                    <span className="text-destructive">*</span>
-                  )}
-                </label>
-                <input
-                  type="password"
-                  value={formData.apiKey}
-                  onChange={(e) =>
-                    setFormData({ ...formData, apiKey: e.target.value })
-                  }
-                  className="w-full px-3 py-2 rounded-md border border-input bg-background"
-                  placeholder={
-                    editingChannel ? "留空保持不变" : "sk-xxx..."
-                  }
-                  required={!editingChannel}
-                />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm font-medium">
+                    API Key{" "}
+                    {!editingChannel && (
+                      <span className="text-destructive">*</span>
+                    )}
+                  </label>
+                  <div className="flex items-center gap-3">
+                    {/* View toggle (only when editing with existing keys) */}
+                    {editingChannel && (channelKeysInfo.length > 0 || maskedApiKey) && (
+                      <div className="flex items-center rounded-md border border-input bg-background text-xs overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (keyViewMode === "edit" && editingChannel) {
+                              // 切回列表时从服务器重新加载 keys，避免使用临时 ID
+                              try {
+                                const [keysRes, mainKeyRes] = await Promise.all([
+                                  fetch(`/api/channel/${editingChannel.id}/keys`, {
+                                    headers: { Authorization: `Bearer ${token}` },
+                                  }),
+                                  fetch(`/api/channel/${editingChannel.id}/key`, {
+                                    headers: { Authorization: `Bearer ${token}` },
+                                  }),
+                                ]);
+                                if (keysRes.ok) {
+                                  const data = await keysRes.json();
+                                  setChannelKeysInfo((data.keys || []).map((k: { id: string; maskedKey: string; fullKey: string; lastValid?: boolean | null }) => ({
+                                    id: k.id,
+                                    maskedKey: k.maskedKey,
+                                    fullKey: k.fullKey,
+                                    lastValid: k.lastValid ?? null,
+                                  })));
+                                }
+                                if (mainKeyRes.ok) {
+                                  const data = await mainKeyRes.json();
+                                  if (data.apiKey) {
+                                    setMainKeyFull(data.apiKey);
+                                    const masked = data.apiKey.length > 12 ? data.apiKey.slice(0, 8) + "..." + data.apiKey.slice(-4) : "***";
+                                    setMaskedApiKey(masked);
+                                  }
+                                }
+                              } catch {
+                                // 加载失败时不阻塞切换
+                              }
+                              setValidateResults([]);
+                            }
+                            setKeyViewMode("list");
+                          }}
+                          className={cn(
+                            "px-2.5 py-1 transition-colors",
+                            keyViewMode === "list"
+                              ? "bg-primary text-primary-foreground"
+                              : "hover:bg-accent"
+                          )}
+                        >
+                          列表
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Always replace textarea with current keys
+                            const allKeys = [mainKeyFull, ...channelKeysInfo.map((k) => k.fullKey)].filter(Boolean).join("\n");
+                            setFormData((prev) => ({ ...prev, multiKeys: allKeys }));
+                            setKeyViewMode("edit");
+                          }}
+                          className={cn(
+                            "px-2.5 py-1 transition-colors",
+                            keyViewMode === "edit"
+                              ? "bg-primary text-primary-foreground"
+                              : "hover:bg-accent"
+                          )}
+                        >
+                          编辑
+                        </button>
+                      </div>
+                    )}
+                    {/* Route strategy */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-muted-foreground">路由</span>
+                      <div className="flex items-center rounded-md border border-input bg-background text-xs overflow-hidden">
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, routeStrategy: "round_robin" })}
+                          className={cn(
+                            "px-2 py-1 transition-colors",
+                            formData.routeStrategy === "round_robin"
+                              ? "bg-primary text-primary-foreground"
+                              : "hover:bg-accent"
+                          )}
+                        >
+                          轮询
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, routeStrategy: "random" })}
+                          className={cn(
+                            "px-2 py-1 transition-colors",
+                            formData.routeStrategy === "random"
+                              ? "bg-primary text-primary-foreground"
+                              : "hover:bg-accent"
+                          )}
+                        >
+                          随机
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* List view (editing existing channel) */}
+                {editingChannel && keyViewMode === "list" && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      共 {channelKeysInfo.length + (maskedApiKey ? 1 : 0)} 个Key
+                    </p>
+                    <div className="rounded-md border border-border max-h-48 overflow-y-auto divide-y divide-border">
+                      {/* Main key row */}
+                      {mainKeyFull && (
+                        <div className="flex items-center gap-2 px-2.5 py-1.5 bg-blue-500/5 overflow-hidden">
+                          {editingKeyTarget === "main" ? (
+                            <>
+                              <input
+                                type="text"
+                                value={editKeyValue}
+                                onChange={(e) => setEditKeyValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") { e.preventDefault(); handleEditKeySave(); }
+                                  if (e.key === "Escape") setEditingKeyTarget(null);
+                                }}
+                                className="flex-1 min-w-0 px-2 py-0.5 rounded border border-input bg-background text-xs font-mono"
+                                autoFocus
+                              />
+                              <button type="button" onClick={handleEditKeySave} className="shrink-0 p-0.5 rounded hover:text-primary"><Check className="h-3.5 w-3.5" /></button>
+                              <button type="button" onClick={() => setEditingKeyTarget(null)} className="shrink-0 p-0.5 rounded hover:text-destructive"><X className="h-3.5 w-3.5" /></button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-xs font-mono flex-1 min-w-0 truncate select-all" title={mainKeyFull}>{mainKeyFull}</span>
+                              <span className="text-xs text-blue-500 shrink-0">主</span>
+                              <button
+                                type="button"
+                                onClick={() => { setEditingKeyTarget("main"); setEditKeyValue(mainKeyFull); }}
+                                className="shrink-0 p-0.5 rounded hover:text-primary transition-colors"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleDeleteMainKey}
+                                disabled={deletingMainKey}
+                                className="shrink-0 p-0.5 rounded hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-50"
+                                title={channelKeysInfo.length === 0 ? "没有其他 Key 可提升，无法删除" : "删除主 Key，下一个 Key 将提升为主 Key"}
+                              >
+                                {deletingMainKey ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {/* Extra keys */}
+                      {channelKeysInfo.map((k) => (
+                        <div
+                          key={k.id}
+                          className={cn(
+                            "flex items-center gap-2 px-2.5 py-1.5 overflow-hidden",
+                            k.lastValid === true
+                              ? "bg-green-500/5"
+                              : k.lastValid === false
+                                ? "bg-red-500/5"
+                                : ""
+                          )}
+                        >
+                          {editingKeyTarget === k.id ? (
+                            <>
+                              <input
+                                type="text"
+                                value={editKeyValue}
+                                onChange={(e) => setEditKeyValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") { e.preventDefault(); handleEditKeySave(); }
+                                  if (e.key === "Escape") setEditingKeyTarget(null);
+                                }}
+                                className="flex-1 min-w-0 px-2 py-0.5 rounded border border-input bg-background text-xs font-mono"
+                                autoFocus
+                              />
+                              <button type="button" onClick={handleEditKeySave} className="shrink-0 p-0.5 rounded hover:text-primary"><Check className="h-3.5 w-3.5" /></button>
+                              <button type="button" onClick={() => setEditingKeyTarget(null)} className="shrink-0 p-0.5 rounded hover:text-destructive"><X className="h-3.5 w-3.5" /></button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-xs font-mono flex-1 min-w-0 truncate select-all" title={k.fullKey}>{k.fullKey}</span>
+                              <span
+                                className={cn(
+                                  "text-xs shrink-0",
+                                  k.lastValid === true
+                                    ? "text-green-600 dark:text-green-400"
+                                    : k.lastValid === false
+                                      ? "text-red-600 dark:text-red-400"
+                                      : "text-muted-foreground"
+                                )}
+                              >
+                                {k.lastValid === true ? "有效" : k.lastValid === false ? "无效" : ""}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => { setEditingKeyTarget(k.id); setEditKeyValue(k.fullKey); }}
+                                className="shrink-0 p-0.5 rounded hover:text-primary transition-colors"
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSingleKey(k.id)}
+                                disabled={deletingKeyId === k.id}
+                                className="shrink-0 p-0.5 rounded hover:bg-destructive/10 hover:text-destructive transition-colors disabled:opacity-50"
+                              >
+                                {deletingKeyId === k.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleValidateKeys}
+                        disabled={validating}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md border border-input bg-background hover:bg-accent disabled:opacity-50 transition-colors"
+                      >
+                        {validating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                        验证所有Key
+                      </button>
+                      {channelKeysInfo.some((k) => k.lastValid === false) && (
+                        <button
+                          type="button"
+                          onClick={handleBatchDeleteInvalid}
+                          disabled={batchDeleting}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md border border-red-500/50 text-red-600 dark:text-red-400 bg-red-500/5 hover:bg-red-500/10 disabled:opacity-50 transition-colors"
+                        >
+                          {batchDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                          删除无效Key
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Add single key */}
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={newSingleKey}
+                        onChange={(e) => setNewSingleKey(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); handleAddSingleKey(); }
+                        }}
+                        className="flex-1 px-3 py-1.5 rounded-md border border-input bg-background text-sm font-mono"
+                        placeholder="输入新 Key 添加..."
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddSingleKey}
+                        disabled={addingSingleKey || !newSingleKey.trim()}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                      >
+                        {addingSingleKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                        添加
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Edit view (batch textarea) - for editing existing channel when toggled to edit, or always for create */}
+                {(!editingChannel || (editingChannel && keyViewMode === "edit")) && (
+                  <div className="space-y-2">
+                    <textarea
+                      value={formData.multiKeys}
+                      onChange={(e) =>
+                        setFormData({ ...formData, multiKeys: e.target.value })
+                      }
+                      className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm font-mono resize-none"
+                      style={{ minHeight: "120px", maxHeight: "240px" }}
+                      placeholder={editingChannel ? "修改后保存将覆盖所有Key，一行一个" : "一行一个Key，第一个为主Key"}
+                    />
+                    {editingChannel && (
+                      <button
+                        type="button"
+                        onClick={handleSaveKeysFromTextarea}
+                        disabled={savingKeys || !formData.multiKeys.trim()}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+                      >
+                        {savingKeys ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                        保存 Key
+                      </button>
+                    )}
+                    {!editingChannel && (
+                      <p className="text-xs text-muted-foreground">
+                        支持一行一个或逗号分隔，第一个Key为主Key
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Proxy */}
@@ -994,14 +1633,14 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
               </div>
 
               {/* Error in modal */}
-              {error && submitting && (
+              {error && (
                 <div className="p-3 rounded-md bg-destructive/10 text-destructive text-sm">
                   {error}
                 </div>
               )}
 
               {/* Submit */}
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
@@ -1256,6 +1895,28 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Model Filter Modal - shown after save or sync */}
+      {showFilterModal && filterChannels.length > 0 && (
+        <ModelFilterModal
+          channels={filterChannels}
+          onClose={() => {
+            setShowFilterModal(false);
+            setFilterChannels([]);
+            setSyncAllMode(false);
+            setFilterFromEdit(false);
+          }}
+          onBack={filterFromEdit ? () => {
+            setShowFilterModal(false);
+            setFilterFromEdit(false);
+            setShowModal(true);
+          } : undefined}
+          onSyncComplete={() => {
+            fetchChannels();
+            onUpdate();
+          }}
+        />
       )}
     </div>
   );

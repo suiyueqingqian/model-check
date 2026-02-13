@@ -4,6 +4,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/middleware/auth";
 import { syncChannelModels } from "@/lib/queue/service";
 
+type SelectedModelPair = {
+  modelName: string;
+  keyId: string | null;
+};
+
 // POST /api/channel/[id]/sync - Sync models from channel
 export async function POST(
   request: NextRequest,
@@ -15,7 +20,31 @@ export async function POST(
   try {
     const { id } = await params;
 
-    const result = await syncChannelModels(id);
+    // Parse optional selectedModels from body
+    let selectedModels: string[] | undefined;
+    let selectedModelPairs: SelectedModelPair[] | undefined;
+    try {
+      const body = await request.json();
+      if (Array.isArray(body.selectedModels)) {
+        selectedModels = body.selectedModels;
+      }
+      if (Array.isArray(body.selectedModelPairs)) {
+        selectedModelPairs = body.selectedModelPairs
+          .filter(
+            (item: unknown): item is { modelName: unknown; keyId?: unknown } =>
+              typeof item === "object" && item !== null && "modelName" in item
+          )
+          .map((item: { modelName: unknown; keyId?: unknown }) => ({
+            modelName: typeof item.modelName === "string" ? item.modelName : "",
+            keyId: typeof item.keyId === "string" ? item.keyId : null,
+          }))
+          .filter((item: { modelName: string; keyId: string | null }) => item.modelName.trim().length > 0);
+      }
+    } catch {
+      // No body or invalid JSON, use default behavior (fetch from API)
+    }
+
+    const result = await syncChannelModels(id, selectedModels, selectedModelPairs);
 
     return NextResponse.json({
       success: true,

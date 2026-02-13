@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     const channels = await prisma.channel.findMany({
       include: {
         _count: {
-          select: { models: true },
+          select: { models: true, channelKeys: true },
         },
         models: {
           select: { lastStatus: true },
@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { name, baseUrl, apiKey, proxy, models } = body;
+    const { name, baseUrl, apiKey, proxy, models, keyMode = "single", routeStrategy = "round_robin", keys } = body;
 
     // Validate required fields
     if (!name || !baseUrl || !apiKey) {
@@ -73,14 +73,38 @@ export async function POST(request: NextRequest) {
           proxy: proxy || null,
           enabled: true,
           sortOrder: nextSortOrder,
+          keyMode,
+          routeStrategy,
         },
       });
     });
 
+    // Create channel keys for multi-key mode (skip first key, already saved as main apiKey)
+    if (keyMode === "multi" && keys && typeof keys === "string") {
+      const keyList = keys.split(/[,\n]/).map((k: string) => k.trim()).filter(Boolean);
+      const extraKeys = keyList.slice(1);
+      if (extraKeys.length > 0) {
+        await prisma.channelKey.createMany({
+          data: extraKeys.map((k: string) => ({
+            channelId: channel.id,
+            apiKey: k,
+          })),
+        });
+      }
+    }
+
     // If models are provided, create them with empty detectedEndpoints (will be populated after testing)
     if (models && Array.isArray(models) && models.length > 0) {
+      const uniqueModels = Array.from(
+        new Set(
+          models
+            .map((modelName: string) => modelName.trim())
+            .filter(Boolean)
+        )
+      );
+
       await prisma.model.createMany({
-        data: models.map((modelName: string) => ({
+        data: uniqueModels.map((modelName: string) => ({
           channelId: channel.id,
           modelName,
         })),
@@ -110,7 +134,7 @@ export async function PUT(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { id, name, baseUrl, apiKey, proxy, enabled, orders } = body;
+    const { id, name, baseUrl, apiKey, proxy, enabled, orders, keyMode, routeStrategy, keys } = body;
 
     // Batch update channel sort order
     if (Array.isArray(orders)) {
@@ -142,10 +166,32 @@ export async function PUT(request: NextRequest) {
     if (apiKey !== undefined) updateData.apiKey = apiKey;
     if (proxy !== undefined) updateData.proxy = proxy || null;
     if (enabled !== undefined) updateData.enabled = Boolean(enabled);
+    if (keyMode !== undefined) updateData.keyMode = keyMode;
+    if (routeStrategy !== undefined) updateData.routeStrategy = routeStrategy;
 
-    const channel = await prisma.channel.update({
-      where: { id },
-      data: updateData,
+    const channel = await prisma.$transaction(async (tx) => {
+      const updatedChannel = await tx.channel.update({
+        where: { id },
+        data: updateData,
+      });
+
+      // Update keys for multi-key mode
+      if (keyMode === "multi" && keys !== undefined && typeof keys === "string") {
+        await tx.channelKey.deleteMany({ where: { channelId: id } });
+        // Parse and create new keys, skip first key (already saved as main apiKey)
+        const keyList = keys.split(/[,\n]/).map((k: string) => k.trim()).filter(Boolean);
+        const extraKeys = keyList.slice(1);
+        if (extraKeys.length > 0) {
+          await tx.channelKey.createMany({
+            data: extraKeys.map((k: string) => ({
+              channelId: id,
+              apiKey: k,
+            })),
+          });
+        }
+      }
+
+      return updatedChannel;
     });
 
     return NextResponse.json({

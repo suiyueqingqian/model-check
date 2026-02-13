@@ -110,8 +110,23 @@ export async function POST(request: NextRequest) {
               apiKey: ch.apiKey,
               proxy: ch.proxy || null,
               enabled: ch.enabled ?? true,
+              keyMode: ch.keyMode || "single",
+              routeStrategy: ch.routeStrategy || "round_robin",
             },
           });
+          // Import channel keys if present
+          if (ch.channelKeys && Array.isArray(ch.channelKeys) && ch.channelKeys.length > 0) {
+            await prisma.channelKey.deleteMany({ where: { channelId: existing.id } });
+            await prisma.channelKey.createMany({
+              data: ch.channelKeys
+                .filter((k: { apiKey?: string }) => k.apiKey?.trim())
+                .map((k: { apiKey: string; name?: string | null }) => ({
+                  channelId: existing.id,
+                  apiKey: k.apiKey.trim(),
+                  name: k.name?.trim() || null,
+                })),
+            });
+          }
           importedChannelIds.push(existing.id);
           updated++;
           // Track for WebDAV sync
@@ -135,8 +150,22 @@ export async function POST(request: NextRequest) {
             apiKey: ch.apiKey,
             proxy: ch.proxy || null,
             enabled: ch.enabled ?? true,
+            keyMode: ch.keyMode || "single",
+            routeStrategy: ch.routeStrategy || "round_robin",
           },
         });
+        // Import channel keys if present
+        if (ch.channelKeys && Array.isArray(ch.channelKeys) && ch.channelKeys.length > 0) {
+          await prisma.channelKey.createMany({
+            data: ch.channelKeys
+              .filter((k: { apiKey?: string }) => k.apiKey?.trim())
+              .map((k: { apiKey: string; name?: string | null }) => ({
+                channelId: newChannel.id,
+                apiKey: k.apiKey.trim(),
+                name: k.name?.trim() || null,
+              })),
+          });
+        }
         importedChannelIds.push(newChannel.id);
         imported++;
         // Track for WebDAV sync

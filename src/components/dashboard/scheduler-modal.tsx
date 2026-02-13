@@ -7,7 +7,6 @@ import { useState, useEffect, FormEvent } from "react";
 import { X, Loader2, Clock } from "lucide-react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/ui/toast";
-import { ChannelModelSelector, type ChannelWithModels } from "@/components/ui/channel-model-selector";
 import { cn } from "@/lib/utils";
 
 interface SchedulerConfig {
@@ -127,7 +126,6 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [config, setConfig] = useState<SchedulerConfig | null>(null);
-  const [channels, setChannels] = useState<ChannelWithModels[]>([]);
   const [nextRun, setNextRun] = useState<string | null>(null);
 
   // Form state
@@ -140,8 +138,6 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
   const [maxGlobalConcurrency, setMaxGlobalConcurrency] = useState(30);
   const [minDelayMs, setMinDelayMs] = useState(3000);
   const [maxDelayMs, setMaxDelayMs] = useState(5000);
-  const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
-  const [selectedModelIds, setSelectedModelIds] = useState<Record<string, string[]>>({});
 
   // Load config on open
   useEffect(() => {
@@ -166,7 +162,6 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
         if (controller.signal.aborted) return;
 
         setConfig(data.config);
-        setChannels(data.channels);
         setNextRun(data.nextRun);
 
         // Initialize form state
@@ -180,20 +175,6 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
         setMaxGlobalConcurrency(data.config.maxGlobalConcurrency);
         setMinDelayMs(data.config.minDelayMs);
         setMaxDelayMs(data.config.maxDelayMs);
-
-        // If detectAllChannels is true, select all channels and models
-        if (data.config.detectAllChannels) {
-          const allChannelIds = data.channels.map((c: ChannelWithModels) => c.id);
-          const allModelIds: Record<string, string[]> = {};
-          data.channels.forEach((c: ChannelWithModels) => {
-            allModelIds[c.id] = c.models.map((m) => m.id);
-          });
-          setSelectedChannelIds(allChannelIds);
-          setSelectedModelIds(allModelIds);
-        } else {
-          setSelectedChannelIds(data.config.selectedChannelIds || []);
-          setSelectedModelIds(data.config.selectedModelIds || {});
-        }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") return;
         if (!controller.signal.aborted) {
@@ -219,20 +200,6 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
       const cronSchedule = buildCronFromHumanSchedule(scheduleMode, dailyTime, weeklyDay, weeklyTime);
       const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
-      // Check if all channels and all their models are selected
-      const isAllSelected = channels.length > 0 && channels.every((channel) => {
-        const selected = selectedModelIds[channel.id] || [];
-        return selected.length === channel.models.length;
-      });
-
-      // If no channel selected, auto-disable scheduler
-      const hasSelectedChannels = selectedChannelIds.length > 0;
-      const finalEnabled = hasSelectedChannels ? enabled : false;
-
-      if (!hasSelectedChannels && enabled) {
-        toast("未选择检测范围，已自动关闭定时检测", "warning");
-      }
-
       const response = await fetch("/api/scheduler/config", {
         method: "PUT",
         headers: {
@@ -240,16 +207,13 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          enabled: finalEnabled,
+          enabled,
           cronSchedule,
           timezone: localTimezone,
           channelConcurrency,
           maxGlobalConcurrency,
           minDelayMs,
           maxDelayMs,
-          detectAllChannels: isAllSelected,
-          selectedChannelIds: isAllSelected ? null : selectedChannelIds,
-          selectedModelIds: isAllSelected ? null : selectedModelIds,
         }),
       });
 
@@ -268,12 +232,6 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
     } finally {
       setSaving(false);
     }
-  };
-
-  // Handle selection change from ChannelModelSelector
-  const handleSelectionChange = (channelIds: string[], modelIds: Record<string, string[]>) => {
-    setSelectedChannelIds(channelIds);
-    setSelectedModelIds(modelIds);
   };
 
   // Format next run time
@@ -453,21 +411,6 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
                   value={maxDelayMs}
                   onChange={(e) => setMaxDelayMs(parseInt(e.target.value) || 0)}
                   className="w-full px-2 py-2 rounded-md border border-input bg-background text-sm"
-                />
-              </div>
-            </div>
-
-            {/* Detection scope - directly use ChannelModelSelector */}
-            <div>
-              <label className="block text-sm font-medium mb-2">检测范围</label>
-              <div className="border border-border rounded-md p-3">
-                <ChannelModelSelector
-                  channels={channels}
-                  selectedChannelIds={selectedChannelIds}
-                  selectedModelIds={selectedModelIds}
-                  onSelectionChange={handleSelectionChange}
-                  selectAllLabel="全部渠道"
-                  maxHeight="12rem"
                 />
               </div>
             </div>

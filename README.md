@@ -7,6 +7,8 @@ AI 模型 API 渠道可用性监控面板 & 统一代理网关。
 ## 功能特性
 
 - **多渠道管理** — 集中管理 OpenAI、Claude、Gemini 等多家 API 提供商
+- **多 Key 支持** — 每个渠道可配置多个 API Key，同步时自动合并不同 Key 的模型列表
+- **关键词筛选** — 通过关键词模糊匹配筛选同步的模型（支持启用/禁用）
 - **定时可用性检测** — Cron 定时任务自动检测各渠道模型状态和延迟
 - **统一代理网关** — 兼容 OpenAI Chat / Claude Messages / Gemini / OpenAI Responses 四种 API 格式
 - **多密钥权限控制** — 可创建多个代理密钥，独立配置可访问的渠道和模型
@@ -168,6 +170,24 @@ npm run db:push
 # 启动开发服务器
 npm run dev
 ```
+
+### 数据库更新
+
+当 `prisma/schema.prisma` 有变更时，需要同步到数据库：
+
+```bash
+# 开发环境：直接推送 schema 变更（不会删除已有数据，仅添加新表/字段）
+npm run db:push
+
+# 如果 DATABASE_URL 指向 Docker 内部地址（如 postgres:5432），本地执行时需要临时指定 localhost：
+# Windows PowerShell
+$env:DATABASE_URL="postgresql://modelcheck:modelcheck123456@localhost:5432/model_check"; npx prisma db push
+
+# Linux / macOS
+DATABASE_URL="postgresql://modelcheck:modelcheck123456@localhost:5432/model_check" npx prisma db push
+```
+
+> **Docker 部署用户**：容器启动时会自动执行 `prisma db push`，无需手动操作。更新镜像后重启容器即可。
 
 ### 常用命令
 

@@ -5,7 +5,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { proxyFetch } from "@/lib/utils/proxy-fetch";
 import { getProxyApiKey, validateProxyKey, canAccessModel, type ValidateKeyResult } from "@/lib/utils/proxy-key";
-import type { ProxyKey } from "@/generated/prisma";
+
+// Round-robin counter per channel
+const roundRobinCounters = new Map<string, number>();
 
 /**
  * Safely parse JSON field as string array
@@ -120,6 +122,7 @@ export async function verifyProxyKeyAsync(request: NextRequest): Promise<{
  * Find channel by model name
  * Supports both "modelName" and "channelName/modelName" formats
  * Returns the channel that contains the specified model
+ * Supports multi-key routing (round_robin / random) and filters out invalid keys
  */
 export async function findChannelByModel(modelName: string): Promise<{
   channelId: string;
@@ -141,10 +144,13 @@ export async function findChannelByModel(modelName: string): Promise<{
     actualModelName = modelName.slice(slashIndex + 1);
   }
 
-  const model = await prisma.model.findFirst({
+  const models = await prisma.model.findMany({
     where: {
       modelName: actualModelName,
-      ...(channelNameFilter && { channel: { name: channelNameFilter } }),
+      channel: {
+        enabled: true,
+        ...(channelNameFilter ? { name: channelNameFilter } : {}),
+      },
     },
     include: {
       channel: {
@@ -155,24 +161,76 @@ export async function findChannelByModel(modelName: string): Promise<{
           apiKey: true,
           proxy: true,
           enabled: true,
+          sortOrder: true,
+          createdAt: true,
+          keyMode: true,
+          routeStrategy: true,
+        },
+      },
+      channelKey: {
+        select: {
+          apiKey: true,
+          lastValid: true,
         },
       },
     },
+    orderBy: [
+      { channel: { sortOrder: "asc" } },
+      { channel: { createdAt: "desc" } },
+      { id: "asc" },
+    ],
+    take: 200,
   });
 
-  if (!model || !model.channel.enabled) {
+  if (models.length === 0) {
     return null;
   }
 
+  // Filter out models whose channelKey is explicitly invalid
+  // or model is explicitly unhealthy.
+  const validModels = models.filter((m) => {
+    if (m.channelKey && m.channelKey.lastValid === false) return false;
+    if (m.lastStatus === false) return false;
+    return true;
+  });
+
+  if (validModels.length === 0) {
+    return null;
+  }
+
+  // Route within one channel only.
+  // If multiple channels have same model name, pick the first channel by configured order.
+  let selected;
+  const primaryChannelId = validModels[0].channel.id;
+  const sameChannelModels = validModels.filter((m) => m.channel.id === primaryChannelId);
+  const channel = sameChannelModels[0].channel;
+
+  if (channel.keyMode === "multi" && sameChannelModels.length > 1) {
+    if (channel.routeStrategy === "random") {
+      selected = sameChannelModels[Math.floor(Math.random() * sameChannelModels.length)];
+    } else {
+      // round_robin
+      const counterKey = `${channel.id}:${actualModelName}`;
+      const current = roundRobinCounters.get(counterKey) || 0;
+      selected = sameChannelModels[current % sameChannelModels.length];
+      roundRobinCounters.set(counterKey, current + 1);
+    }
+  } else {
+    selected = sameChannelModels[0];
+  }
+
+  // Use channelKey's apiKey if available, otherwise fall back to channel's default
+  const apiKey = selected.channelKey?.apiKey ?? selected.channel.apiKey;
+
   return {
-    channelId: model.channel.id,
-    channelName: model.channel.name,
-    baseUrl: model.channel.baseUrl.replace(/\/$/, ""),
-    apiKey: model.channel.apiKey,
-    proxy: model.channel.proxy,
+    channelId: selected.channel.id,
+    channelName: selected.channel.name,
+    baseUrl: selected.channel.baseUrl.replace(/\/$/, ""),
+    apiKey,
+    proxy: selected.channel.proxy,
     actualModelName,
-    modelId: model.id,
-    modelStatus: model.lastStatus,
+    modelId: selected.id,
+    modelStatus: selected.lastStatus,
   };
 }
 
@@ -294,12 +352,26 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
     ],
   });
 
-  return models.map((m) => ({
-    id: m.id,
-    modelName: m.modelName,
-    channelName: m.channel.name,
-    channelId: m.channel.id,
-  }));
+  const uniqueModels = new Map<string, {
+    id: string;
+    modelName: string;
+    channelName: string;
+    channelId: string;
+  }>();
+
+  for (const m of models) {
+    const dedupeKey = `${m.channel.id}\u0000${m.modelName}`;
+    if (!uniqueModels.has(dedupeKey)) {
+      uniqueModels.set(dedupeKey, {
+        id: m.id,
+        modelName: m.modelName,
+        channelName: m.channel.name,
+        channelId: m.channel.id,
+      });
+    }
+  }
+
+  return Array.from(uniqueModels.values());
 }
 
 /**

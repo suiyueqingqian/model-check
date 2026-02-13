@@ -36,15 +36,22 @@ async function main() {
   ];
 
   for (const model of models) {
-    const created = await prisma.model.upsert({
+    const existing = await prisma.model.findFirst({
       where: {
-        channelId_modelName: {
-          channelId: channel.id,
-          modelName: model.modelName,
-        },
+        channelId: channel.id,
+        modelName: model.modelName,
+        channelKeyId: null,
       },
-      update: {},
-      create: {
+      select: { id: true, modelName: true },
+    });
+
+    if (existing) {
+      console.log(`Model already exists: ${existing.modelName}`);
+      continue;
+    }
+
+    const created = await prisma.model.create({
+      data: {
         channelId: channel.id,
         modelName: model.modelName,
         detectedEndpoints: model.endpoints,

@@ -13,6 +13,9 @@ export interface ChannelExportData {
     apiKey: string;
     proxy: string | null;
     enabled: boolean;
+    keyMode?: string;
+    routeStrategy?: string;
+    channelKeys?: { apiKey: string; name: string | null }[];
   }[];
 }
 
@@ -29,6 +32,11 @@ export async function GET(request: NextRequest) {
         apiKey: true,
         proxy: true,
         enabled: true,
+        keyMode: true,
+        routeStrategy: true,
+        channelKeys: {
+          select: { apiKey: true, name: true },
+        },
       },
       orderBy: { createdAt: "asc" },
     });
@@ -42,6 +50,14 @@ export async function GET(request: NextRequest) {
         apiKey: ch.apiKey,
         proxy: ch.proxy,
         enabled: ch.enabled,
+        keyMode: ch.keyMode,
+        routeStrategy: ch.routeStrategy,
+        ...(ch.channelKeys.length > 0 && {
+          channelKeys: ch.channelKeys.map((k) => ({
+            apiKey: k.apiKey,
+            name: k.name,
+          })),
+        }),
       })),
     };
 

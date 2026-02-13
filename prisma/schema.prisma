@@ -8,34 +8,39 @@ datasource db {
 }
 
 model Channel {
-  id        String   @id @default(cuid())
-  name      String   @db.VarChar(100)
-  baseUrl   String   @map("base_url") @db.VarChar(500)
-  apiKey    String   @map("api_key")
-  proxy     String?  @db.VarChar(500)
-  enabled   Boolean  @default(true)
-  sortOrder Int      @default(0) @map("sort_order")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
-  models    Model[]
+  id          String       @id @default(cuid())
+  name        String       @db.VarChar(100)
+  baseUrl     String       @map("base_url") @db.VarChar(500)
+  apiKey      String       @map("api_key")
+  proxy       String?      @db.VarChar(500)
+  enabled       Boolean      @default(true)
+  sortOrder     Int          @default(0) @map("sort_order")
+  keyMode       String       @default("single") @map("key_mode")
+  routeStrategy String       @default("round_robin") @map("route_strategy")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @default(now()) @updatedAt @map("updated_at")
+  models        Model[]
+  channelKeys   ChannelKey[]
 
   @@map("channels")
 }
 
 model Model {
-  id                String     @id @default(cuid())
-  channelId         String     @map("channel_id")
-  modelName         String     @map("model_name") @db.VarChar(200)
-  detectedEndpoints String[]   @default([]) @map("detected_endpoints")
-  lastStatus        Boolean?   @map("last_status")
-  lastLatency       Int?       @map("last_latency")
-  lastCheckedAt     DateTime?  @map("last_checked_at")
-  createdAt         DateTime   @default(now()) @map("created_at")
-  updatedAt         DateTime   @default(now()) @updatedAt @map("updated_at")
+  id                String      @id @default(cuid())
+  channelId         String      @map("channel_id")
+  modelName         String      @map("model_name") @db.VarChar(200)
+  detectedEndpoints String[]    @default([]) @map("detected_endpoints")
+  lastStatus        Boolean?    @map("last_status")
+  lastLatency       Int?        @map("last_latency")
+  lastCheckedAt     DateTime?   @map("last_checked_at")
+  channelKeyId      String?     @map("channel_key_id")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @default(now()) @updatedAt @map("updated_at")
   checkLogs         CheckLog[]
-  channel           Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  channel           Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  channelKey        ChannelKey? @relation(fields: [channelKeyId], references: [id], onDelete: SetNull)
 
-  @@unique([channelId, modelName])
+  @@unique([channelId, modelName, channelKeyId])
   @@map("models")
 }
 
@@ -87,6 +92,31 @@ model ProxyKey {
   updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@map("proxy_keys")
+}
+
+model ChannelKey {
+  id        String   @id @default(cuid())
+  channelId String   @map("channel_id")
+  apiKey    String   @map("api_key")
+  name      String?  @db.VarChar(100)
+  lastValid     Boolean?  @map("last_valid")
+  lastCheckedAt DateTime? @map("last_checked_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  models    Model[]
+
+  @@map("channel_keys")
+}
+
+model ModelKeyword {
+  id        String   @id @default(cuid())
+  keyword   String   @db.VarChar(100)
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("model_keywords")
 }
 
 enum EndpointType {
