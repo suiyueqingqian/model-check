@@ -160,11 +160,13 @@ do_update() {
         error "代码拉取失败，请检查 git 状态"
     fi
 
-    # 拉取最新镜像
-    info "拉取最新镜像..."
-    if $compose_cmd pull app 2>/dev/null; then
+    # 优先拉取预构建镜像，失败则本地构建
+    local image="${APP_IMAGE:-ghcr.io/chxcodepro/model-check:latest}"
+    info "拉取镜像: $image"
+    if docker pull "$image"; then
+        success "镜像拉取成功"
         info "重启服务..."
-        $compose_cmd up -d
+        $compose_cmd up -d --no-build
     else
         warn "无法拉取镜像，自动切换到本地构建..."
         info "重启服务..."
