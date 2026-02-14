@@ -225,7 +225,11 @@ async function processDetectionJob(
               WHEN ${data.endpointType} = ANY("detected_endpoints") THEN "detected_endpoints"
               ELSE COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY[${data.endpointType}]
             END,
-            "last_status" = true,
+            "last_status" =
+              CASE
+                WHEN ${data.endpointType} = ANY("detected_endpoints") THEN array_length(COALESCE("detected_endpoints", ARRAY[]::text[]), 1) > 0
+                ELSE array_length(COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY[${data.endpointType}], 1) > 0
+              END,
             "last_latency" = ${result.latency},
             "last_checked_at" = ${new Date()}
           WHERE id = ${data.modelId}
@@ -235,7 +239,7 @@ async function processDetectionJob(
         await tx.$executeRaw`
           UPDATE "models"
           SET "detected_endpoints" = array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${data.endpointType}),
-            "last_status" = false,
+            "last_status" = COALESCE(array_length(array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${data.endpointType}), 1), 0) > 0,
             "last_latency" = ${result.latency},
             "last_checked_at" = ${new Date()}
           WHERE id = ${data.modelId}

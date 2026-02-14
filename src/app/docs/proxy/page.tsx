@@ -166,7 +166,7 @@ export default function ProxyDocsPage() {
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "gpt-4o",
+    "model": "my-channel/gpt-4o",
     "messages": [{"role": "user", "content": "Hello"}],
     "stream": true
   }'`}
@@ -186,7 +186,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="gpt-4o",
+    model="my-channel/gpt-4o",
     messages=[{"role": "user", "content": "Hello"}]
 )`}
                     id="config-openai"
@@ -209,7 +209,7 @@ response = client.chat.completions.create(
   -H "Content-Type: application/json" \\
   -H "anthropic-version: 2023-06-01" \\
   -d '{
-    "model": "claude-sonnet-4-20250514",
+    "model": "my-channel/claude-sonnet-4-20250514",
     "max_tokens": 1024,
     "messages": [{"role": "user", "content": "Hello"}]
   }'`}
@@ -229,7 +229,7 @@ client = anthropic.Anthropic(
 )
 
 message = client.messages.create(
-    model="claude-sonnet-4-20250514",
+    model="my-channel/claude-sonnet-4-20250514",
     max_tokens=1024,
     messages=[{"role": "user", "content": "Hello"}]
 )`}
@@ -248,7 +248,7 @@ message = client.messages.create(
               <div className="mt-3">
                 <p className="text-sm font-medium mb-2">cURL 示例</p>
                 <CodeBlock
-                  code={`curl ${baseUrl || "https://your-domain.com"}/v1beta/models/gemini-2.0-flash:generateContent \\
+                  code={`curl ${baseUrl || "https://your-domain.com"}/v1beta/models/my-channel/gemini-2.0-flash:generateContent \\
   -H "x-goog-api-key: YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -291,6 +291,7 @@ message = client.messages.create(
         <section className="mb-6">
           <h2 className="text-lg font-semibold mb-3">注意事项</h2>
           <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+            <li>模型名称必须使用 channelName/modelName 格式（例如 my-channel/gpt-4o）</li>
             <li>模型名称必须与数据库中的模型完全匹配</li>
             <li>只有检测成功的模型才会出现在 /v1/models 列表中</li>
             <li>流式响应会透明转发，保持原始 SSE 格式</li>

@@ -15,6 +15,11 @@ import {
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
 
+function isPrefixedModelName(modelName: string): boolean {
+  const slashIndex = modelName.indexOf("/");
+  return slashIndex > 0 && slashIndex < modelName.length - 1;
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -40,6 +45,10 @@ export async function POST(
     const modelName = pathStr.substring(0, colonIndex);
     const method = pathStr.substring(colonIndex + 1);
 
+    if (!isPrefixedModelName(modelName)) {
+      return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
+    }
+
     // Find channel by model name with permission check
     const channel = await findChannelByModelWithPermission(modelName, keyResult!);
     if (!channel) {
@@ -58,7 +67,8 @@ export async function POST(
       baseUrl = baseUrl.slice(0, -7);
     }
 
-    const url = `${baseUrl}/v1beta/models/${pathStr}`;
+    const upstreamModelPath = `${channel.actualModelName}:${method}`;
+    const url = `${baseUrl}/v1beta/models/${upstreamModelPath}`;
     const headers = buildUpstreamHeaders(channel.apiKey, "gemini");
 
     // Forward request to upstream (with channel proxy support)
@@ -99,6 +109,10 @@ export async function GET(
     const { path } = await params;
     const modelName = path.join("/");
 
+    if (!isPrefixedModelName(modelName)) {
+      return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
+    }
+
     // Find channel by model name with permission check
     const channel = await findChannelByModelWithPermission(modelName, keyResult!);
     if (!channel) {
@@ -111,7 +125,7 @@ export async function GET(
       baseUrl = baseUrl.slice(0, -7);
     }
 
-    const url = `${baseUrl}/v1beta/models/${modelName}`;
+    const url = `${baseUrl}/v1beta/models/${channel.actualModelName}`;
     const headers = buildUpstreamHeaders(channel.apiKey, "gemini");
 
     // Forward request to upstream (with channel proxy support)

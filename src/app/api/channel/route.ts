@@ -57,6 +57,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Check for duplicate channel name
+    const existingByName = await prisma.channel.findFirst({
+      where: { name },
+      select: { id: true },
+    });
+    if (existingByName) {
+      return NextResponse.json(
+        { error: "渠道名称已存在", code: "DUPLICATE_NAME" },
+        { status: 409 }
+      );
+    }
+
     // Create channel at first position (new channel appears as list item #1)
     const channel = await prisma.$transaction(async (tx) => {
       const minSort = await tx.channel.aggregate({
@@ -159,6 +171,20 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    // Check for duplicate channel name when renaming
+    if (name !== undefined) {
+      const existingByName = await prisma.channel.findFirst({
+        where: { name, id: { not: id } },
+        select: { id: true },
+      });
+      if (existingByName) {
+        return NextResponse.json(
+          { error: "渠道名称已存在", code: "DUPLICATE_NAME" },
+          { status: 409 }
+        );
+      }
+    }
+
     // Build update data
     const updateData: Record<string, unknown> = {};
     if (name !== undefined) updateData.name = name;
@@ -189,6 +215,9 @@ export async function PUT(request: NextRequest) {
             })),
           });
         }
+      } else if (keyMode === "single") {
+        // Switching to single mode should clear stale extra keys.
+        await tx.channelKey.deleteMany({ where: { channelId: id } });
       }
 
       return updatedChannel;

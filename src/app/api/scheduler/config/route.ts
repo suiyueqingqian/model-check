@@ -18,6 +18,75 @@ const DEFAULT_CONFIG = {
   detectAllChannels: process.env.AUTO_DETECT_ALL_CHANNELS !== "false",
 };
 
+const CRON_SCHEDULE_SEPARATOR = "||";
+const INTERVAL_SCHEDULE_PREFIX = "interval:";
+
+const INTERVAL_RANGES = {
+  minute: { min: 1, max: 60 },
+  hour: { min: 1, max: 24 },
+  day: { min: 1, max: 7 },
+} as const;
+const MAX_DAILY_RUNS = 6;
+
+type IntervalUnit = keyof typeof INTERVAL_RANGES;
+
+function splitCronSchedules(cronSchedule: string): string[] {
+  return cronSchedule
+    .split(CRON_SCHEDULE_SEPARATOR)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function isValidCronSchedule(cronSchedule: string): boolean {
+  const schedules = splitCronSchedules(cronSchedule);
+  return schedules.length > 0 && schedules.every((schedule) => schedule.split(/\s+/).length === 5);
+}
+
+function isValidIntervalSchedule(schedule: string): boolean {
+  const trimmed = schedule.trim();
+  if (!trimmed.startsWith(INTERVAL_SCHEDULE_PREFIX)) return false;
+
+  const [prefix, unitPart, valuePart, ...anchorParts] = trimmed.split(":");
+  if (prefix !== "interval") return false;
+
+  if (!(unitPart in INTERVAL_RANGES)) return false;
+  const unit = unitPart as IntervalUnit;
+
+  const value = Number(valuePart);
+  const range = INTERVAL_RANGES[unit];
+  if (Number.isNaN(value) || value < range.min || value > range.max) return false;
+
+  const anchorWithMeta = anchorParts.join(":");
+  const [anchorIso, ...metaParts] = anchorWithMeta.split("|");
+  if (Number.isNaN(Date.parse(anchorIso))) return false;
+
+  const offsetPart = metaParts.find((item) => item.startsWith("offset="));
+  if (offsetPart) {
+    const offsetValue = Number(offsetPart.slice("offset=".length));
+    if (Number.isNaN(offsetValue)) return false;
+  }
+
+  if (unit === "day") {
+    const timesPart = metaParts.find((item) => item.startsWith("times="));
+    if (!timesPart) return true;
+
+    const times = timesPart
+      .slice("times=".length)
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    if (times.length === 0 || times.length > MAX_DAILY_RUNS) return false;
+    if (times.some((time) => !/^\d{2}:\d{2}$/.test(time))) return false;
+
+    for (let i = 1; i < times.length; i += 1) {
+      if (times[i] <= times[i - 1]) return false;
+    }
+  }
+
+  return true;
+}
+
 // GET /api/scheduler/config - Get scheduler configuration with channel list
 export async function GET(request: NextRequest) {
   const authError = requireAuth(request);
@@ -112,24 +181,36 @@ export async function PUT(request: NextRequest) {
 
     // Validate cron schedule format
     if (cronSchedule !== undefined) {
-      const cronParts = cronSchedule.split(" ");
-      if (cronParts.length !== 5) {
+      const isValid = isValidIntervalSchedule(cronSchedule) || isValidCronSchedule(cronSchedule);
+      if (!isValid) {
         return NextResponse.json(
-          { error: "Invalid cron schedule format. Expected 5 parts: minute hour day month weekday", code: "INVALID_CRON" },
+          { error: "Invalid schedule format", code: "INVALID_CRON" },
           { status: 400 }
         );
       }
     }
 
     // Validate delay values
-    if (minDelayMs !== undefined && maxDelayMs !== undefined) {
-      if (minDelayMs < 0 || maxDelayMs < 0) {
-        return NextResponse.json(
-          { error: "Delay values must be non-negative", code: "INVALID_DELAY" },
-          { status: 400 }
-        );
-      }
-      if (minDelayMs > maxDelayMs) {
+    if (minDelayMs !== undefined && minDelayMs < 0) {
+      return NextResponse.json(
+        { error: "Delay values must be non-negative", code: "INVALID_DELAY" },
+        { status: 400 }
+      );
+    }
+    if (maxDelayMs !== undefined && maxDelayMs < 0) {
+      return NextResponse.json(
+        { error: "Delay values must be non-negative", code: "INVALID_DELAY" },
+        { status: 400 }
+      );
+    }
+    if (minDelayMs !== undefined || maxDelayMs !== undefined) {
+      const existingConfig = await prisma.schedulerConfig.findUnique({
+        where: { id: "default" },
+        select: { minDelayMs: true, maxDelayMs: true },
+      });
+      const effectiveMin = minDelayMs ?? existingConfig?.minDelayMs ?? 0;
+      const effectiveMax = maxDelayMs ?? existingConfig?.maxDelayMs ?? 0;
+      if (effectiveMin > effectiveMax) {
         return NextResponse.json(
           { error: "Minimum delay cannot be greater than maximum delay", code: "INVALID_DELAY" },
           { status: 400 }

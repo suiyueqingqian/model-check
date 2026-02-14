@@ -727,6 +727,18 @@ export async function triggerSelectiveDetection(
     return { channelCount: 0, modelCount: 0, jobCount: 0, jobIds: [], syncResults };
   }
 
+  // Reset models status to "untested" state before detection
+  const modelIdsToReset = [...new Set(jobs.map((j) => j.modelId))];
+  await prisma.model.updateMany({
+    where: { id: { in: modelIdsToReset } },
+    data: {
+      lastStatus: null,
+      lastLatency: null,
+      lastCheckedAt: null,
+      detectedEndpoints: [],
+    },
+  });
+
   const jobIds = await addDetectionJobsBulk(jobs);
   const { modelCount, jobCount } = getDetectionCounts(jobs);
 

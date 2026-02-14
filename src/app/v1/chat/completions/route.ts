@@ -56,7 +56,11 @@ export async function POST(request: NextRequest) {
       return errorResponse("Missing 'model' field in request body", 400);
     }
 
-    // Find channel by model name with permission check (supports "channelName/modelName" format)
+    if (typeof modelName !== "string" || modelName.indexOf("/") <= 0 || modelName.endsWith("/")) {
+      return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
+    }
+
+    // Find channel by model name with permission check (requires "channelName/modelName" format)
     const channel = await findChannelByModelWithPermission(modelName, keyResult!);
     if (!channel) {
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);

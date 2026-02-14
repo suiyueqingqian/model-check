@@ -6,8 +6,9 @@ import { prisma } from "@/lib/prisma";
 import { proxyFetch } from "@/lib/utils/proxy-fetch";
 import { getProxyApiKey, validateProxyKey, canAccessModel, type ValidateKeyResult } from "@/lib/utils/proxy-key";
 
-// Round-robin counter per channel
+// Round-robin counter per channel (auto-clears when too many stale keys accumulate)
 const roundRobinCounters = new Map<string, number>();
+const ROUND_ROBIN_MAX_KEYS = 10000;
 
 /**
  * Safely parse JSON field as string array
@@ -134,23 +135,14 @@ export async function findChannelByModel(modelName: string): Promise<{
   modelId: string;
   modelStatus: boolean | null;
 } | null> {
-  // Parse channel prefix if present (e.g., "渠道名/模型名" -> channelName="渠道名", actualModel="模型名")
-  let channelNameFilter: string | undefined;
   let actualModelName = modelName;
 
-  const slashIndex = modelName.indexOf("/");
-  if (slashIndex > 0) {
-    channelNameFilter = modelName.slice(0, slashIndex);
-    actualModelName = modelName.slice(slashIndex + 1);
-  }
-
-  const models = await prisma.model.findMany({
+  // First, try exact match with full model name
+  // This handles models with "/" in their name (e.g., "meta-llama/Llama-3-70b")
+  let models = await prisma.model.findMany({
     where: {
-      modelName: actualModelName,
-      channel: {
-        enabled: true,
-        ...(channelNameFilter ? { name: channelNameFilter } : {}),
-      },
+      modelName,
+      channel: { enabled: true },
     },
     include: {
       channel: {
@@ -182,15 +174,60 @@ export async function findChannelByModel(modelName: string): Promise<{
     take: 200,
   });
 
+  // If no match and name contains "/", try "channelName/modelName" prefix format
+  if (models.length === 0) {
+    const slashIndex = modelName.indexOf("/");
+    if (slashIndex > 0) {
+      actualModelName = modelName.slice(slashIndex + 1);
+      models = await prisma.model.findMany({
+        where: {
+          modelName: actualModelName,
+          channel: {
+            enabled: true,
+            name: modelName.slice(0, slashIndex),
+          },
+        },
+        include: {
+          channel: {
+            select: {
+              id: true,
+              name: true,
+              baseUrl: true,
+              apiKey: true,
+              proxy: true,
+              enabled: true,
+              sortOrder: true,
+              createdAt: true,
+              keyMode: true,
+              routeStrategy: true,
+            },
+          },
+          channelKey: {
+            select: {
+              apiKey: true,
+              lastValid: true,
+            },
+          },
+        },
+        orderBy: [
+          { channel: { sortOrder: "asc" } },
+          { channel: { createdAt: "desc" } },
+          { id: "asc" },
+        ],
+        take: 200,
+      });
+    }
+  }
+
   if (models.length === 0) {
     return null;
   }
 
   // Filter out models whose channelKey is explicitly invalid
-  // or model is explicitly unhealthy.
+  // or model is not explicitly healthy.
   const validModels = models.filter((m) => {
     if (m.channelKey && m.channelKey.lastValid === false) return false;
-    if (m.lastStatus === false) return false;
+    if (m.lastStatus !== true) return false;
     return true;
   });
 
@@ -211,9 +248,12 @@ export async function findChannelByModel(modelName: string): Promise<{
     } else {
       // round_robin
       const counterKey = `${channel.id}:${actualModelName}`;
+      if (roundRobinCounters.size >= ROUND_ROBIN_MAX_KEYS) {
+        roundRobinCounters.clear();
+      }
       const current = roundRobinCounters.get(counterKey) || 0;
       selected = sameChannelModels[current % sameChannelModels.length];
-      roundRobinCounters.set(counterKey, current + 1);
+      roundRobinCounters.set(counterKey, (current + 1) % sameChannelModels.length);
     }
   } else {
     selected = sameChannelModels[0];
@@ -275,7 +315,7 @@ export async function findChannelByModelWithPermission(
 
 /**
  * Get all available models from all enabled channels
- * Only returns models that have been successfully tested (at least one endpoint SUCCESS)
+ * Only returns models that are currently healthy (lastStatus === true)
  */
 export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): Promise<
   Array<{
@@ -288,17 +328,17 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
   // Build where clause based on key permissions
   let whereClause: {
     channel: { enabled: boolean };
-    checkLogs?: { some: { status: "SUCCESS" } };
+    lastStatus?: boolean;
     channelId?: { in: string[] };
     id?: { in: string[] };
+    OR?: Array<
+      | { channelId: { in: string[] } }
+      | { id: { in: string[] } }
+    >;
   } = {
     channel: { enabled: true },
-    // Only include models that have at least one successful check log
-    checkLogs: {
-      some: {
-        status: "SUCCESS",
-      },
-    },
+    // Keep model list aligned with actual proxy routing behavior.
+    lastStatus: true,
   };
 
   // If key has restricted permissions, filter by allowed channels/models
@@ -345,11 +385,19 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
       channel: {
         select: { id: true, name: true },
       },
+      channelKey: {
+        select: { lastValid: true },
+      },
     },
     orderBy: [
       { channel: { name: "asc" } },
       { modelName: "asc" },
     ],
+  });
+
+  const availableModels = models.filter((m) => {
+    if (m.channelKey && m.channelKey.lastValid === false) return false;
+    return true;
   });
 
   const uniqueModels = new Map<string, {
@@ -359,7 +407,7 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
     channelId: string;
   }>();
 
-  for (const m of models) {
+  for (const m of availableModels) {
     const dedupeKey = `${m.channel.id}\u0000${m.modelName}`;
     if (!uniqueModels.has(dedupeKey)) {
       uniqueModels.set(dedupeKey, {

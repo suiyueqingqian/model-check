@@ -53,6 +53,9 @@ export async function POST(request: NextRequest) {
       apiKey: string;
       proxy: string | null;
       enabled: boolean;
+      keyMode?: string;
+      routeStrategy?: string;
+      channelKeys?: { apiKey: string; name: string | null }[];
       action: "create" | "update";
     }> = [];
 
@@ -136,6 +139,9 @@ export async function POST(request: NextRequest) {
             apiKey: ch.apiKey,
             proxy: ch.proxy || null,
             enabled: ch.enabled ?? true,
+            keyMode: ch.keyMode || "single",
+            routeStrategy: ch.routeStrategy || "round_robin",
+            channelKeys: ch.channelKeys,
             action: "update",
           });
         } else {
@@ -175,6 +181,9 @@ export async function POST(request: NextRequest) {
           apiKey: ch.apiKey,
           proxy: ch.proxy || null,
           enabled: ch.enabled ?? true,
+          keyMode: ch.keyMode || "single",
+          routeStrategy: ch.routeStrategy || "round_robin",
+          channelKeys: ch.channelKeys,
           action: "create",
         });
       }
@@ -211,7 +220,16 @@ export async function POST(request: NextRequest) {
         if (mode === "replace") {
           // For replace mode, sync all channels at once
           const allChannels = await prisma.channel.findMany({
-            select: { name: true, baseUrl: true, apiKey: true, proxy: true, enabled: true },
+            select: {
+              name: true,
+              baseUrl: true,
+              apiKey: true,
+              proxy: true,
+              enabled: true,
+              keyMode: true,
+              routeStrategy: true,
+              channelKeys: { select: { apiKey: true, name: true } },
+            },
           });
           await syncAllChannelsToWebDAV(allChannels);
         } else {

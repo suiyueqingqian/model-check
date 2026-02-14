@@ -160,6 +160,11 @@ export async function POST(request: NextRequest) {
           apiKey: true,
           proxy: true,
           enabled: true,
+          keyMode: true,
+          routeStrategy: true,
+          channelKeys: {
+            select: { apiKey: true, name: true },
+          },
         },
         orderBy: { createdAt: "asc" },
       });
@@ -186,6 +191,11 @@ export async function POST(request: NextRequest) {
         apiKey: ch.apiKey,
         proxy: ch.proxy,
         enabled: ch.enabled,
+        keyMode: ch.keyMode,
+        routeStrategy: ch.routeStrategy,
+        ...(ch.channelKeys.length > 0 && {
+          channelKeys: ch.channelKeys.map((k) => ({ apiKey: k.apiKey, name: k.name })),
+        }),
       }));
 
       const finalChannels = localChannels;
@@ -208,6 +218,9 @@ export async function POST(request: NextRequest) {
                 apiKey: string;
                 proxy?: string | null;
                 enabled?: boolean;
+                keyMode?: string;
+                routeStrategy?: string;
+                channelKeys?: { apiKey: string; name: string | null }[];
               }>;
             };
 
@@ -231,6 +244,9 @@ export async function POST(request: NextRequest) {
                     apiKey: remoteCh.apiKey,
                     proxy: remoteCh.proxy || null,
                     enabled: remoteCh.enabled ?? true,
+                    keyMode: remoteCh.keyMode || "single",
+                    routeStrategy: remoteCh.routeStrategy || "round_robin",
+                    ...(remoteCh.channelKeys?.length && { channelKeys: remoteCh.channelKeys }),
                   });
                   merged++;
                 }
@@ -325,7 +341,7 @@ export async function POST(request: NextRequest) {
       }
 
       let imported = 0;
-      const updated = 0;
+      let updated = 0;
       let skipped = 0;
       let duplicates = 0;
       const importedChannelIds: string[] = [];
@@ -337,6 +353,9 @@ export async function POST(request: NextRequest) {
         apiKey: string;
         proxy?: string | null;
         enabled?: boolean;
+        keyMode?: string;
+        routeStrategy?: string;
+        channelKeys?: { apiKey: string; name: string | null }[];
       }> = [];
 
       for (const ch of data.channels) {
@@ -350,6 +369,9 @@ export async function POST(request: NextRequest) {
           apiKey: ch.apiKey,
           proxy: ch.proxy || null,
           enabled: ch.enabled ?? true,
+          keyMode: ch.keyMode,
+          routeStrategy: ch.routeStrategy,
+          channelKeys: ch.channelKeys,
         });
       }
 
@@ -386,21 +408,36 @@ export async function POST(request: NextRequest) {
                 apiKey: ch.apiKey,
                 proxy: ch.proxy,
                 enabled: ch.enabled,
+                keyMode: ch.keyMode || "single",
+                routeStrategy: ch.routeStrategy || "round_robin",
               },
             });
+            // Restore channel keys if present
+            if (ch.channelKeys && ch.channelKeys.length > 0) {
+              await tx.channelKey.createMany({
+                data: ch.channelKeys
+                  .filter((k) => k.apiKey?.trim())
+                  .map((k) => ({
+                    channelId: newChannel.id,
+                    apiKey: k.apiKey.trim(),
+                    name: k.name?.trim() || null,
+                  })),
+              });
+            }
             importedChannelIds.push(newChannel.id);
             imported++;
           }
         });
       } else {
-        // Merge mode - add new channels, skip if baseUrl+apiKey already exists
-        // Build set of existing channels by baseUrl+apiKey for duplicate detection
+        // Merge mode - add new channels, update if baseUrl+apiKey already exists
+        // Build set/map of existing channels by baseUrl+apiKey
         const existingChannels = await prisma.channel.findMany({
           select: { id: true, name: true, baseUrl: true, apiKey: true },
         });
-        const existingKeySet = new Set(
-          existingChannels.map((ch) => `${ch.baseUrl.replace(/\/$/, "")}|${ch.apiKey}`)
+        const existingByKey = new Map<string, (typeof existingChannels)[number]>(
+          existingChannels.map((ch) => [`${ch.baseUrl.replace(/\/$/, "")}|${ch.apiKey}`, ch] as const)
         );
+        const existingKeySet = new Set(existingByKey.keys());
         const existingNameSet = new Set(
           existingChannels.map((ch) => ch.name)
         );
@@ -414,7 +451,7 @@ export async function POST(request: NextRequest) {
           let name = baseName;
           let suffix = 1;
           while (existingNameSet.has(name) || importNameSet.has(name)) {
-            name = `${baseName}_${suffix}`;
+            name = `${baseName}-${suffix}`;
             suffix++;
           }
           return name;
@@ -430,10 +467,41 @@ export async function POST(request: NextRequest) {
           }
           importKeySet.add(channelKey);
 
-          // Check for duplicate with existing channels (by baseUrl+apiKey)
-          // If same baseUrl+apiKey exists, skip entirely (true duplicate)
+          // If same baseUrl+apiKey exists locally, update that channel.
           if (existingKeySet.has(channelKey)) {
-            duplicates++;
+            const existing = existingByKey.get(channelKey);
+            if (!existing) {
+              duplicates++;
+              continue;
+            }
+
+            await prisma.channel.update({
+              where: { id: existing.id },
+              data: {
+                baseUrl: ch.baseUrl,
+                apiKey: ch.apiKey,
+                proxy: ch.proxy,
+                enabled: ch.enabled,
+                keyMode: ch.keyMode || "single",
+                routeStrategy: ch.routeStrategy || "round_robin",
+              },
+            });
+
+            await prisma.channelKey.deleteMany({ where: { channelId: existing.id } });
+            if (ch.channelKeys && ch.channelKeys.length > 0) {
+              await prisma.channelKey.createMany({
+                data: ch.channelKeys
+                  .filter((k) => k.apiKey?.trim())
+                  .map((k) => ({
+                    channelId: existing.id,
+                    apiKey: k.apiKey.trim(),
+                    name: k.name?.trim() || null,
+                  })),
+              });
+            }
+
+            importedChannelIds.push(existing.id);
+            updated++;
             continue;
           }
 
@@ -450,8 +518,22 @@ export async function POST(request: NextRequest) {
               apiKey: ch.apiKey,
               proxy: ch.proxy,
               enabled: ch.enabled,
+              keyMode: ch.keyMode || "single",
+              routeStrategy: ch.routeStrategy || "round_robin",
             },
           });
+          // Restore channel keys if present
+          if (ch.channelKeys && ch.channelKeys.length > 0) {
+            await prisma.channelKey.createMany({
+              data: ch.channelKeys
+                .filter((k) => k.apiKey?.trim())
+                .map((k) => ({
+                  channelId: newChannel.id,
+                  apiKey: k.apiKey.trim(),
+                  name: k.name?.trim() || null,
+                })),
+            });
+          }
           importedChannelIds.push(newChannel.id);
           imported++;
         }

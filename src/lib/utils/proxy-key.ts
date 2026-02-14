@@ -126,7 +126,7 @@ export async function validateProxyKey(apiKey: string): Promise<ValidateKeyResul
  * @param isEnvKey - Whether the key is from environment variable
  * @param channelId - The channel ID
  * @param modelId - The model ID
- * @param modelStatus - The model's last test status (true = healthy, false = unhealthy, null = unknown)
+ * @param modelStatus - The model's last test status (true = healthy, false = unhealthy, null = untested)
  */
 export async function canAccessModel(
   keyRecord: ProxyKey | undefined,
@@ -147,9 +147,8 @@ export async function canAccessModel(
 
   // If key allows all models, check model status
   if (keyRecord.allowAllModels) {
-    // By default, only allow access to tested and healthy models
-    // (or untested models, for first-time access)
-    return modelStatus !== false;
+    // Only explicitly healthy models can be accessed.
+    return modelStatus === true;
   }
 
   // allowAllModels=false: only explicitly specified channels/models are allowed

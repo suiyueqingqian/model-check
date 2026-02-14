@@ -14,6 +14,9 @@ interface ChannelData {
   apiKey: string;
   proxy?: string | null;
   enabled?: boolean;
+  keyMode?: string;
+  routeStrategy?: string;
+  channelKeys?: { apiKey: string; name: string | null }[];
 }
 
 interface WebDAVExportData {
@@ -138,7 +141,7 @@ async function writeRemoteData(config: WebDAVConfig, data: WebDAVExportData): Pr
       body: JSON.stringify(data, null, 2),
     });
 
-    if (!response.ok && response.status !== 201 && response.status !== 204) {
+    if (!response.ok) {
       return false;
     }
 
@@ -195,6 +198,9 @@ export async function appendChannelToWebDAV(channel: ChannelData): Promise<void>
       apiKey: channel.apiKey,
       proxy: channel.proxy || null,
       enabled: channel.enabled ?? true,
+      ...(channel.keyMode && { keyMode: channel.keyMode }),
+      ...(channel.routeStrategy && { routeStrategy: channel.routeStrategy }),
+      ...(channel.channelKeys?.length && { channelKeys: channel.channelKeys }),
     };
   } else {
     // New channel - check for name conflict
@@ -207,6 +213,9 @@ export async function appendChannelToWebDAV(channel: ChannelData): Promise<void>
       apiKey: channel.apiKey,
       proxy: channel.proxy || null,
       enabled: channel.enabled ?? true,
+      ...(channel.keyMode && { keyMode: channel.keyMode }),
+      ...(channel.routeStrategy && { routeStrategy: channel.routeStrategy }),
+      ...(channel.channelKeys?.length && { channelKeys: channel.channelKeys }),
     });
   }
 
@@ -260,7 +269,7 @@ export async function removeChannelFromWebDAV(channel: ChannelData): Promise<voi
 
 /**
  * Update a channel in WebDAV (called after channel update)
- * Updates by matching baseUrl+apiKey
+ * Updates by matching name (primary) or baseUrl+apiKey (fallback)
  */
 export async function updateChannelInWebDAV(channel: ChannelData): Promise<void> {
   const config = getWebDAVConfig();
@@ -273,22 +282,30 @@ export async function updateChannelInWebDAV(channel: ChannelData): Promise<void>
     throw new Error("Failed to read remote data for update");
   }
 
-  const channelKey = `${channel.baseUrl.replace(/\/$/, "")}|${channel.apiKey}`;
+  const normalizedBaseUrl = channel.baseUrl.replace(/\/$/, "");
+  const channelKey = `${normalizedBaseUrl}|${channel.apiKey}`;
 
-  // Find and update by baseUrl+apiKey
-  const existingIndex = remoteData.channels.findIndex((ch) => {
-    const key = `${ch.baseUrl.replace(/\/$/, "")}|${ch.apiKey}`;
-    return key === channelKey;
-  });
+  // Match by name first to avoid duplication when apiKey changes.
+  let existingIndex = remoteData.channels.findIndex((ch) => ch.name === channel.name);
+  if (existingIndex < 0) {
+    // Fallback: match by baseUrl+apiKey
+    existingIndex = remoteData.channels.findIndex((ch) => {
+      const key = `${ch.baseUrl.replace(/\/$/, "")}|${ch.apiKey}`;
+      return key === channelKey;
+    });
+  }
 
   if (existingIndex >= 0) {
     // Update existing entry
     remoteData.channels[existingIndex] = {
       name: channel.name,
-      baseUrl: channel.baseUrl.replace(/\/$/, ""),
+      baseUrl: normalizedBaseUrl,
       apiKey: channel.apiKey,
       proxy: channel.proxy || null,
       enabled: channel.enabled ?? true,
+      ...(channel.keyMode && { keyMode: channel.keyMode }),
+      ...(channel.routeStrategy && { routeStrategy: channel.routeStrategy }),
+      ...(channel.channelKeys?.length && { channelKeys: channel.channelKeys }),
     };
   } else {
     // Channel doesn't exist remotely - append it
@@ -297,10 +314,13 @@ export async function updateChannelInWebDAV(channel: ChannelData): Promise<void>
 
     remoteData.channels.push({
       name: finalName,
-      baseUrl: channel.baseUrl.replace(/\/$/, ""),
+      baseUrl: normalizedBaseUrl,
       apiKey: channel.apiKey,
       proxy: channel.proxy || null,
       enabled: channel.enabled ?? true,
+      ...(channel.keyMode && { keyMode: channel.keyMode }),
+      ...(channel.routeStrategy && { routeStrategy: channel.routeStrategy }),
+      ...(channel.channelKeys?.length && { channelKeys: channel.channelKeys }),
     });
   }
 
@@ -337,6 +357,9 @@ export async function syncAllChannelsToWebDAV(channels: ChannelData[]): Promise<
     apiKey: ch.apiKey,
     proxy: ch.proxy || null,
     enabled: ch.enabled ?? true,
+    ...(ch.keyMode && { keyMode: ch.keyMode }),
+    ...(ch.routeStrategy && { routeStrategy: ch.routeStrategy }),
+    ...(ch.channelKeys?.length && { channelKeys: ch.channelKeys }),
   }));
   baseData.exportedAt = new Date().toISOString();
 
