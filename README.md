@@ -227,8 +227,8 @@ bash deploy.sh --update           # 更新部署
 
 ---
 
-<div align="center">
-
 **如果这个项目对你有帮助，欢迎 ⭐️ Star 支持一下！**
 
-</div>
+
+
+[![Star History Chart](https://api.star-history.com/svg?repos=chxcodepro/model-check&type=date&legend=top-left)](https://www.star-history.com/#chxcodepro/model-check&type=date&legend=top-left)
