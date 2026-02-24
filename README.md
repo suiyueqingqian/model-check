@@ -48,7 +48,7 @@
 ```bash
 git clone https://github.com/chxcodepro/model-check.git
 cd model-check
-./deploy.sh
+bash deploy.sh
 ```
 
 脚本会自动引导你完成配置，包括设置密码、数据库等。
@@ -57,13 +57,13 @@ cd model-check
 
 | 命令 | 说明 |
 |------|------|
-| `./deploy.sh --local` | 全本地模式（默认） |
-| `./deploy.sh --cloud-db` | 云数据库 + 本地 Redis |
-| `./deploy.sh --cloud-redis` | 本地数据库 + 云 Redis |
-| `./deploy.sh --cloud` | 全云端模式 |
-| `./deploy.sh --quick` | 快速模式，跳过可选配置 |
-| `./deploy.sh --update` | 更新部署 |
-| `./deploy.sh --status` | 查看服务状态 |
+| `bash deploy.sh --local` | 全本地模式（默认） |
+| `bash deploy.sh --cloud-db` | 云数据库 + 本地 Redis |
+| `bash deploy.sh --cloud-redis` | 本地数据库 + 云 Redis |
+| `bash deploy.sh --cloud` | 全云端模式 |
+| `bash deploy.sh --quick` | 快速模式，跳过可选配置 |
+| `bash deploy.sh --update` | 更新部署 |
+| `bash deploy.sh --status` | 查看服务状态 |
 
 ### ☁️ 云服务推荐
 
@@ -173,7 +173,7 @@ npm test             # 运行测试
 docker logs -f model-check     # 查看日志
 docker compose restart         # 重启服务
 docker compose down            # 停止服务
-./deploy.sh --update           # 更新部署
+bash deploy.sh --update           # 更新部署
 ```
 
 ## ❓ 常见问题
@@ -197,7 +197,7 @@ docker compose down            # 停止服务
 <details>
 <summary><b>检测任务卡住怎么办？</b></summary>
 
-1. 检查 Redis 连接状态：`./deploy.sh --status`
+1. 检查 Redis 连接状态：`bash deploy.sh --status`
 2. 查看日志定位问题：`docker logs model-check`
 3. 重启服务：`docker compose restart`
 
