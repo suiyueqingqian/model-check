@@ -3,7 +3,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAuth } from "@/lib/middleware/auth";
-import { syncChannelModels } from "@/lib/queue/service";
 import type { ChannelExportData } from "../export/route";
 
 // Environment variables for WebDAV configuration
@@ -539,22 +538,14 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Auto-sync models for imported channels
-      let syncedModels = 0;
+      // 不再自动同步模型，由前端打开模型筛选弹窗让用户选择
+      // 获取导入的渠道名称列表
+      let importedChannels: { id: string; name: string }[] = [];
       if (importedChannelIds.length > 0) {
-        const CONCURRENCY = 3;
-        for (let i = 0; i < importedChannelIds.length; i += CONCURRENCY) {
-          const batch = importedChannelIds.slice(i, i + CONCURRENCY);
-          const results = await Promise.allSettled(
-            batch.map((channelId) => syncChannelModels(channelId))
-          );
-
-          for (const result of results) {
-            if (result.status === "fulfilled") {
-              syncedModels += result.value.added;
-            }
-          }
-        }
+        importedChannels = await prisma.channel.findMany({
+          where: { id: { in: importedChannelIds } },
+          select: { id: true, name: true },
+        });
       }
 
       // Import scheduler config if present
@@ -631,7 +622,7 @@ export async function POST(request: NextRequest) {
         skipped,
         duplicates,
         total: data.channels.length,
-        syncedModels,
+        importedChannels,
         schedulerConfigRestored,
         proxyKeysRestored,
         remoteVersion: data.version,

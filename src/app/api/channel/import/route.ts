@@ -3,7 +3,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAuth } from "@/lib/middleware/auth";
-import { syncChannelModels } from "@/lib/queue/service";
 import { appendChannelToWebDAV, updateChannelInWebDAV, syncAllChannelsToWebDAV, isWebDAVConfigured } from "@/lib/webdav/sync";
 import type { ChannelExportData } from "../export/route";
 
@@ -14,10 +13,9 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { channels, mode = "merge", syncModels = true } = body as {
+    const { channels, mode = "merge" } = body as {
       channels?: ChannelExportData["channels"];
       mode?: "merge" | "replace";
-      syncModels?: boolean;
     };
 
     // Support both direct channels array and full export format
@@ -189,30 +187,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Auto-sync models for imported channels
-    let syncedModels = 0;
-    const syncErrors: string[] = [];
-
-    if (syncModels && importedChannelIds.length > 0) {
-      // Sync models in parallel (with concurrency limit)
-      const CONCURRENCY = 3;
-      for (let i = 0; i < importedChannelIds.length; i += CONCURRENCY) {
-        const batch = importedChannelIds.slice(i, i + CONCURRENCY);
-        const results = await Promise.allSettled(
-          batch.map((channelId) => syncChannelModels(channelId))
-        );
-
-        for (let j = 0; j < results.length; j++) {
-          const result = results[j];
-          if (result.status === "fulfilled") {
-            syncedModels += result.value.added;
-          } else {
-            syncErrors.push(batch[j]);
-          }
-        }
-      }
-    }
-
     // Sync to WebDAV if configured
     const webdavStatus = { synced: false, error: null as string | null };
     if (isWebDAVConfigured() && channelsToSync.length > 0) {
@@ -248,6 +222,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 获取导入的渠道名称列表，供前端打开筛选弹窗
+    let importedChannels: { id: string; name: string }[] = [];
+    if (importedChannelIds.length > 0) {
+      importedChannels = await prisma.channel.findMany({
+        where: { id: { in: importedChannelIds } },
+        select: { id: true, name: true },
+      });
+    }
+
     return NextResponse.json({
       success: true,
       imported,
@@ -255,9 +238,8 @@ export async function POST(request: NextRequest) {
       skipped,
       duplicates,
       total: channelsToImport.length,
-      syncedModels,
-      syncErrors: syncErrors.length > 0 ? syncErrors : undefined,
       webdav: webdavStatus,
+      importedChannels,
     });
   } catch (error) {
     return NextResponse.json(

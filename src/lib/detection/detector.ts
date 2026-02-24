@@ -1,7 +1,7 @@
 // Core detector - executes HTTP requests to test model availability
 
 import { CheckStatus, EndpointType } from "@/generated/prisma";
-import { buildEndpointDetection } from "./strategies";
+import { buildEndpointDetection, buildClaudeEndpointWithThinking } from "./strategies";
 import type { DetectionJobData, DetectionResult, FetchModelsResult } from "./types";
 import { proxyFetch } from "@/lib/utils/proxy-fetch";
 
@@ -418,6 +418,13 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
       // Ignore error body parsing failures
     }
 
+    // CLAUDE endpoint failed — retry with thinking parameter
+    // Some platforms (e.g. new-api) require thinking for newer Claude models
+    if (job.endpointType === EndpointType.CLAUDE) {
+      const retryResult = await retryClaudeWithThinking(job, startTime);
+      if (retryResult) return retryResult;
+    }
+
     return {
       status: CheckStatus.FAIL,
       latency,
@@ -437,12 +444,78 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
       }
     }
 
+    // CLAUDE endpoint error — retry with thinking parameter
+    if (job.endpointType === EndpointType.CLAUDE) {
+      const retryResult = await retryClaudeWithThinking(job, startTime);
+      if (retryResult) return retryResult;
+    }
+
     return {
       status: CheckStatus.FAIL,
       latency,
       errorMsg,
       endpointType: job.endpointType,
     };
+  }
+}
+
+/**
+ * Retry Claude detection with thinking parameter enabled
+ * Returns successful result or null if retry also failed
+ */
+async function retryClaudeWithThinking(
+  job: DetectionJobData,
+  originalStartTime: number
+): Promise<DetectionResult | null> {
+  const proxy = job.proxy || GLOBAL_PROXY;
+  const endpoint = buildClaudeEndpointWithThinking(job.baseUrl, job.apiKey, job.modelName);
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DETECTION_TIMEOUT);
+
+    const response = await proxyFetch(endpoint.url, {
+      method: "POST",
+      headers: endpoint.headers,
+      body: JSON.stringify(endpoint.requestBody),
+      signal: controller.signal,
+    }, proxy);
+    clearTimeout(timeoutId);
+
+    const latency = Date.now() - originalStartTime;
+
+    if (response.ok) {
+      let responseContent: string | undefined;
+      let responseBody: unknown;
+      try {
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("text/event-stream")) {
+          const sseText = await response.text();
+          responseContent = extractStreamContent(sseText, EndpointType.CLAUDE);
+          responseBody = parseLastSSEEvent(sseText);
+        } else {
+          responseBody = await response.json();
+          responseContent = extractResponseContent(responseBody, EndpointType.CLAUDE);
+        }
+      } catch {
+        // Ignore parsing errors
+      }
+
+      const bodyError = checkResponseBodyForError(responseBody);
+      if (bodyError) return null;
+
+      return {
+        status: CheckStatus.SUCCESS,
+        latency,
+        statusCode: response.status,
+        endpointType: EndpointType.CLAUDE,
+        responseContent,
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
   }
 }
 

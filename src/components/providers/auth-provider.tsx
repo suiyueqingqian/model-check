@@ -2,7 +2,7 @@
 
 "use client";
 
-import { createContext, useContext, useState, ReactNode, useCallback } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
 
 interface AuthContextType {
   token: string | null;
@@ -14,12 +14,15 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => {
-    if (typeof window === "undefined") {
-      return null;
+  const [token, setToken] = useState<string | null>(null);
+
+  // 客户端挂载后从 localStorage 读取
+  useEffect(() => {
+    const stored = localStorage.getItem("auth_token");
+    if (stored) {
+      setToken(stored);
     }
-    return localStorage.getItem("auth_token");
-  });
+  }, []);
 
   const login = useCallback(async (password: string): Promise<boolean> => {
     try {

@@ -57,6 +57,65 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
+
+    // Check if a channel with the same baseUrl already exists → merge keys
+    const existingByUrl = await prisma.channel.findFirst({
+      where: { baseUrl: normalizedBaseUrl },
+      include: { channelKeys: { select: { apiKey: true } } },
+    });
+
+    if (existingByUrl) {
+      // Collect all keys the user is adding
+      const incomingKeys: string[] = [apiKey];
+      if (keys && typeof keys === "string") {
+        const parsed = keys.split(/[,\n]/).map((k: string) => k.trim()).filter(Boolean);
+        incomingKeys.push(...parsed);
+      }
+
+      // Deduplicate against existing keys
+      const existingKeySet = new Set<string>();
+      existingKeySet.add(existingByUrl.apiKey);
+      for (const ck of existingByUrl.channelKeys) {
+        existingKeySet.add(ck.apiKey);
+      }
+      const newKeys = [...new Set(incomingKeys)].filter((k) => !existingKeySet.has(k));
+
+      if (newKeys.length === 0) {
+        return NextResponse.json(
+          { error: `相同地址的渠道「${existingByUrl.name}」已存在，且 Key 均已存在`, code: "DUPLICATE_URL" },
+          { status: 409 }
+        );
+      }
+
+      // Add new keys
+      await prisma.channelKey.createMany({
+        data: newKeys.map((k) => ({
+          channelId: existingByUrl.id,
+          apiKey: k,
+        })),
+      });
+
+      // Switch to multi mode if not already
+      if (existingByUrl.keyMode !== "multi") {
+        await prisma.channel.update({
+          where: { id: existingByUrl.id },
+          data: { keyMode: "multi" },
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        merged: true,
+        mergedCount: newKeys.length,
+        channelName: existingByUrl.name,
+        channel: {
+          ...existingByUrl,
+          apiKey: existingByUrl.apiKey.slice(0, 8) + "...",
+        },
+      });
+    }
+
     // Check for duplicate channel name
     const existingByName = await prisma.channel.findFirst({
       where: { name },
@@ -80,7 +139,7 @@ export async function POST(request: NextRequest) {
       return tx.channel.create({
         data: {
           name,
-          baseUrl: baseUrl.replace(/\/$/, ""), // Remove trailing slash
+          baseUrl: normalizedBaseUrl,
           apiKey,
           proxy: proxy || null,
           enabled: true,

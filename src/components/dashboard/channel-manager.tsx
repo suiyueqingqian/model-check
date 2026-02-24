@@ -138,6 +138,11 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importMode, setImportMode] = useState<"merge" | "replace">("merge");
   const [importText, setImportText] = useState("");
+  const [importFileName, setImportFileName] = useState("");
+  const [importProgress, setImportProgress] = useState<{ phase: string; current: number; total: number; name: string } | null>(null);
+
+  // Sync all progress
+  const [syncAllProgress, setSyncAllProgress] = useState<{ current: number; total: number; name: string } | null>(null);
 
   // Channel keys info (for multi-key edit display)
   const [channelKeysInfo, setChannelKeysInfo] = useState<ChannelKeyInfo[]>([]);
@@ -162,6 +167,12 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const [syncAllMode, setSyncAllMode] = useState(false);
   const [filterFromEdit, setFilterFromEdit] = useState(false);
 
+  // Import result modal state (shows success + failed channels for user to handle)
+  const [showImportResultModal, setShowImportResultModal] = useState(false);
+  const [importSuccessChannels, setImportSuccessChannels] = useState<{ id: string; name: string }[]>([]);
+  const [importFailedChannels, setImportFailedChannels] = useState<{ name: string; reason: string; url: string; apiKey: string; removed: boolean }[]>([]);
+  const [addingFailedChannel, setAddingFailedChannel] = useState<string | null>(null);
+
   // Pagination state
   const [channelPage, setChannelPage] = useState(1);
   const CHANNELS_PER_PAGE = 12;
@@ -184,7 +195,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         if (showModal) setShowModal(false);
-        if (showImportModal) setShowImportModal(false);
+        if (showImportModal && !importing) setShowImportModal(false);
         if (showWebDAVModal) setShowWebDAVModal(false);
         if (showFilterModal) setShowFilterModal(false);
       }
@@ -427,7 +438,12 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         }
 
         const createData = await response.json();
-        if (createData.channel?.id) {
+
+        if (createData.merged) {
+          // Keys were merged into existing channel
+          toast(`已将 ${createData.mergedCount} 个 Key 合并到渠道「${createData.channelName}」`, "success");
+          setShowModal(false);
+        } else if (createData.channel?.id) {
           setShowModal(false);
           setFilterChannels([{ id: createData.channel.id, name: formData.name }]);
           setFilterFromEdit(false);
@@ -731,15 +747,22 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     if (syncingAll || channels.length === 0) return;
 
     setSyncingAll(true);
+    setSyncAllProgress(null);
     setError(null);
 
     try {
       const concurrency = 3;
       let totalModels = 0;
       let failedCount = 0;
+      let processed = 0;
 
       for (let index = 0; index < channels.length; index += concurrency) {
         const batch = channels.slice(index, index + concurrency);
+        setSyncAllProgress({
+          current: processed,
+          total: channels.length,
+          name: batch.map((ch) => ch.name).join(", "),
+        });
         const results = await Promise.allSettled(
           batch.map(async (channel) => {
             const response = await fetch(`/api/channel/${channel.id}/sync`, {
@@ -761,6 +784,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
             failedCount += 1;
           }
         }
+        processed += batch.length;
       }
 
       if (failedCount > 0) {
@@ -772,6 +796,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       toast(err instanceof Error ? err.message : "全量同步失败", "error");
     } finally {
       setSyncingAll(false);
+      setSyncAllProgress(null);
       onUpdate();
     }
   };
@@ -871,25 +896,118 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const handleImport = async () => {
     setImporting(true);
     setError(null);
+    setImportProgress(null);
     try {
       const data = JSON.parse(importText);
-      const response = await fetch("/api/channel/import", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ ...data, mode: importMode }),
-      });
-      if (!response.ok) {
+
+      // Auto-detect accounts backup format (has accounts.accounts or type === "accounts")
+      const isAccountsBackup = data?.type === "accounts" || data?.accounts?.accounts;
+
+      if (isAccountsBackup) {
+        // Use SSE import-accounts API
+        const response = await fetch("/api/channel/import-accounts", {
+          method: "POST",
+          headers,
+          body: JSON.stringify(data),
+        });
+        if (!response.ok) {
+          const result = await response.json();
+          throw new Error(result.error || "导入失败");
+        }
+
+        // Read SSE stream
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("无法读取响应流");
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let finalResult: { imported?: number; merged?: number; skipped?: number; importedChannels?: { id: string; name: string }[]; errors?: { name: string; reason: string }[] } | null = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // Parse SSE events from buffer
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          let eventType = "";
+          for (const line of lines) {
+            if (line.startsWith("event: ")) {
+              eventType = line.slice(7).trim();
+            } else if (line.startsWith("data: ")) {
+              try {
+                const eventData = JSON.parse(line.slice(6));
+                if (eventType === "progress") {
+                  setImportProgress(eventData);
+                } else if (eventType === "done") {
+                  finalResult = eventData;
+                }
+              } catch {
+                // skip
+              }
+            }
+          }
+        }
+
+        setImportProgress(null);
+        setShowImportModal(false);
+        setImportText("");
+        fetchChannels();
+        onUpdate();
+        setIsExpanded(true);
+
+        if (finalResult) {
+          const mergeInfo = finalResult.merged && finalResult.merged > 0 ? `, 合并 ${finalResult.merged}` : "";
+          toast(`账号导入完成: 新增 ${finalResult.imported ?? 0}, 跳过 ${finalResult.skipped ?? 0}${mergeInfo}`, finalResult.errors?.length ? "warning" : "success");
+
+          // 显示导入结果弹窗（成功+失败的渠道）
+          const hasSuccess = finalResult.importedChannels && finalResult.importedChannels.length > 0;
+          const hasFailed = finalResult.errors && finalResult.errors.length > 0;
+
+          if (hasSuccess || hasFailed) {
+            setImportSuccessChannels(finalResult.importedChannels || []);
+            setImportFailedChannels(
+              (finalResult.errors || []).map((e: { name: string; reason: string; url?: string }) => ({
+                name: e.name,
+                reason: e.reason,
+                url: e.url || "",
+                apiKey: "",
+                removed: false,
+              }))
+            );
+            setShowImportResultModal(true);
+          }
+        }
+      } else {
+        // Original channel import format
+        const response = await fetch("/api/channel/import", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ ...data, mode: importMode }),
+        });
+        if (!response.ok) {
+          const result = await response.json();
+          throw new Error(result.error || "导入失败");
+        }
         const result = await response.json();
-        throw new Error(result.error || "导入失败");
+        setShowImportModal(false);
+        setImportText("");
+        fetchChannels();
+        onUpdate();
+        setIsExpanded(true);
+        toast(`导入成功: 新增 ${result.imported}, 更新 ${result.updated}, 跳过 ${result.skipped}`, "success");
+        // 如果有新导入的渠道，打开模型筛选弹窗
+        if (result.importedChannels && result.importedChannels.length > 0) {
+          setSyncAllMode(true);
+          setFilterFromEdit(false);
+          setFilterChannels(result.importedChannels);
+          setShowFilterModal(true);
+        }
       }
-      const result = await response.json();
-      setShowImportModal(false);
-      setImportText("");
-      fetchChannels();
-      onUpdate();
-      const syncInfo = result.syncedModels > 0 ? `, 同步模型 ${result.syncedModels}` : "";
-      toast(`导入成功: 新增 ${result.imported}, 更新 ${result.updated}, 跳过 ${result.skipped}${syncInfo}`, "success");
     } catch (err) {
+      setImportProgress(null);
       toast(err instanceof Error ? err.message : "导入失败", "error");
     } finally {
       setImporting(false);
@@ -900,6 +1018,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setImportFileName(file.name);
     const reader = new FileReader();
     reader.onload = (event) => {
       setImportText(event.target?.result as string);
@@ -940,9 +1059,17 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       if (action === "download") {
         fetchChannels();
         onUpdate();
-        const syncInfo = result.syncedModels > 0 ? `, 同步模型 ${result.syncedModels}` : "";
         const dupInfo = result.duplicates > 0 ? `, 重复跳过 ${result.duplicates}` : "";
-        toast(`下载成功: 新增 ${result.imported}, 跳过 ${result.skipped}${dupInfo}${syncInfo}`, "success");
+        toast(`下载成功: 新增 ${result.imported}, 更新 ${result.updated}, 跳过 ${result.skipped}${dupInfo}`, "success");
+        // 如果有新导入的渠道，打开模型筛选弹窗
+        if (result.importedChannels && result.importedChannels.length > 0) {
+          setShowWebDAVModal(false);
+          setSyncAllMode(true);
+          setFilterFromEdit(false);
+          setFilterChannels(result.importedChannels);
+          setShowFilterModal(true);
+          return; // 提前返回，不关闭弹窗（已在上面关闭）
+        }
       } else {
         const mergeInfo = result.mergedFromRemote > 0 ? `, 合并远端 ${result.mergedFromRemote}` : "";
         toast(`上传成功: 本地 ${result.localCount} 个渠道, 共上传 ${result.totalUploaded} 个${mergeInfo}`, "success");
@@ -1061,6 +1188,26 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       {/* Content */}
       {isExpanded && (
         <div className="border-t border-border p-4 space-y-4">
+          {/* Sync all progress */}
+          {syncingAll && syncAllProgress && (
+            <div className="space-y-2 p-3 rounded-md bg-muted/50 border border-border">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground truncate max-w-[70%]">
+                  同步模型: {syncAllProgress.name}
+                </span>
+                <span className="text-muted-foreground shrink-0">
+                  {syncAllProgress.current}/{syncAllProgress.total}
+                </span>
+              </div>
+              <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-primary transition-all duration-300"
+                  style={{ width: `${Math.round((syncAllProgress.current / syncAllProgress.total) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {/* Error */}
           {error && (
             <div className="p-3 rounded-md bg-destructive/10 text-destructive text-sm">
@@ -1672,16 +1819,17 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         >
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-            onClick={() => setShowImportModal(false)}
+            onClick={() => !importing && setShowImportModal(false)}
             aria-hidden="true"
           />
           <div className="relative w-full max-w-lg mx-4 bg-card rounded-lg shadow-lg border border-border max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between p-4 border-b border-border">
               <h2 id="import-modal-title" className="text-lg font-semibold">导入渠道</h2>
               <button
-                onClick={() => setShowImportModal(false)}
-                className="p-1 rounded-md hover:bg-accent transition-colors"
+                onClick={() => !importing && setShowImportModal(false)}
+                className="p-1 rounded-md hover:bg-accent transition-colors disabled:opacity-50"
                 aria-label="关闭"
+                disabled={importing}
               >
                 <X className="h-5 w-5" />
               </button>
@@ -1704,12 +1852,31 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
               {/* File input */}
               <div>
                 <label className="block text-sm font-medium mb-1">选择文件</label>
-                <input
-                  type="file"
-                  accept=".json"
-                  onChange={handleFileImport}
-                  className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
-                />
+                {importFileName ? (
+                  <div className="flex items-center gap-2 w-full px-3 py-2 rounded-md border border-green-500/50 bg-green-500/5 text-sm">
+                    <Check className="h-4 w-4 text-green-500 shrink-0" />
+                    <span className="truncate">{importFileName}</span>
+                    <button
+                      type="button"
+                      onClick={() => { setImportFileName(""); setImportText(""); }}
+                      className="ml-auto p-0.5 rounded hover:bg-accent transition-colors shrink-0"
+                      aria-label="清除文件"
+                    >
+                      <X className="h-3.5 w-3.5 text-muted-foreground" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex items-center justify-center gap-2 w-full px-3 py-2 rounded-md border border-dashed border-input bg-background text-sm text-muted-foreground cursor-pointer hover:bg-accent/50 transition-colors">
+                    <Upload className="h-4 w-4" />
+                    点击选择 JSON 文件
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={handleFileImport}
+                      className="hidden"
+                    />
+                  </label>
+                )}
               </div>
 
               {/* JSON textarea */}
@@ -1730,12 +1897,33 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                 </div>
               )}
 
+              {/* Import progress */}
+              {importing && importProgress && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground truncate max-w-[70%]">
+                      {importProgress.phase === "import" ? "导入" : "同步模型"}: {importProgress.name}
+                    </span>
+                    <span className="text-muted-foreground shrink-0">
+                      {importProgress.current}/{importProgress.total}
+                    </span>
+                  </div>
+                  <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-300"
+                      style={{ width: `${Math.round((importProgress.current / importProgress.total) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
               {/* Submit */}
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowImportModal(false)}
-                  className="px-4 py-2 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent transition-colors"
+                  disabled={importing}
+                  className="px-4 py-2 rounded-md border border-input bg-background text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50"
                 >
                   取消
                 </button>
@@ -1892,6 +2080,187 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                   上传
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Result Modal - shows success + failed channels for user to handle */}
+      {showImportResultModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-card rounded-lg shadow-lg w-full max-w-2xl max-h-[85vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+              <h2 className="text-lg font-semibold">
+                导入结果
+              </h2>
+              <button
+                onClick={() => {
+                  setShowImportResultModal(false);
+                  setImportSuccessChannels([]);
+                  setImportFailedChannels([]);
+                }}
+                className="p-1 rounded-md hover:bg-accent transition-colors"
+                aria-label="关闭"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+              {/* Success section */}
+              {importSuccessChannels.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-green-600 dark:text-green-400 mb-2 flex items-center gap-2">
+                    <Check className="h-4 w-4" />
+                    已成功添加 ({importSuccessChannels.length})
+                  </h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {importSuccessChannels.map((ch) => (
+                      <div
+                        key={ch.id}
+                        className="px-3 py-2 rounded-md border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 text-sm truncate"
+                        title={ch.name}
+                      >
+                        {ch.name}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Failed section */}
+              {importFailedChannels.filter(c => !c.removed).length > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-destructive mb-2 flex items-center gap-2">
+                    <X className="h-4 w-4" />
+                    需要处理 ({importFailedChannels.filter(c => !c.removed).length})
+                  </h3>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    以下渠道因 WAF 或其他原因无法自动获取密钥，请手动输入 API Key 或移除
+                  </p>
+                  <div className="space-y-3">
+                    {importFailedChannels.map((ch, idx) => {
+                      if (ch.removed) return null;
+                      return (
+                        <div
+                          key={idx}
+                          className="p-3 rounded-md border border-border bg-muted/30 space-y-2"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="font-medium text-sm">{ch.name}</div>
+                              <div className="text-xs text-muted-foreground truncate" title={ch.url}>{ch.url}</div>
+                              <div className="text-xs text-destructive mt-1">{ch.reason}</div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setImportFailedChannels(prev =>
+                                  prev.map((c, i) => i === idx ? { ...c, removed: true } : c)
+                                );
+                              }}
+                              className="p-1.5 rounded-md hover:bg-destructive/10 text-destructive transition-colors shrink-0"
+                              title="移除此渠道"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={ch.apiKey}
+                              onChange={(e) => {
+                                setImportFailedChannels(prev =>
+                                  prev.map((c, i) => i === idx ? { ...c, apiKey: e.target.value } : c)
+                                );
+                              }}
+                              className="flex-1 px-3 py-1.5 rounded-md border border-input bg-background text-sm font-mono"
+                              placeholder="输入 API Key（sk-xxx）"
+                            />
+                            <button
+                              onClick={async () => {
+                                if (!ch.apiKey.trim() || !ch.url) return;
+                                setAddingFailedChannel(ch.name);
+                                try {
+                                  const res = await fetch("/api/channel", {
+                                    method: "POST",
+                                    headers,
+                                    body: JSON.stringify({
+                                      name: ch.name,
+                                      baseUrl: ch.url,
+                                      apiKey: ch.apiKey.trim(),
+                                      enabled: true,
+                                    }),
+                                  });
+                                  if (!res.ok) {
+                                    const data = await res.json();
+                                    throw new Error(data.error || "添加失败");
+                                  }
+                                  const data = await res.json();
+                                  // 添加成功，移到成功列表
+                                  setImportSuccessChannels(prev => [...prev, { id: data.id, name: ch.name }]);
+                                  setImportFailedChannels(prev =>
+                                    prev.map((c, i) => i === idx ? { ...c, removed: true } : c)
+                                  );
+                                  toast(`${ch.name} 添加成功`, "success");
+                                  fetchChannels();
+                                } catch (err) {
+                                  toast(err instanceof Error ? err.message : "添加失败", "error");
+                                } finally {
+                                  setAddingFailedChannel(null);
+                                }
+                              }}
+                              disabled={!ch.apiKey.trim() || addingFailedChannel === ch.name}
+                              className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors flex items-center gap-1 shrink-0"
+                            >
+                              {addingFailedChannel === ch.name ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Plus className="h-3.5 w-3.5" />
+                              )}
+                              添加
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* All handled */}
+              {importSuccessChannels.length === 0 && importFailedChannels.filter(c => !c.removed).length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  没有需要处理的渠道
+                </p>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between px-5 py-4 border-t border-border shrink-0">
+              <p className="text-xs text-muted-foreground">
+                {importFailedChannels.filter(c => !c.removed).length > 0
+                  ? `还有 ${importFailedChannels.filter(c => !c.removed).length} 个渠道待处理`
+                  : "所有渠道已处理完毕"}
+              </p>
+              <button
+                onClick={() => {
+                  setShowImportResultModal(false);
+                  // 如果有成功的渠道，打开模型筛选弹窗
+                  if (importSuccessChannels.length > 0) {
+                    setSyncAllMode(true);
+                    setFilterFromEdit(false);
+                    setFilterChannels(importSuccessChannels);
+                    setShowFilterModal(true);
+                  }
+                  setImportSuccessChannels([]);
+                  setImportFailedChannels([]);
+                }}
+                className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
+              >
+                {importSuccessChannels.length > 0 ? "继续选择模型" : "完成"}
+              </button>
             </div>
           </div>
         </div>

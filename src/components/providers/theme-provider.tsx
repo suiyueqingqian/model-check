@@ -15,35 +15,40 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(() => {
-    if (typeof window === "undefined") {
-      return "system";
-    }
+  const [theme, setTheme] = useState<Theme>("system");
+  const [mounted, setMounted] = useState(false);
+
+  // 客户端挂载后从 localStorage 读取
+  useEffect(() => {
     const stored = localStorage.getItem("theme") as Theme | null;
-    return stored ?? "system";
-  });
+    if (stored) {
+      setTheme(stored);
+    }
+    setMounted(true);
+  }, []);
 
   const resolvedTheme = useMemo<"light" | "dark">(() => {
-    if (typeof window === "undefined") {
+    if (!mounted) {
       return "light";
     }
     if (theme === "system") {
       return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     }
     return theme;
-  }, [theme]);
+  }, [theme, mounted]);
 
   useEffect(() => {
+    if (!mounted) return;
     // Save theme to localStorage
     localStorage.setItem("theme", theme);
 
     // Apply theme class
     document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
-  }, [theme, resolvedTheme]);
+  }, [theme, resolvedTheme, mounted]);
 
   // Listen for system theme changes
   useEffect(() => {
-    if (theme !== "system") return;
+    if (!mounted || theme !== "system") return;
 
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     const handler = (e: MediaQueryListEvent) => {
@@ -52,7 +57,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
     mediaQuery.addEventListener("change", handler);
     return () => mediaQuery.removeEventListener("change", handler);
-  }, [theme]);
+  }, [theme, mounted]);
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>

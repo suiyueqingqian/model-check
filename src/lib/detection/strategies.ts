@@ -156,6 +156,45 @@ function buildClaudeEndpoint(
 }
 
 /**
+ * Build Claude /v1/messages endpoint with thinking parameter
+ * Used as fallback for platforms (e.g. new-api) that require thinking for newer Claude models
+ */
+export function buildClaudeEndpointWithThinking(
+  baseUrl: string,
+  apiKey: string,
+  modelName: string
+): EndpointDetection {
+  let normalizedBaseUrl = baseUrl.replace(/\/$/, "");
+  if (normalizedBaseUrl.endsWith("/v1")) {
+    normalizedBaseUrl = normalizedBaseUrl.slice(0, -3);
+  }
+  return {
+    type: EndpointType.CLAUDE,
+    url: `${normalizedBaseUrl}/v1/messages`,
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    requestBody: {
+      model: modelName,
+      max_tokens: 2048,
+      stream: true,
+      thinking: {
+        type: "enabled",
+        budget_tokens: 1024,
+      },
+      messages: [
+        {
+          role: "user",
+          content: DETECT_PROMPT,
+        },
+      ],
+    },
+  };
+}
+
+/**
  * Build Gemini generateContent endpoint
  */
 function buildGeminiEndpoint(
