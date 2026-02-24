@@ -4,10 +4,6 @@
 
 **AI 模型可用性检测与管理平台**
 
-[![GitHub Release](https://img.shields.io/github/v/release/chxcodepro/model-check?style=flat-square&logo=github&color=blue)](https://github.com/chxcodepro/model-check/releases)
-[![Docker](https://img.shields.io/docker/v/chxcodepro/model-check?style=flat-square&logo=docker&label=docker)](https://hub.docker.com/r/chxcodepro/model-check)
-[![License](https://img.shields.io/github/license/chxcodepro/model-check?style=flat-square)](LICENSE)
-
 [快速开始](#-快速开始) · [功能特性](#-功能特性) · [配置说明](#-配置说明) · [常见问题](#-常见问题)
 
 </div>
