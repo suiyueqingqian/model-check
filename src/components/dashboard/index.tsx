@@ -210,22 +210,20 @@ export function Dashboard({
     return () => controller.abort();
   }, [fetchData, refreshKey, search, endpointFilter, statusFilter]);
 
-  // Sort channels - filtering is now done server-side
+  // Sort models within channels - filtering is done server-side
   const sortedChannels = useMemo(() => {
     if (!data?.channels) return [];
 
-    return data.channels
-      .map((channel) => {
-        // Sort models by status (healthy first, then unhealthy, then unknown)
-        const sortedModels = [...channel.models].sort((a, b) => {
-          const statusA = a.lastStatus === true ? 0 : a.lastStatus === false ? 1 : 2;
-          const statusB = b.lastStatus === true ? 0 : b.lastStatus === false ? 1 : 2;
-          return statusA - statusB;
-        });
+    return data.channels.map((channel) => {
+      // Sort models by status (healthy first, then unhealthy, then unknown)
+      const sortedModels = [...channel.models].sort((a, b) => {
+        const statusA = a.lastStatus === true ? 0 : a.lastStatus === false ? 1 : 2;
+        const statusB = b.lastStatus === true ? 0 : b.lastStatus === false ? 1 : 2;
+        return statusA - statusB;
+      });
 
-        return { ...channel, models: sortedModels };
-      })
-      .filter((channel) => channel.models.length > 0);
+      return { ...channel, models: sortedModels };
+    });
   }, [data?.channels]);
 
   if (loading && !data) {

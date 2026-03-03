@@ -50,33 +50,29 @@ export async function GET(request: NextRequest) {
     const modelWhere: Prisma.ModelWhereInput | undefined =
       modelWhereConditions.length > 0 ? { AND: modelWhereConditions } : undefined;
 
-    // Get channels that have at least one matching model (for filtered queries)
-    // or all enabled channels (for unfiltered queries)
-    const hasFilters = search || endpointFilter !== "all" || statusFilter !== "all";
+    // Get channels that have at least one matching model
+    // Always filter to only show channels with models (even without filters)
+    const channelsWithMatchingModels = await prisma.channel.findMany({
+      where: {
+        enabled: true,
+        models: { some: modelWhere ?? {} },
+      },
+      select: { id: true },
+      orderBy: [
+        { sortOrder: "asc" },
+        { createdAt: "desc" },
+      ],
+    });
+    const channelIds = channelsWithMatchingModels.map((c) => c.id);
 
-    let channelIds: string[] | undefined;
-    if (hasFilters) {
-      // Find channels that have matching models
-      const channelsWithMatchingModels = await prisma.channel.findMany({
-        where: {
-          enabled: true,
-          models: { some: modelWhere },
-        },
-        select: { id: true },
-      });
-      channelIds = channelsWithMatchingModels.map((c) => c.id);
-    }
-
-    // Get total count for pagination
-    const totalChannels = hasFilters
-      ? channelIds?.length || 0
-      : await prisma.channel.count({ where: { enabled: true } });
+    // Get total count for pagination (only channels with matching models)
+    const totalChannels = channelIds.length;
 
     // Fetch paginated channels with filtered models
     const channels = await prisma.channel.findMany({
       where: {
         enabled: true,
-        ...(hasFilters && channelIds ? { id: { in: channelIds } } : {}),
+        id: { in: channelIds },
       },
       select: {
         id: true,
