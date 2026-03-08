@@ -115,6 +115,8 @@ CREATE TABLE IF NOT EXISTS "proxy_keys" (
   "allow_all_models" BOOLEAN NOT NULL DEFAULT true,
   "allowed_channel_ids" JSONB,
   "allowed_model_ids" JSONB,
+  "unified_mode" BOOLEAN NOT NULL DEFAULT false,
+  "allowed_unified_models" JSONB,
   "last_used_at" TIMESTAMP(3),
   "usage_count" INTEGER NOT NULL DEFAULT 0,
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -178,6 +180,8 @@ ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "allowed_channel_ids" JSONB;
 ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "allowed_model_ids" JSONB;
 ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "last_used_at" TIMESTAMP(3);
 ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "usage_count" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "unified_mode" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "allowed_unified_models" JSONB;
 
 -- ==========================================
 -- 4. 约束兼容（已存在则跳过）

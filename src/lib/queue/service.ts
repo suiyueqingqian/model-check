@@ -2,6 +2,7 @@
 
 import prisma from "@/lib/prisma";
 import { getEndpointsToTest, fetchModels } from "@/lib/detection";
+import { EndpointType } from "@/generated/prisma";
 import {
   addDetectionJobsBulk,
   getQueueStats,
@@ -10,6 +11,18 @@ import {
   isQueueRunning,
 } from "./queue";
 import type { DetectionJobData } from "@/lib/detection/types";
+
+function isEndpointType(value: string): value is EndpointType {
+  return Object.values(EndpointType).includes(value as EndpointType);
+}
+
+function getValidDetectedEndpoints(detectedEndpoints?: string[]): EndpointType[] {
+  if (!detectedEndpoints || detectedEndpoints.length === 0) {
+    return [];
+  }
+
+  return detectedEndpoints.filter(isEndpointType);
+}
 
 /**
  * Resolve the correct apiKey for a model.
@@ -35,7 +48,7 @@ async function resolveApiKey(
  */
 async function buildJobsForModels(
   channel: { id: string; baseUrl: string; apiKey: string; proxy: string | null },
-  models: { id: string; modelName: string; channelKeyId?: string | null }[]
+  models: { id: string; modelName: string; detectedEndpoints?: string[]; channelKeyId?: string | null }[]
 ): Promise<DetectionJobData[]> {
   const jobs: DetectionJobData[] = [];
 
@@ -62,7 +75,12 @@ async function buildJobsForModels(
       ? keyMap.get(model.channelKeyId)!
       : channel.apiKey;
 
-    const endpointsToTest = getEndpointsToTest(model.modelName);
+    // 已有成功端点时只重新验证这些端点，不再尝试其他端点（节省资源）
+    const detectedEndpoints = getValidDetectedEndpoints(model.detectedEndpoints);
+    const endpointsToTest =
+      detectedEndpoints.length > 0
+        ? detectedEndpoints
+        : getEndpointsToTest(model.modelName);
 
     for (const endpointType of endpointsToTest) {
       jobs.push({
@@ -121,7 +139,6 @@ export async function triggerFullDetection(): Promise<{
         lastStatus: null,
         lastLatency: null,
         lastCheckedAt: null,
-        detectedEndpoints: [],
       },
     });
   }
@@ -217,7 +234,6 @@ export async function triggerChannelDetection(
         lastStatus: null,
         lastLatency: null,
         lastCheckedAt: null,
-        detectedEndpoints: [],
       },
     });
   }
@@ -264,7 +280,6 @@ export async function triggerModelDetection(modelId: string): Promise<{
       lastStatus: null,
       lastLatency: null,
       lastCheckedAt: null,
-      detectedEndpoints: [],
     },
   });
 

@@ -133,7 +133,8 @@ export async function canAccessModel(
   isEnvKey: boolean | undefined,
   channelId: string,
   modelId: string,
-  modelStatus: boolean | null
+  modelStatus: boolean | null,
+  modelName?: string
 ): Promise<boolean> {
   // Environment key and auto-generated key have full access
   if (isEnvKey) {
@@ -152,6 +153,14 @@ export async function canAccessModel(
   }
 
   // allowAllModels=false: only explicitly specified channels/models are allowed
+  // 统一模式优先用 allowedUnifiedModels 检查裸模型名
+  if (keyRecord.unifiedMode && modelName) {
+    const allowedUnified = parseStringArray(keyRecord.allowedUnifiedModels);
+    if (allowedUnified && allowedUnified.length > 0) {
+      return allowedUnified.includes(modelName);
+    }
+  }
+
   // Permission logic: channel match OR model match grants access
   const allowedChannelIds = parseStringArray(keyRecord.allowedChannelIds);
   const allowedModelIds = parseStringArray(keyRecord.allowedModelIds);

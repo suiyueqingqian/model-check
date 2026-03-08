@@ -40,6 +40,7 @@ export type ProxyKeyMinAggregateOutputType = {
   key: string | null
   enabled: boolean | null
   allowAllModels: boolean | null
+  unifiedMode: boolean | null
   lastUsedAt: Date | null
   usageCount: number | null
   createdAt: Date | null
@@ -52,6 +53,7 @@ export type ProxyKeyMaxAggregateOutputType = {
   key: string | null
   enabled: boolean | null
   allowAllModels: boolean | null
+  unifiedMode: boolean | null
   lastUsedAt: Date | null
   usageCount: number | null
   createdAt: Date | null
@@ -66,6 +68,8 @@ export type ProxyKeyCountAggregateOutputType = {
   allowAllModels: number
   allowedChannelIds: number
   allowedModelIds: number
+  unifiedMode: number
+  allowedUnifiedModels: number
   lastUsedAt: number
   usageCount: number
   createdAt: number
@@ -88,6 +92,7 @@ export type ProxyKeyMinAggregateInputType = {
   key?: true
   enabled?: true
   allowAllModels?: true
+  unifiedMode?: true
   lastUsedAt?: true
   usageCount?: true
   createdAt?: true
@@ -100,6 +105,7 @@ export type ProxyKeyMaxAggregateInputType = {
   key?: true
   enabled?: true
   allowAllModels?: true
+  unifiedMode?: true
   lastUsedAt?: true
   usageCount?: true
   createdAt?: true
@@ -114,6 +120,8 @@ export type ProxyKeyCountAggregateInputType = {
   allowAllModels?: true
   allowedChannelIds?: true
   allowedModelIds?: true
+  unifiedMode?: true
+  allowedUnifiedModels?: true
   lastUsedAt?: true
   usageCount?: true
   createdAt?: true
@@ -215,6 +223,8 @@ export type ProxyKeyGroupByOutputType = {
   allowAllModels: boolean
   allowedChannelIds: runtime.JsonValue | null
   allowedModelIds: runtime.JsonValue | null
+  unifiedMode: boolean
+  allowedUnifiedModels: runtime.JsonValue | null
   lastUsedAt: Date | null
   usageCount: number
   createdAt: Date
@@ -252,6 +262,8 @@ export type ProxyKeyWhereInput = {
   allowAllModels?: Prisma.BoolFilter<"ProxyKey"> | boolean
   allowedChannelIds?: Prisma.JsonNullableFilter<"ProxyKey">
   allowedModelIds?: Prisma.JsonNullableFilter<"ProxyKey">
+  unifiedMode?: Prisma.BoolFilter<"ProxyKey"> | boolean
+  allowedUnifiedModels?: Prisma.JsonNullableFilter<"ProxyKey">
   lastUsedAt?: Prisma.DateTimeNullableFilter<"ProxyKey"> | Date | string | null
   usageCount?: Prisma.IntFilter<"ProxyKey"> | number
   createdAt?: Prisma.DateTimeFilter<"ProxyKey"> | Date | string
@@ -266,6 +278,8 @@ export type ProxyKeyOrderByWithRelationInput = {
   allowAllModels?: Prisma.SortOrder
   allowedChannelIds?: Prisma.SortOrderInput | Prisma.SortOrder
   allowedModelIds?: Prisma.SortOrderInput | Prisma.SortOrder
+  unifiedMode?: Prisma.SortOrder
+  allowedUnifiedModels?: Prisma.SortOrderInput | Prisma.SortOrder
   lastUsedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   usageCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -283,6 +297,8 @@ export type ProxyKeyWhereUniqueInput = Prisma.AtLeast<{
   allowAllModels?: Prisma.BoolFilter<"ProxyKey"> | boolean
   allowedChannelIds?: Prisma.JsonNullableFilter<"ProxyKey">
   allowedModelIds?: Prisma.JsonNullableFilter<"ProxyKey">
+  unifiedMode?: Prisma.BoolFilter<"ProxyKey"> | boolean
+  allowedUnifiedModels?: Prisma.JsonNullableFilter<"ProxyKey">
   lastUsedAt?: Prisma.DateTimeNullableFilter<"ProxyKey"> | Date | string | null
   usageCount?: Prisma.IntFilter<"ProxyKey"> | number
   createdAt?: Prisma.DateTimeFilter<"ProxyKey"> | Date | string
@@ -297,6 +313,8 @@ export type ProxyKeyOrderByWithAggregationInput = {
   allowAllModels?: Prisma.SortOrder
   allowedChannelIds?: Prisma.SortOrderInput | Prisma.SortOrder
   allowedModelIds?: Prisma.SortOrderInput | Prisma.SortOrder
+  unifiedMode?: Prisma.SortOrder
+  allowedUnifiedModels?: Prisma.SortOrderInput | Prisma.SortOrder
   lastUsedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   usageCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -319,6 +337,8 @@ export type ProxyKeyScalarWhereWithAggregatesInput = {
   allowAllModels?: Prisma.BoolWithAggregatesFilter<"ProxyKey"> | boolean
   allowedChannelIds?: Prisma.JsonNullableWithAggregatesFilter<"ProxyKey">
   allowedModelIds?: Prisma.JsonNullableWithAggregatesFilter<"ProxyKey">
+  unifiedMode?: Prisma.BoolWithAggregatesFilter<"ProxyKey"> | boolean
+  allowedUnifiedModels?: Prisma.JsonNullableWithAggregatesFilter<"ProxyKey">
   lastUsedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"ProxyKey"> | Date | string | null
   usageCount?: Prisma.IntWithAggregatesFilter<"ProxyKey"> | number
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"ProxyKey"> | Date | string
@@ -333,6 +353,8 @@ export type ProxyKeyCreateInput = {
   allowAllModels?: boolean
   allowedChannelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  unifiedMode?: boolean
+  allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   lastUsedAt?: Date | string | null
   usageCount?: number
   createdAt?: Date | string
@@ -347,6 +369,8 @@ export type ProxyKeyUncheckedCreateInput = {
   allowAllModels?: boolean
   allowedChannelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  unifiedMode?: boolean
+  allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   lastUsedAt?: Date | string | null
   usageCount?: number
   createdAt?: Date | string
@@ -361,6 +385,8 @@ export type ProxyKeyUpdateInput = {
   allowAllModels?: Prisma.BoolFieldUpdateOperationsInput | boolean
   allowedChannelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -375,6 +401,8 @@ export type ProxyKeyUncheckedUpdateInput = {
   allowAllModels?: Prisma.BoolFieldUpdateOperationsInput | boolean
   allowedChannelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -389,6 +417,8 @@ export type ProxyKeyCreateManyInput = {
   allowAllModels?: boolean
   allowedChannelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  unifiedMode?: boolean
+  allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   lastUsedAt?: Date | string | null
   usageCount?: number
   createdAt?: Date | string
@@ -403,6 +433,8 @@ export type ProxyKeyUpdateManyMutationInput = {
   allowAllModels?: Prisma.BoolFieldUpdateOperationsInput | boolean
   allowedChannelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -417,6 +449,8 @@ export type ProxyKeyUncheckedUpdateManyInput = {
   allowAllModels?: Prisma.BoolFieldUpdateOperationsInput | boolean
   allowedChannelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -431,6 +465,8 @@ export type ProxyKeyCountOrderByAggregateInput = {
   allowAllModels?: Prisma.SortOrder
   allowedChannelIds?: Prisma.SortOrder
   allowedModelIds?: Prisma.SortOrder
+  unifiedMode?: Prisma.SortOrder
+  allowedUnifiedModels?: Prisma.SortOrder
   lastUsedAt?: Prisma.SortOrder
   usageCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -447,6 +483,7 @@ export type ProxyKeyMaxOrderByAggregateInput = {
   key?: Prisma.SortOrder
   enabled?: Prisma.SortOrder
   allowAllModels?: Prisma.SortOrder
+  unifiedMode?: Prisma.SortOrder
   lastUsedAt?: Prisma.SortOrder
   usageCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -459,6 +496,7 @@ export type ProxyKeyMinOrderByAggregateInput = {
   key?: Prisma.SortOrder
   enabled?: Prisma.SortOrder
   allowAllModels?: Prisma.SortOrder
+  unifiedMode?: Prisma.SortOrder
   lastUsedAt?: Prisma.SortOrder
   usageCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -479,6 +517,8 @@ export type ProxyKeySelect<ExtArgs extends runtime.Types.Extensions.InternalArgs
   allowAllModels?: boolean
   allowedChannelIds?: boolean
   allowedModelIds?: boolean
+  unifiedMode?: boolean
+  allowedUnifiedModels?: boolean
   lastUsedAt?: boolean
   usageCount?: boolean
   createdAt?: boolean
@@ -493,6 +533,8 @@ export type ProxyKeySelectCreateManyAndReturn<ExtArgs extends runtime.Types.Exte
   allowAllModels?: boolean
   allowedChannelIds?: boolean
   allowedModelIds?: boolean
+  unifiedMode?: boolean
+  allowedUnifiedModels?: boolean
   lastUsedAt?: boolean
   usageCount?: boolean
   createdAt?: boolean
@@ -507,6 +549,8 @@ export type ProxyKeySelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Exte
   allowAllModels?: boolean
   allowedChannelIds?: boolean
   allowedModelIds?: boolean
+  unifiedMode?: boolean
+  allowedUnifiedModels?: boolean
   lastUsedAt?: boolean
   usageCount?: boolean
   createdAt?: boolean
@@ -521,13 +565,15 @@ export type ProxyKeySelectScalar = {
   allowAllModels?: boolean
   allowedChannelIds?: boolean
   allowedModelIds?: boolean
+  unifiedMode?: boolean
+  allowedUnifiedModels?: boolean
   lastUsedAt?: boolean
   usageCount?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }
 
-export type ProxyKeyOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "key" | "enabled" | "allowAllModels" | "allowedChannelIds" | "allowedModelIds" | "lastUsedAt" | "usageCount" | "createdAt" | "updatedAt", ExtArgs["result"]["proxyKey"]>
+export type ProxyKeyOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "key" | "enabled" | "allowAllModels" | "allowedChannelIds" | "allowedModelIds" | "unifiedMode" | "allowedUnifiedModels" | "lastUsedAt" | "usageCount" | "createdAt" | "updatedAt", ExtArgs["result"]["proxyKey"]>
 
 export type $ProxyKeyPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   name: "ProxyKey"
@@ -540,6 +586,8 @@ export type $ProxyKeyPayload<ExtArgs extends runtime.Types.Extensions.InternalAr
     allowAllModels: boolean
     allowedChannelIds: runtime.JsonValue | null
     allowedModelIds: runtime.JsonValue | null
+    unifiedMode: boolean
+    allowedUnifiedModels: runtime.JsonValue | null
     lastUsedAt: Date | null
     usageCount: number
     createdAt: Date
@@ -974,6 +1022,8 @@ export interface ProxyKeyFieldRefs {
   readonly allowAllModels: Prisma.FieldRef<"ProxyKey", 'Boolean'>
   readonly allowedChannelIds: Prisma.FieldRef<"ProxyKey", 'Json'>
   readonly allowedModelIds: Prisma.FieldRef<"ProxyKey", 'Json'>
+  readonly unifiedMode: Prisma.FieldRef<"ProxyKey", 'Boolean'>
+  readonly allowedUnifiedModels: Prisma.FieldRef<"ProxyKey", 'Json'>
   readonly lastUsedAt: Prisma.FieldRef<"ProxyKey", 'DateTime'>
   readonly usageCount: Prisma.FieldRef<"ProxyKey", 'Int'>
   readonly createdAt: Prisma.FieldRef<"ProxyKey", 'DateTime'>

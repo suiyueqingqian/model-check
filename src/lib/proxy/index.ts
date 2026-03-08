@@ -125,7 +125,7 @@ export async function verifyProxyKeyAsync(request: NextRequest): Promise<{
  * Returns the channel that contains the specified model
  * Supports multi-key routing (round_robin / random) and filters out invalid keys
  */
-export async function findChannelByModel(modelName: string): Promise<{
+export async function findChannelByModel(modelName: string, preferredEndpoint?: string): Promise<{
   channelId: string;
   channelName: string;
   baseUrl: string;
@@ -225,11 +225,25 @@ export async function findChannelByModel(modelName: string): Promise<{
 
   // Filter out models whose channelKey is explicitly invalid
   // or model is not explicitly healthy.
-  const validModels = models.filter((m) => {
+  let validModels = models.filter((m) => {
     if (m.channelKey && m.channelKey.lastValid === false) return false;
     if (m.lastStatus !== true) return false;
     return true;
   });
+
+  if (validModels.length === 0) {
+    return null;
+  }
+
+  // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型
+  if (preferredEndpoint && validModels.length > 0) {
+    const matched = validModels.filter((m) =>
+      m.detectedEndpoints.includes(preferredEndpoint)
+    );
+    if (matched.length > 0) {
+      validModels = matched;
+    }
+  }
 
   if (validModels.length === 0) {
     return null;
@@ -275,12 +289,13 @@ export async function findChannelByModel(modelName: string): Promise<{
 }
 
 /**
- * Find channel by model name with permission check
- * Returns null if the key doesn't have permission to access the model
+ * Find channel for unified model mode
+ * Searches across all channels for a bare model name, picks a healthy one
  */
-export async function findChannelByModelWithPermission(
+async function findChannelByUnifiedModel(
   modelName: string,
-  keyResult: ValidateKeyResult
+  keyResult: ValidateKeyResult,
+  preferredEndpoint?: string
 ): Promise<{
   channelId: string;
   channelName: string;
@@ -291,7 +306,138 @@ export async function findChannelByModelWithPermission(
   modelId: string;
   modelStatus: boolean | null;
 } | null> {
-  const channel = await findChannelByModel(modelName);
+  const models = await prisma.model.findMany({
+    where: {
+      modelName,
+      channel: { enabled: true },
+      lastStatus: true,
+    },
+    include: {
+      channel: {
+        select: {
+          id: true,
+          name: true,
+          baseUrl: true,
+          apiKey: true,
+          proxy: true,
+          enabled: true,
+          sortOrder: true,
+          createdAt: true,
+          keyMode: true,
+          routeStrategy: true,
+        },
+      },
+      channelKey: {
+        select: {
+          apiKey: true,
+          lastValid: true,
+        },
+      },
+    },
+    orderBy: [
+      { channel: { sortOrder: "asc" } },
+      { channel: { createdAt: "desc" } },
+      { id: "asc" },
+    ],
+    take: 200,
+  });
+
+  // 过滤掉 channelKey 明确无效的
+  const validModels = models.filter((m) => {
+    if (m.channelKey && m.channelKey.lastValid === false) return false;
+    return true;
+  });
+
+  // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型
+  let endpointFiltered = validModels;
+  if (preferredEndpoint && validModels.length > 0) {
+    endpointFiltered = validModels.filter((m) =>
+      m.detectedEndpoints.includes(preferredEndpoint)
+    );
+  }
+
+  if (endpointFiltered.length === 0) {
+    return null;
+  }
+
+  // 统一模式权限过滤
+  const keyRecord = keyResult.keyRecord;
+  let permittedModels = endpointFiltered;
+  if (keyRecord && !keyRecord.allowAllModels) {
+    const allowedUnified = parseStringArray(keyRecord.allowedUnifiedModels);
+    if (allowedUnified && allowedUnified.length > 0) {
+      // 用 allowedUnifiedModels 做裸模型名匹配
+      if (!allowedUnified.includes(modelName)) {
+        return null;
+      }
+    } else {
+      // 回退到现有 channelIds/modelIds 检查
+      const allowedChannelIds = parseStringArray(keyRecord.allowedChannelIds);
+      const allowedModelIds = parseStringArray(keyRecord.allowedModelIds);
+      const hasChannelPerms = allowedChannelIds !== null && allowedChannelIds.length > 0;
+      const hasModelPerms = allowedModelIds !== null && allowedModelIds.length > 0;
+      if (!hasChannelPerms && !hasModelPerms) return null;
+      permittedModels = endpointFiltered.filter((m) => {
+        if (hasChannelPerms && allowedChannelIds!.includes(m.channel.id)) return true;
+        if (hasModelPerms && allowedModelIds!.includes(m.id)) return true;
+        return false;
+      });
+      if (permittedModels.length === 0) return null;
+    }
+  }
+
+  // 跨渠道随机选择（按 sortOrder 加权：sortOrder 越小权重越高）
+  const maxSort = Math.max(...permittedModels.map((m) => m.channel.sortOrder)) + 1;
+  const weights = permittedModels.map((m) => maxSort - m.channel.sortOrder + 1);
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+  let rand = Math.random() * totalWeight;
+  let selected = permittedModels[0];
+  for (let i = 0; i < permittedModels.length; i++) {
+    rand -= weights[i];
+    if (rand <= 0) {
+      selected = permittedModels[i];
+      break;
+    }
+  }
+
+  const apiKey = selected.channelKey?.apiKey ?? selected.channel.apiKey;
+  return {
+    channelId: selected.channel.id,
+    channelName: selected.channel.name,
+    baseUrl: selected.channel.baseUrl.replace(/\/$/, ""),
+    apiKey,
+    proxy: selected.channel.proxy,
+    actualModelName: modelName,
+    modelId: selected.id,
+    modelStatus: selected.lastStatus,
+  };
+}
+
+/**
+ * Find channel by model name with permission check
+ * Returns null if the key doesn't have permission to access the model
+ */
+export async function findChannelByModelWithPermission(
+  modelName: string,
+  keyResult: ValidateKeyResult,
+  preferredEndpoint?: string
+): Promise<{
+  channelId: string;
+  channelName: string;
+  baseUrl: string;
+  apiKey: string;
+  proxy: string | null;
+  actualModelName: string;
+  modelId: string;
+  modelStatus: boolean | null;
+} | null> {
+  // 统一模式：裸模型名（不含 /）走跨渠道路由
+  const isUnifiedMode = keyResult.keyRecord?.unifiedMode === true;
+  if (isUnifiedMode && !modelName.includes("/")) {
+    return findChannelByUnifiedModel(modelName, keyResult, preferredEndpoint);
+  }
+
+  const channel = await findChannelByModel(modelName, preferredEndpoint);
 
   if (!channel) {
     return null;
@@ -420,6 +566,31 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
   }
 
   return Array.from(uniqueModels.values());
+}
+
+/**
+ * Get all available models, with unified mode dedup support
+ */
+export async function getAllModelsWithChannelsUnified(keyResult?: ValidateKeyResult): Promise<
+  Array<{
+    id: string;
+    modelName: string;
+    channelName: string;
+    channelId: string;
+  }>
+> {
+  const models = await getAllModelsWithChannels(keyResult);
+  if (!keyResult?.keyRecord?.unifiedMode) {
+    return models;
+  }
+  // 统一模式：按 modelName 去重，channelName 置空
+  const seen = new Map<string, { id: string; modelName: string; channelName: string; channelId: string }>();
+  for (const m of models) {
+    if (!seen.has(m.modelName)) {
+      seen.set(m.modelName, { ...m, channelName: "" });
+    }
+  }
+  return Array.from(seen.values());
 }
 
 /**

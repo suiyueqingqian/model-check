@@ -150,6 +150,8 @@ export const ProxyKeyScalarFieldEnum = {
   allowAllModels: 'allowAllModels',
   allowedChannelIds: 'allowedChannelIds',
   allowedModelIds: 'allowedModelIds',
+  unifiedMode: 'unifiedMode',
+  allowedUnifiedModels: 'allowedUnifiedModels',
   lastUsedAt: 'lastUsedAt',
   usageCount: 'usageCount',
   createdAt: 'createdAt',

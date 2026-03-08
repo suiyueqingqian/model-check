@@ -14,6 +14,7 @@ import {
   normalizeBaseUrl,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
+import { prisma } from "@/lib/prisma";
 
 function isPrefixedModelName(modelName: string): boolean {
   const slashIndex = modelName.indexOf("/");
@@ -45,12 +46,19 @@ export async function POST(
     const modelName = pathStr.substring(0, colonIndex);
     const method = pathStr.substring(colonIndex + 1);
 
-    if (!isPrefixedModelName(modelName)) {
-      return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
+    const isUnifiedMode = keyResult?.keyRecord?.unifiedMode === true;
+    if (!isUnifiedMode) {
+      if (!isPrefixedModelName(modelName)) {
+        return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
+      }
+    } else {
+      if (!modelName || modelName.trim().length === 0) {
+        return errorResponse("Missing or invalid model name in path", 400);
+      }
     }
 
     // Find channel by model name with permission check
-    const channel = await findChannelByModelWithPermission(modelName, keyResult!);
+    const channel = await findChannelByModelWithPermission(modelName, keyResult!, "GEMINI");
     if (!channel) {
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);
     }
@@ -75,6 +83,12 @@ export async function POST(
     const response = await proxyRequest(url, "POST", headers, body, channel.proxy);
 
     if (!response.ok) {
+      if (isUnifiedMode && channel.modelId) {
+        prisma.model.update({
+          where: { id: channel.modelId },
+          data: { lastStatus: false },
+        }).catch(() => {});
+      }
       const errorText = await response.text().catch(() => "Unknown error");
       return errorResponse(
         `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`,
@@ -109,12 +123,19 @@ export async function GET(
     const { path } = await params;
     const modelName = path.join("/");
 
-    if (!isPrefixedModelName(modelName)) {
-      return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
+    const isUnifiedMode = keyResult?.keyRecord?.unifiedMode === true;
+    if (!isUnifiedMode) {
+      if (!isPrefixedModelName(modelName)) {
+        return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
+      }
+    } else {
+      if (!modelName || modelName.trim().length === 0) {
+        return errorResponse("Missing or invalid model name in path", 400);
+      }
     }
 
     // Find channel by model name with permission check
-    const channel = await findChannelByModelWithPermission(modelName, keyResult!);
+    const channel = await findChannelByModelWithPermission(modelName, keyResult!, "GEMINI");
     if (!channel) {
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);
     }
@@ -132,6 +153,12 @@ export async function GET(
     const response = await proxyRequest(url, "GET", headers, undefined, channel.proxy);
 
     if (!response.ok) {
+      if (isUnifiedMode && channel.modelId) {
+        prisma.model.update({
+          where: { id: channel.modelId },
+          data: { lastStatus: false },
+        }).catch(() => {});
+      }
       const errorText = await response.text().catch(() => "Unknown error");
       return errorResponse(
         `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`,

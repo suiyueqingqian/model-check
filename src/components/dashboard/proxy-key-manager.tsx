@@ -31,6 +31,8 @@ interface ProxyKeyData {
   allowAllModels: boolean;
   allowedChannelIds: string[] | null;
   allowedModelIds: string[] | null;
+  unifiedMode?: boolean;
+  allowedUnifiedModels?: string[] | null;
   lastUsedAt: string | null;
   usageCount: number;
   createdAt: string;
@@ -298,6 +300,11 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
                       {!key.enabled && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-red-500/10 text-red-500">
                           已禁用
+                        </span>
+                      )}
+                      {key.unifiedMode && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-500">
+                          统一模式
                         </span>
                       )}
                     </div>

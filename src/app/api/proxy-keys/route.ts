@@ -20,6 +20,8 @@ export async function GET(request: NextRequest) {
         allowAllModels: true,
         allowedChannelIds: true,
         allowedModelIds: true,
+        unifiedMode: true,
+        allowedUnifiedModels: true,
         lastUsedAt: true,
         usageCount: true,
         createdAt: true,
@@ -76,6 +78,8 @@ export async function POST(request: NextRequest) {
       allowAllModels = true,
       allowedChannelIds,
       allowedModelIds,
+      unifiedMode = false,
+      allowedUnifiedModels,
     } = body;
 
     if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -117,6 +121,8 @@ export async function POST(request: NextRequest) {
         allowAllModels,
         allowedChannelIds: allowedChannelIds || null,
         allowedModelIds: allowedModelIds || null,
+        unifiedMode,
+        allowedUnifiedModels: allowedUnifiedModels || null,
       },
     });
 
@@ -130,6 +136,8 @@ export async function POST(request: NextRequest) {
         allowAllModels: proxyKey.allowAllModels,
         allowedChannelIds: proxyKey.allowedChannelIds,
         allowedModelIds: proxyKey.allowedModelIds,
+        unifiedMode: proxyKey.unifiedMode,
+        allowedUnifiedModels: proxyKey.allowedUnifiedModels,
         createdAt: proxyKey.createdAt,
       },
     });

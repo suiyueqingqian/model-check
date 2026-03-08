@@ -69,6 +69,8 @@ export async function PUT(
       allowAllModels,
       allowedChannelIds,
       allowedModelIds,
+      unifiedMode,
+      allowedUnifiedModels,
     } = body;
 
     // Check if key exists
@@ -92,6 +94,8 @@ export async function PUT(
         ...(allowAllModels !== undefined && { allowAllModels }),
         ...(allowedChannelIds !== undefined && { allowedChannelIds }),
         ...(allowedModelIds !== undefined && { allowedModelIds }),
+        ...(unifiedMode !== undefined && { unifiedMode }),
+        ...(allowedUnifiedModels !== undefined && { allowedUnifiedModels }),
       },
     });
 
@@ -105,6 +109,8 @@ export async function PUT(
         allowAllModels: key.allowAllModels,
         allowedChannelIds: key.allowedChannelIds,
         allowedModelIds: key.allowedModelIds,
+        unifiedMode: key.unifiedMode,
+        allowedUnifiedModels: key.allowedUnifiedModels,
         updatedAt: key.updatedAt,
       },
     });

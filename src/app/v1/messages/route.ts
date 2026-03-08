@@ -13,6 +13,7 @@ import {
   normalizeBaseUrl,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
+import { prisma } from "@/lib/prisma";
 
 export async function POST(request: NextRequest) {
   // Verify proxy API key (async for multi-key support)
@@ -28,12 +29,19 @@ export async function POST(request: NextRequest) {
       return errorResponse("Missing 'model' field in request body", 400);
     }
 
-    if (typeof modelName !== "string" || modelName.indexOf("/") <= 0 || modelName.endsWith("/")) {
-      return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
+    const isUnifiedMode = keyResult?.keyRecord?.unifiedMode === true;
+    if (!isUnifiedMode) {
+      if (typeof modelName !== "string" || modelName.indexOf("/") <= 0 || modelName.endsWith("/")) {
+        return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
+      }
+    } else {
+      if (typeof modelName !== "string" || modelName.trim().length === 0) {
+        return errorResponse("Missing or invalid 'model' field", 400);
+      }
     }
 
     // Find channel by model name with permission check (requires "channelName/modelName" format)
-    const channel = await findChannelByModelWithPermission(modelName, keyResult!);
+    const channel = await findChannelByModelWithPermission(modelName, keyResult!, "CLAUDE");
     if (!channel) {
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);
     }
@@ -63,6 +71,12 @@ export async function POST(request: NextRequest) {
     const response = await proxyRequest(url, "POST", headers, upstreamBody, channel.proxy);
 
     if (!response.ok) {
+      if (isUnifiedMode && channel.modelId) {
+        prisma.model.update({
+          where: { id: channel.modelId },
+          data: { lastStatus: false },
+        }).catch(() => {});
+      }
       const errorText = await response.text().catch(() => "Unknown error");
       return errorResponse(
         `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`,

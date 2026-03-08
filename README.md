@@ -27,7 +27,7 @@
 - 检测结果可视化，记录延迟和错误信息
 
 ### 🔑 代理接口
-- 统一的 API 代理入口 `/api/proxy/v1/chat/completions`
+- 统一代理入口直接暴露在根路径 `/v1/*`
 - 多密钥管理：支持创建多个代理密钥
 - 权限控制：可限制密钥访问的渠道和模型
 - 自动路由：根据请求的模型名自动选择可用渠道
@@ -48,6 +48,8 @@ bash deploy.sh
 ```
 
 脚本会自动引导你完成配置，包括设置密码、数据库等。
+
+> `deploy.sh` 主要面向 Linux / macOS。Windows 环境更建议按下面的“本地开发”方式启动，或者在 Git Bash / WSL 中运行脚本。
 
 ### 部署选项
 
@@ -79,6 +81,12 @@ cd model-check
 cp .env.example .env
 ```
 
+Windows PowerShell 可用：
+
+```powershell
+Copy-Item .env.example .env
+```
+
 修改 `.env` 中的数据库连接为 localhost：
 
 ```bash
@@ -101,6 +109,12 @@ npm run db:push
 # 启动开发服务器
 npm run dev
 ```
+
+启动后可访问：
+
+- 首页面板：`http://localhost:3000/`
+- 代理文档：`http://localhost:3000/docs/proxy`
+- 系统状态：`http://localhost:3000/api/status`
 
 <details>
 <summary>📦 其他命令</summary>
@@ -128,6 +142,7 @@ npm test             # 运行测试
 
 | 变量 | 说明 |
 |------|------|
+| `COMPOSE_PROFILES` | Docker 部署模式：`local`=本地 PostgreSQL+Redis，`redis`=云数据库+本地 Redis，`db`=本地 PostgreSQL+云 Redis，不设置=全云 |
 | `DATABASE_URL` | PostgreSQL 连接字符串（本地开发用 localhost） |
 | `REDIS_URL` | Redis 连接字符串（本地开发用 localhost） |
 | `DOCKER_DATABASE_URL` | Docker 容器内数据库连接（云端模式使用） |
@@ -145,6 +160,8 @@ npm test             # 运行测试
 | `CRON_TIMEZONE` | 定时任务时区 | `Asia/Shanghai` |
 | `CHANNEL_CONCURRENCY` | 单渠道并发数 | `5` |
 | `MAX_GLOBAL_CONCURRENCY` | 全局最大并发数 | `30` |
+| `DETECTION_MIN_DELAY_MS` | 检测前最小随机延迟（毫秒） | `3000` |
+| `DETECTION_MAX_DELAY_MS` | 检测前最大随机延迟（毫秒） | `5000` |
 
 </details>
 
@@ -162,6 +179,40 @@ npm test             # 运行测试
 | `LOG_RETENTION_DAYS` | 日志保留天数，默认 `7` |
 
 </details>
+
+## 🔌 代理接口说明
+
+代理接口不是 `/api/proxy/*`，而是直接使用下面这些路径：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/v1/models` | 获取当前可用模型列表 |
+| `POST` | `/v1/chat/completions` | OpenAI Chat Completions 代理 |
+| `POST` | `/v1/responses` | OpenAI Responses / Codex 代理 |
+| `POST` | `/v1/messages` | Claude Messages 代理 |
+| `POST` | `/v1beta/models/{model}:generateContent` | Gemini 代理 |
+| `POST` | `/v1beta/models/{model}:streamGenerateContent` | Gemini 流式代理 |
+
+更多调用示例见：`/docs/proxy`
+
+默认情况下，请求里的模型名使用：
+
+- 普通模式：`渠道名/模型名`
+- 统一模型模式：直接用裸模型名
+
+例如：
+
+```powershell
+curl http://localhost:3000/v1/models `
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+```powershell
+curl http://localhost:3000/v1/chat/completions `
+  -H "Authorization: Bearer YOUR_API_KEY" `
+  -H "Content-Type: application/json" `
+  -d "{\"model\":\"my-channel/gpt-4o\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}"
+```
 
 ## 🛠️ 常用命令
 
@@ -203,7 +254,8 @@ bash deploy.sh --update           # 更新部署
 <summary><b>如何使用代理接口？</b></summary>
 
 1. 进入管理面板 → 代理密钥管理 → 添加密钥
-2. 使用生成的密钥调用 `/api/proxy/v1/chat/completions`
+2. 使用生成的密钥调用 `/v1/chat/completions`、`/v1/responses`、`/v1/messages` 或 `/v1beta/models/...`
+3. 也可以直接打开 `/docs/proxy` 看完整示例
 
 </details>
 
