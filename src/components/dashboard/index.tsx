@@ -277,7 +277,6 @@ export function Dashboard({
             <ChannelCard
               key={channel.id}
               channel={channel}
-              onRefresh={() => fetchData(undefined, currentPage, search, endpointFilter, statusFilter)}
               onDelete={handleDeleteChannel}
               testingModelIds={testingModelIds}
               onTestModels={onTestModels}
