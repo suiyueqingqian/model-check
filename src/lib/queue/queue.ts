@@ -5,6 +5,8 @@ import redis from "@/lib/redis";
 import type { DetectionJobData } from "@/lib/detection/types";
 import { DETECTION_QUEUE_NAME, DETECTION_STOPPED_KEY, DETECTION_STOPPED_TTL } from "./constants";
 
+const MODEL_REMAINING_PREFIX = "detection:model_remaining:";
+
 // Queue instance (singleton)
 let detectionQueue: Queue<DetectionJobData> | null = null;
 
@@ -63,6 +65,22 @@ export async function addDetectionJobsBulk(jobs: DetectionJobData[]): Promise<st
   }));
 
   const addedJobs = await queue.addBulk(bulkJobs);
+
+  // Track remaining job count per model using Redis atomic counters
+  const modelJobCounts = new Map<string, number>();
+  for (const data of jobs) {
+    modelJobCounts.set(data.modelId, (modelJobCounts.get(data.modelId) || 0) + 1);
+  }
+  if (modelJobCounts.size > 0) {
+    const pipeline = redis.pipeline();
+    for (const [modelId, count] of modelJobCounts) {
+      const key = `${MODEL_REMAINING_PREFIX}${modelId}`;
+      pipeline.incrby(key, count);
+      pipeline.expire(key, 3600);
+    }
+    await pipeline.exec();
+  }
+
   return addedJobs.map((j) => j.id || "");
 }
 
@@ -210,6 +228,12 @@ export async function pauseAndDrainQueue(): Promise<{ cleared: number }> {
       await redis.del(...semaphoreKeys);
     }
 
+    // Clear model remaining counters
+    const modelRemainingKeys = await redis.keys(`${MODEL_REMAINING_PREFIX}*`);
+    if (modelRemainingKeys.length > 0) {
+      await redis.del(...modelRemainingKeys);
+    }
+
     cleared = waiting + delayed + activeCount;
   } finally {
     // Always resume queue, even if an error occurred during cleanup
@@ -232,4 +256,17 @@ export async function isDetectionStopped(): Promise<boolean> {
  */
 export async function clearStoppedFlag(): Promise<void> {
   await redis.del(DETECTION_STOPPED_KEY);
+}
+
+/**
+ * Decrement remaining job count for a model, return true if model detection is complete
+ */
+export async function decrementModelRemaining(modelId: string): Promise<boolean> {
+  const key = `${MODEL_REMAINING_PREFIX}${modelId}`;
+  const remaining = await redis.decr(key);
+  if (remaining <= 0) {
+    await redis.del(key);
+    return true;
+  }
+  return false;
 }

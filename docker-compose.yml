@@ -47,6 +47,7 @@ services:
       - DETECT_PROMPT=${DETECT_PROMPT:-1+1=2? yes or no}
       - GLOBAL_PROXY=${GLOBAL_PROXY:-}
       - PROXY_API_KEY=${PROXY_API_KEY:-}
+      - AUTO_DETECT_ALL_CHANNELS=${AUTO_DETECT_ALL_CHANNELS:-true}
       - CRON_SCHEDULE=${CRON_SCHEDULE:-0 0,8,12,16,20 * * *}
       - CRON_TIMEZONE=${CRON_TIMEZONE:-Asia/Shanghai}
       - CLEANUP_SCHEDULE=${CLEANUP_SCHEDULE:-0 2 * * *}
@@ -80,6 +81,7 @@ services:
       POSTGRES_DB: model_check
       POSTGRES_USER: modelcheck
       POSTGRES_PASSWORD: modelcheck123456
+      PGOPTIONS: "-c app.proxy_api_key=${PROXY_API_KEY:-}"
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:

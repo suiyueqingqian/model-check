@@ -4,6 +4,7 @@ import { CheckStatus, EndpointType } from "@/generated/prisma";
 import { buildEndpointDetection, buildClaudeEndpointWithThinking } from "./strategies";
 import type { DetectionJobData, DetectionResult, FetchModelsResult } from "./types";
 import { proxyFetch } from "@/lib/utils/proxy-fetch";
+import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 
 // Detection timeout in milliseconds
 const DETECTION_TIMEOUT = 30000;
@@ -358,9 +359,6 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
       signal: controller.signal,
     };
 
-    if (proxy) {
-    }
-
     // Use proxyFetch for proxy support
     const response = await proxyFetch(endpoint.url, fetchOptions, proxy);
     clearTimeout(timeoutId);
@@ -425,10 +423,10 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
       if (retryResult) return retryResult;
     }
 
-    // CODEX endpoint failed for gpt-5 (non-codex) — fall back to Chat Completions
+    // CODEX endpoint failed for gpt-5+ (non-codex) — fall back to Chat Completions
     if (job.endpointType === EndpointType.CODEX) {
       const name = job.modelName.toLowerCase();
-      if (/gpt-5/.test(name) && !name.includes("codex")) {
+      if (isGptFiveOrNewerModel(name) && !name.includes("codex")) {
         const retryResult = await retryWithChatEndpoint(job, startTime);
         if (retryResult) return retryResult;
       }
@@ -453,16 +451,16 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
       }
     }
 
-    // CLAUDE endpoint error — retry with thinking parameter
-    if (job.endpointType === EndpointType.CLAUDE) {
+    // CLAUDE endpoint error — retry with thinking parameter (skip on timeout)
+    if (!(error instanceof Error && error.name === "AbortError") && job.endpointType === EndpointType.CLAUDE) {
       const retryResult = await retryClaudeWithThinking(job, startTime);
       if (retryResult) return retryResult;
     }
 
-    // CODEX endpoint error for gpt-5 (non-codex) — fall back to Chat Completions
-    if (job.endpointType === EndpointType.CODEX) {
+    // CODEX endpoint error for gpt-5+ (non-codex) — fall back to Chat Completions (skip on timeout)
+    if (!(error instanceof Error && error.name === "AbortError") && job.endpointType === EndpointType.CODEX) {
       const name = job.modelName.toLowerCase();
-      if (/gpt-5/.test(name) && !name.includes("codex")) {
+      if (isGptFiveOrNewerModel(name) && !name.includes("codex")) {
         const retryResult = await retryWithChatEndpoint(job, startTime);
         if (retryResult) return retryResult;
       }
@@ -538,7 +536,7 @@ async function retryClaudeWithThinking(
 }
 
 /**
- * Retry with Chat Completions API (/v1/chat/completions) for gpt-5 non-codex models
+ * Retry with Chat Completions API (/v1/chat/completions) for gpt-5+ non-codex models
  * Called when CODEX (/v1/responses) fails, as fallback
  */
 async function retryWithChatEndpoint(
@@ -614,8 +612,6 @@ export async function fetchModels(
   const url = `${normalizedBaseUrl}/v1/models`;
 
   const effectiveProxy = proxy || GLOBAL_PROXY;
-  if (effectiveProxy) {
-  }
 
   try {
     const controller = new AbortController();

@@ -3,7 +3,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/middleware/auth";
 import prisma from "@/lib/prisma";
-import { generateApiKey, getProxyApiKey, isKeyFromEnvironment } from "@/lib/utils/proxy-key";
+import {
+  BUILTIN_PROXY_KEY_DB_ID,
+  generateApiKey,
+  getBuiltInProxyKeyInfo,
+  maskKey,
+} from "@/lib/utils/proxy-key";
 
 // GET /api/proxy-keys - List all proxy keys
 export async function GET(request: NextRequest) {
@@ -12,6 +17,11 @@ export async function GET(request: NextRequest) {
 
   try {
     const keys = await prisma.proxyKey.findMany({
+      where: {
+        id: {
+          not: BUILTIN_PROXY_KEY_DB_ID,
+        },
+      },
       select: {
         id: true,
         name: true,
@@ -38,21 +48,22 @@ export async function GET(request: NextRequest) {
     }));
 
     // Add the built-in key (env or auto-generated) at the top
-    const builtInKey = getProxyApiKey();
-    const isEnv = isKeyFromEnvironment();
+    const builtInKey = await getBuiltInProxyKeyInfo();
     const builtInEntry = {
-      id: "__builtin__",
-      name: isEnv ? "环境变量密钥" : "自动生成密钥",
-      key: maskKey(builtInKey),
-      enabled: true,
-      allowAllModels: true,
-      allowedChannelIds: null,
-      allowedModelIds: null,
-      lastUsedAt: null,
-      usageCount: 0,
-      createdAt: null,
-      updatedAt: null,
-      source: isEnv ? "env" as const : "auto" as const,
+      id: builtInKey.id,
+      name: builtInKey.name,
+      key: maskKey(builtInKey.key),
+      enabled: builtInKey.enabled,
+      allowAllModels: builtInKey.allowAllModels,
+      allowedChannelIds: builtInKey.allowedChannelIds,
+      allowedModelIds: builtInKey.allowedModelIds,
+      unifiedMode: builtInKey.unifiedMode,
+      allowedUnifiedModels: builtInKey.allowedUnifiedModels,
+      lastUsedAt: builtInKey.lastUsedAt,
+      usageCount: builtInKey.usageCount,
+      createdAt: builtInKey.createdAt,
+      updatedAt: builtInKey.updatedAt,
+      source: builtInKey.source,
     };
 
     return NextResponse.json({ keys: [builtInEntry, ...maskedKeys] });
@@ -78,7 +89,7 @@ export async function POST(request: NextRequest) {
       allowAllModels = true,
       allowedChannelIds,
       allowedModelIds,
-      unifiedMode = false,
+      unifiedMode = true,
       allowedUnifiedModels,
     } = body;
 
@@ -101,6 +112,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Check for duplicate key
+    const builtInKey = await getBuiltInProxyKeyInfo();
+    if (key === builtInKey.key) {
+      return NextResponse.json(
+        { error: "Key already exists", code: "DUPLICATE_KEY" },
+        { status: 409 }
+      );
+    }
+
     const existing = await prisma.proxyKey.findUnique({
       where: { key },
     });
@@ -119,10 +138,10 @@ export async function POST(request: NextRequest) {
         key,
         enabled,
         allowAllModels,
-        allowedChannelIds: allowedChannelIds || null,
-        allowedModelIds: allowedModelIds || null,
+        allowedChannelIds: allowedChannelIds ?? null,
+        allowedModelIds: allowedModelIds ?? null,
         unifiedMode,
-        allowedUnifiedModels: allowedUnifiedModels || null,
+        allowedUnifiedModels: allowedUnifiedModels ?? null,
       },
     });
 
@@ -147,12 +166,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-// Helper function to mask key for display
-function maskKey(key: string): string {
-  if (key.length <= 12) {
-    return key.substring(0, 4) + "****";
-  }
-  return key.substring(0, 8) + "..." + key.substring(key.length - 4);
 }

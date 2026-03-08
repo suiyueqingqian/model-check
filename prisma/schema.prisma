@@ -41,6 +41,7 @@ model Model {
   channelKey        ChannelKey? @relation(fields: [channelKeyId], references: [id], onDelete: SetNull)
 
   @@unique([channelId, modelName, channelKeyId])
+  @@index([channelKeyId])
   @@map("models")
 }
 
@@ -108,6 +109,7 @@ model ChannelKey {
   channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
   models    Model[]
 
+  @@index([channelId])
   @@map("channel_keys")
 }
 

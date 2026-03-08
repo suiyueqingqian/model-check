@@ -19,6 +19,7 @@ interface ProxyKeyData {
   allowedModelIds: string[] | null;
   unifiedMode?: boolean;
   allowedUnifiedModels?: string[] | null;
+  source?: "database" | "builtin" | "env" | "auto";
 }
 
 interface ProxyKeyModalProps {
@@ -45,7 +46,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
   const [selectedModelIds, setSelectedModelIds] = useState<Record<string, string[]>>({});
 
   // 统一模式状态
-  const [unifiedMode, setUnifiedMode] = useState(false);
+  const [unifiedMode, setUnifiedMode] = useState(true);
   const [unifiedModels, setUnifiedModels] = useState<string[]>([]);
   const [selectedUnifiedModels, setSelectedUnifiedModels] = useState<string[]>([]);
   const [loadingUnifiedModels, setLoadingUnifiedModels] = useState(false);
@@ -53,6 +54,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
 
   // Copy state
   const [copied, setCopied] = useState(false);
+  const isBuiltInEdit = !!editingKey && editingKey.source !== "database";
 
   // Load channels for selector
   useEffect(() => {
@@ -124,55 +126,54 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
     return () => controller.abort();
   }, [isOpen, token, unifiedMode]);
 
-  // Initialize form state
+  // 初始化基础表单字段（仅在 editingKey/isOpen 变化时触发）
   useEffect(() => {
     if (editingKey) {
       setName(editingKey.name);
       setEnabled(editingKey.enabled);
       setAllowAllModels(editingKey.allowAllModels);
-      setGeneratedKey(""); // Don't show key in edit mode
-      setUnifiedMode(editingKey.unifiedMode || false);
+      setGeneratedKey(editingKey.source !== "database" ? editingKey.key : "");
+      setUnifiedMode(editingKey.unifiedMode ?? true);
       setSelectedUnifiedModels(
         Array.isArray(editingKey.allowedUnifiedModels) ? editingKey.allowedUnifiedModels : []
       );
-
-      // 正确解析 allowedModelIds（后端存储为扁平数组 string[]）
-      const modelIds = editingKey.allowedModelIds;
-
-      if (Array.isArray(modelIds) && modelIds.length > 0 && !loadingChannels && channels.length > 0) {
-        // 后端返回的是扁平数组，需要按渠道重新分组
-        const groupedByChannel: Record<string, string[]> = {};
-
-        // 遍历所有渠道，找出哪些模型在 allowedModelIds 中
-        for (const channel of channels) {
-          const selectedInChannel = channel.models
-            .filter(m => modelIds.includes(m.id))
-            .map(m => m.id);
-          if (selectedInChannel.length > 0) {
-            groupedByChannel[channel.id] = selectedInChannel;
-          }
-        }
-
-        setSelectedModelIds(groupedByChannel);
-        setSelectedChannelIds(Object.keys(groupedByChannel));
-      } else if (!Array.isArray(modelIds) || modelIds.length === 0) {
-        // 没有模型限制或空数组
-        setSelectedModelIds({});
-        setSelectedChannelIds(editingKey.allowedChannelIds || []);
-      }
-      // 如果 channels 还在加载，等待下次 effect 触发
     } else {
       setName("");
       setEnabled(true);
       setAllowAllModels(true);
       setSelectedChannelIds([]);
       setSelectedModelIds({});
-      setUnifiedMode(false);
+      setUnifiedMode(true);
       setSelectedUnifiedModels([]);
       // Auto-generate a key
       handleGenerateKey();
     }
-  }, [editingKey, isOpen, channels, loadingChannels]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingKey, isOpen]);
+
+  // 渠道加载完成后初始化模型选择（不覆盖基础字段）
+  useEffect(() => {
+    if (!editingKey || loadingChannels || channels.length === 0) return;
+
+    const modelIds = editingKey.allowedModelIds;
+
+    if (Array.isArray(modelIds) && modelIds.length > 0) {
+      const groupedByChannel: Record<string, string[]> = {};
+      for (const channel of channels) {
+        const selectedInChannel = channel.models
+          .filter(m => modelIds.includes(m.id))
+          .map(m => m.id);
+        if (selectedInChannel.length > 0) {
+          groupedByChannel[channel.id] = selectedInChannel;
+        }
+      }
+      setSelectedModelIds(groupedByChannel);
+      setSelectedChannelIds(Object.keys(groupedByChannel));
+    } else {
+      setSelectedModelIds({});
+      setSelectedChannelIds(editingKey.allowedChannelIds || []);
+    }
+  }, [editingKey, channels, loadingChannels]);
 
   // Generate a new key value
   const handleGenerateKey = () => {
@@ -202,6 +203,11 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
       return;
     }
 
+    if ((isBuiltInEdit || !editingKey) && (!generatedKey.trim() || !generatedKey.startsWith("sk-"))) {
+      toast("密钥值必须以 sk- 开头", "error");
+      return;
+    }
+
     // 计算有效的权限数据
     // 只有当渠道下所有模型都被选中时，才传递 channelId（避免 OR 逻辑导致返回整个渠道）
     const effectiveChannelIds = selectedChannelIds.filter(channelId => {
@@ -217,7 +223,6 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
     setSaving(true);
     try {
       if (editingKey) {
-        // Update existing key
         const response = await fetch(`/api/proxy-keys/${editingKey.id}`, {
           method: "PUT",
           headers: {
@@ -226,12 +231,24 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
           },
           body: JSON.stringify({
             name: name.trim(),
-            enabled,
-            allowAllModels,
-            allowedChannelIds: allowAllModels ? null : (effectiveChannelIds.length > 0 ? effectiveChannelIds : null),
-            allowedModelIds: allowAllModels ? null : (effectiveModelIds.length > 0 ? effectiveModelIds : null),
-            unifiedMode,
-            allowedUnifiedModels: unifiedMode && !allowAllModels ? (selectedUnifiedModels.length > 0 ? selectedUnifiedModels : null) : null,
+            ...(isBuiltInEdit
+              ? {
+                  key: generatedKey.trim(),
+                  enabled,
+                  allowAllModels,
+                  allowedChannelIds: allowAllModels ? null : (effectiveChannelIds.length > 0 ? effectiveChannelIds : null),
+                  allowedModelIds: allowAllModels ? null : (effectiveModelIds.length > 0 ? effectiveModelIds : null),
+                  unifiedMode,
+                  allowedUnifiedModels: unifiedMode && !allowAllModels ? (selectedUnifiedModels.length > 0 ? selectedUnifiedModels : null) : null,
+                }
+              : {
+                  enabled,
+                  allowAllModels,
+                  allowedChannelIds: allowAllModels ? null : (effectiveChannelIds.length > 0 ? effectiveChannelIds : null),
+                  allowedModelIds: allowAllModels ? null : (effectiveModelIds.length > 0 ? effectiveModelIds : null),
+                  unifiedMode,
+                  allowedUnifiedModels: unifiedMode && !allowAllModels ? (selectedUnifiedModels.length > 0 ? selectedUnifiedModels : null) : null,
+                }),
           }),
         });
 
@@ -330,8 +347,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
             />
           </div>
 
-          {/* Key value (only for creation) */}
-          {!editingKey && (
+          {(!editingKey || isBuiltInEdit) && (
             <div>
               <label className="block text-sm font-medium mb-1">密钥值</label>
               <div className="flex items-center gap-2">
@@ -341,7 +357,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
                   onChange={(e) => setGeneratedKey(e.target.value)}
                   className="flex-1 px-3 py-2 rounded-md border border-input bg-background text-sm font-mono"
                   placeholder="sk-..."
-                  readOnly
+                  readOnly={false}
                 />
                 <button
                   type="button"
@@ -367,7 +383,6 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
             </div>
           )}
 
-          {/* Enable toggle */}
           <div className="flex items-center justify-between">
             <label className="text-sm font-medium">启用此密钥</label>
             <button
@@ -387,7 +402,6 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
             </button>
           </div>
 
-          {/* Access permissions */}
           <div>
             <label className="block text-sm font-medium mb-2">访问权限</label>
             <div className="space-y-2">
@@ -414,32 +428,6 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
             </div>
           </div>
 
-          {/* 统一模型模式开关 */}
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium">统一模型模式</label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                开启后用户直接用模型名调用，系统自动跨渠道路由
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setUnifiedMode(!unifiedMode)}
-              className={cn(
-                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-                unifiedMode ? "bg-primary" : "bg-muted"
-              )}
-            >
-              <span
-                className={cn(
-                  "inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                  unifiedMode ? "translate-x-6" : "translate-x-1"
-                )}
-              />
-            </button>
-          </div>
-
-          {/* Channel/Model selector - 非统一模式下显示 */}
           {!allowAllModels && !unifiedMode && (
             <div className="border border-border rounded-md p-3">
               {loadingChannels ? (
@@ -461,7 +449,6 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
             </div>
           )}
 
-          {/* 统一模式下的模型选择器 */}
           {!allowAllModels && unifiedMode && (
             <div className="border border-border rounded-md p-3">
               {loadingUnifiedModels ? (
@@ -527,6 +514,30 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
               )}
             </div>
           )}
+
+          <div className="flex items-center justify-between">
+            <div>
+              <label className="text-sm font-medium">统一模型模式</label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                开启后用户直接用模型名调用，系统自动跨渠道路由
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setUnifiedMode(!unifiedMode)}
+              className={cn(
+                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                unifiedMode ? "bg-primary" : "bg-muted"
+              )}
+            >
+              <span
+                className={cn(
+                  "inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                  unifiedMode ? "translate-x-6" : "translate-x-1"
+                )}
+              />
+            </button>
+          </div>
 
           {/* Actions */}
           <div className="flex justify-end gap-2 pt-2 border-t border-border">

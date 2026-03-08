@@ -3,6 +3,7 @@
 
 import { EndpointType } from "@/generated/prisma";
 import type { EndpointDetection } from "./types";
+import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 
 // Default detection prompt
 const DETECT_PROMPT = process.env.DETECT_PROMPT || "1+1=2? yes or no";
@@ -28,8 +29,8 @@ export function detectCliEndpointType(modelName: string): EndpointType | null {
   }
 
   // OpenAI Responses API (2025+):
-  // GPT-5 全系列使用 Responses API，gpt-4o/o1/o3 等仍用 Chat Completions
-  if (/gpt-5/.test(name)) {
+  // gpt-5 及之后版本使用 Responses API，gpt-4o/o1/o3 等仍用 Chat Completions
+  if (isGptFiveOrNewerModel(name)) {
     return EndpointType.CODEX;
   }
 
@@ -68,8 +69,8 @@ export function getEndpointsToTest(modelName: string): EndpointType[] {
     return [EndpointType.CODEX];
   }
 
-  // GPT-5 全系列只支持 Responses API
-  if (/gpt-5/.test(name)) {
+  // gpt-5 及之后版本只检测 Responses API
+  if (isGptFiveOrNewerModel(name)) {
     return [EndpointType.CODEX];
   }
 

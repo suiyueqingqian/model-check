@@ -5,11 +5,57 @@ import { randomBytes } from "crypto";
 import prisma from "@/lib/prisma";
 import type { ProxyKey } from "@/generated/prisma";
 
-// Environment variable key
 const ENV_PROXY_API_KEY = process.env.PROXY_API_KEY;
+export const BUILTIN_PROXY_KEY_ROUTE_ID = "__builtin__";
+export const BUILTIN_PROXY_KEY_DB_ID = "__builtin_proxy_key__";
 
-// Auto-generated key (persists for the lifetime of the process)
 let generatedKey: string | null = null;
+
+export type BuiltInProxyKeySource = "builtin" | "env" | "auto";
+
+export interface BuiltInProxyKeyInfo {
+  id: string;
+  name: string;
+  key: string;
+  source: BuiltInProxyKeySource;
+  enabled: boolean;
+  allowAllModels: boolean;
+  allowedChannelIds: unknown;
+  allowedModelIds: unknown;
+  unifiedMode: boolean;
+  allowedUnifiedModels: unknown;
+  lastUsedAt: Date | null;
+  usageCount: number;
+  createdAt: Date | null;
+  updatedAt: Date | null;
+}
+
+function createTransientBuiltInProxyKey(
+  key: string,
+  source: BuiltInProxyKeySource
+): ProxyKey {
+  const now = new Date();
+  return {
+    id: BUILTIN_PROXY_KEY_DB_ID,
+    name:
+      source === "env"
+        ? "环境变量密钥"
+        : source === "auto"
+          ? "自动生成密钥"
+          : "内置代理密钥",
+    key,
+    enabled: true,
+    allowAllModels: true,
+    allowedChannelIds: null,
+    allowedModelIds: null,
+    unifiedMode: true,
+    allowedUnifiedModels: null,
+    lastUsedAt: null,
+    usageCount: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
 
 /**
  * Safely parse JSON field as string array
@@ -30,11 +76,10 @@ function parseStringArray(value: unknown): string[] | null {
  * Generate a random API key in sk-xxx format
  */
 export function generateApiKey(): string {
-  // Generate 32 random bytes and convert to base64, then clean up
   const randomPart = randomBytes(32)
     .toString("base64")
-    .replace(/[+/=]/g, "") // Remove non-URL-safe characters
-    .substring(0, 48); // Take first 48 chars
+    .replace(/[+/=]/g, "")
+    .substring(0, 48);
   return `sk-${randomPart}`;
 }
 
@@ -62,6 +107,74 @@ export function isKeyFromEnvironment(): boolean {
   return !!ENV_PROXY_API_KEY;
 }
 
+export async function getBuiltInProxyKeyRecord(): Promise<ProxyKey | null> {
+  try {
+    return await prisma.proxyKey.findUnique({
+      where: { id: BUILTIN_PROXY_KEY_DB_ID },
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function getBuiltInProxyKeyInfo(): Promise<BuiltInProxyKeyInfo> {
+  const builtInRecord = await getBuiltInProxyKeyRecord();
+  if (builtInRecord) {
+    return {
+      id: BUILTIN_PROXY_KEY_ROUTE_ID,
+      name: builtInRecord.name || "内置代理密钥",
+      key: builtInRecord.key,
+      source: "builtin",
+      enabled: builtInRecord.enabled,
+      allowAllModels: builtInRecord.allowAllModels,
+      allowedChannelIds: builtInRecord.allowedChannelIds,
+      allowedModelIds: builtInRecord.allowedModelIds,
+      unifiedMode: builtInRecord.unifiedMode,
+      allowedUnifiedModels: builtInRecord.allowedUnifiedModels,
+      lastUsedAt: builtInRecord.lastUsedAt,
+      usageCount: builtInRecord.usageCount,
+      createdAt: builtInRecord.createdAt,
+      updatedAt: builtInRecord.updatedAt,
+    };
+  }
+
+  if (ENV_PROXY_API_KEY) {
+    return {
+      id: BUILTIN_PROXY_KEY_ROUTE_ID,
+      name: "环境变量密钥",
+      key: ENV_PROXY_API_KEY,
+      source: "env",
+      enabled: true,
+      allowAllModels: true,
+      allowedChannelIds: null,
+      allowedModelIds: null,
+      unifiedMode: true,
+      allowedUnifiedModels: null,
+      lastUsedAt: null,
+      usageCount: 0,
+      createdAt: null,
+      updatedAt: null,
+    };
+  }
+
+  return {
+    id: BUILTIN_PROXY_KEY_ROUTE_ID,
+    name: "自动生成密钥",
+    key: getProxyApiKey(),
+    source: "auto",
+    enabled: true,
+    allowAllModels: true,
+    allowedChannelIds: null,
+    allowedModelIds: null,
+    unifiedMode: true,
+    allowedUnifiedModels: null,
+    lastUsedAt: null,
+    usageCount: 0,
+    createdAt: null,
+    updatedAt: null,
+  };
+}
+
 /**
  * Validate API key result
  */
@@ -77,12 +190,34 @@ export interface ValidateKeyResult {
  * Priority: Environment variable > Database keys > Auto-generated key
  */
 export async function validateProxyKey(apiKey: string): Promise<ValidateKeyResult> {
-  // 1. Check environment variable key first
-  if (ENV_PROXY_API_KEY && apiKey === ENV_PROXY_API_KEY) {
-    return { valid: true, isEnvKey: true };
+  const builtInRecord = await getBuiltInProxyKeyRecord();
+  if (builtInRecord && apiKey === builtInRecord.key) {
+    if (!builtInRecord.enabled) {
+      return { valid: false };
+    }
+
+    prisma.proxyKey.update({
+      where: { id: builtInRecord.id },
+      data: {
+        lastUsedAt: new Date(),
+        usageCount: { increment: 1 },
+      },
+    }).catch(() => {
+    });
+
+    return { valid: true, keyRecord: builtInRecord };
   }
 
-  // 2. Check database keys
+  if (!builtInRecord) {
+    const builtInKey = await getBuiltInProxyKeyInfo();
+    if (apiKey === builtInKey.key) {
+      return {
+        valid: true,
+        keyRecord: createTransientBuiltInProxyKey(builtInKey.key, builtInKey.source),
+      };
+    }
+  }
+
   try {
     const keyRecord = await prisma.proxyKey.findUnique({
       where: { key: apiKey },
@@ -93,7 +228,6 @@ export async function validateProxyKey(apiKey: string): Promise<ValidateKeyResul
         return { valid: false };
       }
 
-      // Update usage statistics in background (don't block or fail on error)
       prisma.proxyKey.update({
         where: { id: keyRecord.id },
         data: {
@@ -106,10 +240,8 @@ export async function validateProxyKey(apiKey: string): Promise<ValidateKeyResul
       return { valid: true, keyRecord };
     }
   } catch {
-    // Fall through to check auto-generated key
   }
 
-  // 3. Check auto-generated key (fallback when no env key is set)
   if (!ENV_PROXY_API_KEY) {
     const autoKey = getProxyApiKey();
     if (apiKey === autoKey) {
@@ -185,9 +317,15 @@ export async function canAccessModel(
 }
 
 /**
- * Get available models for a key
- * Returns a list of model IDs that the key can access
+ * Mask key for display (show only first 8 and last 4 chars)
  */
+export function maskKey(key: string): string {
+  if (key.length <= 12) {
+    return key.substring(0, 4) + "****";
+  }
+  return key.substring(0, 8) + "..." + key.substring(key.length - 4);
+}
+
 export async function getAccessibleModels(keyRecord: ProxyKey | undefined, isEnvKey: boolean | undefined): Promise<{
   allModels: boolean;
   channelIds?: string[];

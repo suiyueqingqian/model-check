@@ -36,7 +36,7 @@ interface ProxyKeyData {
   lastUsedAt: string | null;
   usageCount: number;
   createdAt: string;
-  source?: "database" | "env" | "auto";
+  source?: "database" | "builtin" | "env" | "auto";
 }
 
 interface ProxyKeyManagerProps {
@@ -187,15 +187,24 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
   // Regenerate key
   const handleRegenerate = async (id: string) => {
     try {
-      const response = await fetch(`/api/proxy-keys/${id}/regenerate`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let newKey = "sk-";
+      for (let i = 0; i < 48; i++) {
+        newKey += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+
+      const response = await fetch(`/api/proxy-keys/${id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ key: newKey }),
       });
 
       if (!response.ok) throw new Error("Failed to regenerate key");
 
-      const data = await response.json();
-      await navigator.clipboard.writeText(data.key.key);
+      await navigator.clipboard.writeText(newKey);
       if (mountedRef.current) {
         fetchKeys();
         toast("密钥已重新生成并复制到剪贴板", "success");
@@ -203,6 +212,32 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
     } catch {
       if (mountedRef.current) {
         toast("重新生成失败", "error");
+      }
+    }
+  };
+
+  const handleEdit = async (key: ProxyKeyData) => {
+    try {
+      if (key.source === "database") {
+        setEditingKey(key);
+        setShowModal(true);
+        return;
+      }
+
+      const response = await fetch(`/api/proxy-keys/${key.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!response.ok) throw new Error("Failed to get key");
+
+      const data = await response.json();
+      if (mountedRef.current) {
+        setEditingKey(data.key);
+        setShowModal(true);
+      }
+    } catch {
+      if (mountedRef.current) {
+        toast("加载密钥失败", "error");
       }
     }
   };
@@ -272,7 +307,7 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
           ) : (
             <div className="space-y-3">
               {keys.map((key) => {
-                const isBuiltIn = key.source === "env" || key.source === "auto";
+                const isBuiltIn = key.source === "builtin" || key.source === "env" || key.source === "auto";
                 return (
                 <div
                   key={key.id}
@@ -290,6 +325,11 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
                       {key.source === "env" && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500">
                           环境变量
+                        </span>
+                      )}
+                      {key.source === "builtin" && (
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600">
+                          前端配置
                         </span>
                       )}
                       {key.source === "auto" && (
@@ -357,6 +397,13 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
                         <Copy className="h-4 w-4 text-muted-foreground" />
                       )}
                     </button>
+                    <button
+                      onClick={() => handleEdit(key)}
+                      className="p-2 rounded-md hover:bg-accent transition-colors"
+                      title={isBuiltIn ? "编辑内置密钥" : "编辑"}
+                    >
+                      <Pencil className="h-4 w-4 text-muted-foreground" />
+                    </button>
                     {!isBuiltIn && (
                       <>
                         <button
@@ -365,16 +412,6 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
                           title="重新生成"
                         >
                           <RefreshCw className="h-4 w-4 text-blue-500" />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setEditingKey(key);
-                            setShowModal(true);
-                          }}
-                          className="p-2 rounded-md hover:bg-accent transition-colors"
-                          title="编辑"
-                        >
-                          <Pencil className="h-4 w-4 text-muted-foreground" />
                         </button>
                         {deleteConfirm === key.id ? (
                           <div className="flex items-center gap-1 ml-auto">

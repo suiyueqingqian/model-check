@@ -9,6 +9,7 @@ import { StatusIndicator } from "@/components/ui/status-indicator";
 import { Heatmap } from "@/components/ui/heatmap";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/ui/toast";
+import { getDisplayEndpoints } from "@/lib/utils/model-name";
 
 interface CheckLog {
   id: string;
@@ -38,7 +39,6 @@ interface ChannelCardProps {
     type: string;
     models: Model[];
   };
-  onRefresh?: () => void;
   onDelete?: (channelId: string) => void;
   className?: string;
   onEndpointFilterChange?: (endpoint: string | null) => void;
@@ -176,8 +176,8 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
   };
 
   // Filter models by endpoint if local filter is active
-  const displayedModels = localEndpointFilter
-    ? channel.models.filter((m) => m.detectedEndpoints?.includes(localEndpointFilter))
+  const displayedModels = currentFilter
+    ? channel.models.filter((m) => m.detectedEndpoints?.includes(currentFilter))
     : channel.models;
 
   // Group models by endpoint type
@@ -566,8 +566,8 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // Only show endpoints that have been successfully detected (not pre-filled)
-  const endpoints = (model.detectedEndpoints || []) as string[];
+  // gpt-5+ 模型固定展示 Chat 和 Codex 两个端点状态
+  const endpoints = getDisplayEndpoints(model.modelName, (model.detectedEndpoints || []) as string[]);
   const endpointStatuses = getEndpointStatuses(model.checkLogs);
 
   // Calculate overall status based on all endpoints

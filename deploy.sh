@@ -45,9 +45,9 @@ POSTGRES_PORT_TO_USE=5432
 check_port_in_use() {
     local port=$1
     if command -v ss &> /dev/null; then
-        ss -tuln 2>/dev/null | grep -q ":${port} " && return 0
+        ss -tuln 2>/dev/null | grep -qE ":${port}(\s|$)" && return 0
     elif command -v netstat &> /dev/null; then
-        netstat -tuln 2>/dev/null | grep -q ":${port} " && return 0
+        netstat -tuln 2>/dev/null | grep -qE ":${port}(\s|$)" && return 0
     elif command -v lsof &> /dev/null; then
         lsof -i :${port} &>/dev/null && return 0
     fi
@@ -175,7 +175,7 @@ do_update() {
 
     info "同步数据库表结构..."
     if docker ps --format '{{.Names}}' | grep -q "model-check-postgres"; then
-        if cat prisma/init.postgresql.sql | $compose_cmd exec -T postgres psql -U modelcheck -d model_check; then
+        if run_init_sql "$compose_cmd"; then
             success "数据库同步完成（SQL 幂等脚本）"
         else
             warn "SQL 同步失败，请检查数据库连接与权限"
@@ -371,7 +371,39 @@ sed_i() {
 
 # sed 替换串转义（使用 | 作为分隔符时）
 escape_for_sed() {
-    printf '%s' "$1" | sed 's/[&|\\]/\\&/g'
+    printf '%s' "$1" | sed 's/[&|\\"]/\\&/g'
+}
+
+# 从 .env 读取单个键的值
+get_env_value() {
+    local key=$1
+    if [ ! -f .env ]; then
+        return 0
+    fi
+
+    local line
+    line=$(grep -E "^${key}=" .env | tail -n 1 || true)
+    if [ -z "$line" ]; then
+        return 0
+    fi
+
+    local value="${line#*=}"
+    value="${value%\"}"
+    value="${value#\"}"
+    printf '%s' "$value"
+}
+
+# 执行数据库初始化 SQL，并把默认代理 key 传给 psql 会话
+run_init_sql() {
+    local compose_cmd=$1
+    local proxy_api_key
+    proxy_api_key=$(get_env_value "PROXY_API_KEY")
+
+    if [ "$compose_cmd" = "docker compose" ]; then
+        env PGOPTIONS="-c app.proxy_api_key=$proxy_api_key" docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U modelcheck -d model_check < prisma/init.postgresql.sql
+    else
+        env PGOPTIONS="-c app.proxy_api_key=$proxy_api_key" docker-compose exec -T postgres psql -v ON_ERROR_STOP=1 -U modelcheck -d model_check < prisma/init.postgresql.sql
+    fi
 }
 
 # 创建 .env 文件
@@ -635,7 +667,7 @@ init_database() {
 
     info "同步数据库结构..."
     if [ "$has_local_postgres" = "true" ]; then
-        if cat prisma/init.postgresql.sql | $compose_cmd exec -T postgres psql -U modelcheck -d model_check; then
+        if run_init_sql "$compose_cmd"; then
             success "数据库初始化完成（SQL 幂等脚本）"
         else
             warn "SQL 同步失败，请检查数据库连接与权限"

@@ -6,6 +6,7 @@
 import { useState, useMemo } from "react";
 import { ChevronDown, ChevronRight, Check, Square, CheckSquare, Minus, Search, X, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { getDisplayEndpoints } from "@/lib/utils/model-name";
 
 export interface ModelInfo {
   id: string;
@@ -326,29 +327,40 @@ export function ChannelModelSelector({
     }
   };
 
-  // Select/deselect a channel (all its models)
+  // Select/deselect a channel (operates on visible models only when filter is active)
   const handleChannelToggle = (channelId: string) => {
-    const channel = channels.find((c) => c.id === channelId);
+    const hasFilter = searchQuery.trim() !== "" || endpointFilter !== null;
+    const channel = hasFilter
+      ? filteredChannels.find((c) => c.id === channelId)
+      : channels.find((c) => c.id === channelId);
     if (!channel) return;
 
-    const isSelected = selectedChannelIds.includes(channelId);
+    const visibleModelIds = channel.models.map((m) => m.id);
+    const currentSelected = selectedModelIds[channelId] || [];
+    const allVisibleSelected = visibleModelIds.every((id) => currentSelected.includes(id));
 
-    if (isSelected) {
-      // Deselect channel and all its models
-      onSelectionChange(
-        selectedChannelIds.filter((id) => id !== channelId),
-        Object.fromEntries(
-          Object.entries(selectedModelIds).filter(([id]) => id !== channelId)
-        )
-      );
-    } else {
-      // Select channel and all its models
-      onSelectionChange(
-        [...selectedChannelIds, channelId],
-        {
+    if (allVisibleSelected) {
+      // Deselect only visible models, keep hidden ones
+      const remaining = currentSelected.filter((id) => !visibleModelIds.includes(id));
+      if (remaining.length === 0) {
+        onSelectionChange(
+          selectedChannelIds.filter((id) => id !== channelId),
+          Object.fromEntries(
+            Object.entries(selectedModelIds).filter(([id]) => id !== channelId)
+          )
+        );
+      } else {
+        onSelectionChange(selectedChannelIds, {
           ...selectedModelIds,
-          [channelId]: channel.models.map((m) => m.id),
-        }
+          [channelId]: remaining,
+        });
+      }
+    } else {
+      // Select all visible models (merge with existing)
+      const merged = [...new Set([...currentSelected, ...visibleModelIds])];
+      onSelectionChange(
+        selectedChannelIds.includes(channelId) ? selectedChannelIds : [...selectedChannelIds, channelId],
+        { ...selectedModelIds, [channelId]: merged }
       );
     }
   };
@@ -408,7 +420,8 @@ export function ChannelModelSelector({
     const chat: string[] = [];
     const cli: string[] = [];
 
-    model.detectedEndpoints?.forEach((ep) => {
+    const endpoints = getDisplayEndpoints(model.modelName, model.detectedEndpoints || []);
+    endpoints.forEach((ep) => {
       const config = ENDPOINT_CONFIG[ep];
       if (config) {
         if (config.category === "chat") chat.push(ep);
@@ -595,7 +608,7 @@ export function ChannelModelSelector({
                               <EndpointBadge
                                 key={ep}
                                 endpoint={ep}
-                                available={model.lastStatus === true}
+                                available={model.detectedEndpoints?.includes(ep) === true}
                                 compact
                               />
                             ))}
@@ -607,7 +620,7 @@ export function ChannelModelSelector({
                               <EndpointBadge
                                 key={ep}
                                 endpoint={ep}
-                                available={model.lastStatus === true}
+                                available={model.detectedEndpoints?.includes(ep) === true}
                                 compact
                               />
                             ))}

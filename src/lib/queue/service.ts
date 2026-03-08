@@ -3,6 +3,7 @@
 import prisma from "@/lib/prisma";
 import { getEndpointsToTest, fetchModels } from "@/lib/detection";
 import { EndpointType } from "@/generated/prisma";
+import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 import {
   addDetectionJobsBulk,
   getQueueStats,
@@ -77,10 +78,15 @@ async function buildJobsForModels(
 
     // 已有成功端点时只重新验证这些端点，不再尝试其他端点（节省资源）
     const detectedEndpoints = getValidDetectedEndpoints(model.detectedEndpoints);
+    const defaultEndpointsToTest = getEndpointsToTest(model.modelName);
+    const shouldIgnoreDetectedEndpoints =
+      defaultEndpointsToTest.length === 1 &&
+      defaultEndpointsToTest[0] === EndpointType.CODEX &&
+      (isGptFiveOrNewerModel(model.modelName) || model.modelName.toLowerCase().includes("codex"));
     const endpointsToTest =
-      detectedEndpoints.length > 0
+      detectedEndpoints.length > 0 && !shouldIgnoreDetectedEndpoints
         ? detectedEndpoints
-        : getEndpointsToTest(model.modelName);
+        : defaultEndpointsToTest;
 
     for (const endpointType of endpointsToTest) {
       jobs.push({
@@ -716,7 +722,6 @@ export async function triggerSelectiveDetection(
       lastStatus: null,
       lastLatency: null,
       lastCheckedAt: null,
-      detectedEndpoints: [],
     },
   });
 

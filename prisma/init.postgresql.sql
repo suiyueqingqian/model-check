@@ -183,6 +183,44 @@ ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "usage_count" INTEGER NOT NULL
 ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "unified_mode" BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "allowed_unified_models" JSONB;
 
+-- 默认内置代理 key 初始化
+-- 从 app.proxy_api_key 读取；为空时跳过
+WITH builtin_proxy_key AS (
+  SELECT NULLIF(current_setting('app.proxy_api_key', true), '') AS key_value
+)
+INSERT INTO "proxy_keys" (
+  "id",
+  "name",
+  "key",
+  "enabled",
+  "allow_all_models",
+  "allowed_channel_ids",
+  "allowed_model_ids",
+  "unified_mode",
+  "allowed_unified_models",
+  "usage_count",
+  "created_at",
+  "updated_at"
+)
+SELECT
+  '__builtin_proxy_key__',
+  '内置代理密钥',
+  builtin_proxy_key.key_value,
+  true,
+  true,
+  NULL,
+  NULL,
+  true,
+  NULL,
+  0,
+  CURRENT_TIMESTAMP,
+  CURRENT_TIMESTAMP
+FROM builtin_proxy_key
+WHERE builtin_proxy_key.key_value IS NOT NULL
+ON CONFLICT ("id") DO UPDATE SET
+  "key" = EXCLUDED."key",
+  "updated_at" = CURRENT_TIMESTAMP;
+
 -- ==========================================
 -- 4. 约束兼容（已存在则跳过）
 -- ==========================================
@@ -204,6 +242,26 @@ DO $$ BEGIN
     ALTER TABLE "models"
       ADD CONSTRAINT "models_channel_key_id_fkey"
       FOREIGN KEY ("channel_key_id") REFERENCES "channel_keys"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'models_channel_id_fkey'
+  ) THEN
+    ALTER TABLE "models"
+      ADD CONSTRAINT "models_channel_id_fkey"
+      FOREIGN KEY ("channel_id") REFERENCES "channels"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'check_logs_model_id_fkey'
+  ) THEN
+    ALTER TABLE "check_logs"
+      ADD CONSTRAINT "check_logs_model_id_fkey"
+      FOREIGN KEY ("model_id") REFERENCES "models"("id") ON DELETE CASCADE ON UPDATE CASCADE;
   END IF;
 END $$;
 

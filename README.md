@@ -104,7 +104,7 @@ docker compose up -d postgres redis
 npm install
 
 # 初始化数据库
-npm run db:push
+npm run db:sync
 
 # 启动开发服务器
 npm run dev

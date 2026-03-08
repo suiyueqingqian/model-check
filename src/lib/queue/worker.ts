@@ -6,6 +6,7 @@ import prisma from "@/lib/prisma";
 import { executeDetection, sleep, randomDelay } from "@/lib/detection/detector";
 import type { DetectionJobData, DetectionResult } from "@/lib/detection/types";
 import { DETECTION_QUEUE_NAME, PROGRESS_CHANNEL } from "./constants";
+import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 
 // Worker configuration (from environment variables)
 const WORKER_CONCURRENCY = 50; // BullMQ worker pool size (should be >= MAX_GLOBAL_CONCURRENCY)
@@ -260,10 +261,10 @@ async function processDetectionJob(
         },
       });
 
-      // gpt-5 (non-codex): /v1/responses 通过意味着 CHAT 也可用，同时记录两个端点
+      // gpt-5+ (non-codex): /v1/responses 通过意味着 CHAT 也可用，同时记录两个端点
       if (result.status === "SUCCESS" && result.endpointType === "CODEX") {
         const name = (data.modelName || "").toLowerCase();
-        if (/gpt-5/.test(name) && !name.includes("codex")) {
+        if (isGptFiveOrNewerModel(name) && !name.includes("codex")) {
           await tx.$executeRaw`
             UPDATE "models"
             SET "detected_endpoints" =
@@ -287,19 +288,9 @@ async function processDetectionJob(
       }
     });
 
-    // Check if this model has any remaining jobs (to determine if model detection is complete)
-    const queue = (await import("./queue")).getDetectionQueue();
-    const [waitingJobs, activeJobs, delayedJobs] = await Promise.all([
-      queue.getJobs(["waiting"], 0, 1000),
-      queue.getJobs(["active"], 0, 100),
-      queue.getJobs(["delayed"], 0, 1000),
-    ]);
-
-    // Count remaining jobs for this model (excluding the current job which is about to complete)
-    const remainingJobs = [...waitingJobs, ...activeJobs, ...delayedJobs].filter(
-      (j) => j.data?.modelId === data.modelId && j.id !== job.id
-    );
-    const isModelComplete = remainingJobs.length === 0;
+    // Check if this model has completed all detection jobs (O(1) Redis counter)
+    const { decrementModelRemaining } = await import("./queue");
+    const isModelComplete = await decrementModelRemaining(data.modelId);
 
     // Publish progress update for SSE (with error handling to not affect detection result)
     const progressData = {

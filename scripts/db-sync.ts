@@ -19,11 +19,18 @@ if (!fs.existsSync(sqlPath)) {
 }
 
 const sql = fs.readFileSync(sqlPath, "utf-8");
+const proxyApiKey = process.env.PROXY_API_KEY?.trim();
 
 async function main() {
   const client = new pg.Client({ connectionString });
   try {
     await client.connect();
+    if (proxyApiKey) {
+      await client.query(
+        "SELECT set_config('app.proxy_api_key', $1, false)",
+        [proxyApiKey]
+      );
+    }
     console.log("已连接数据库，开始同步表结构...");
     await client.query(sql);
     console.log("数据库结构同步完成");
