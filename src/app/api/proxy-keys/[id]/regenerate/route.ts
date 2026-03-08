@@ -53,7 +53,7 @@ export async function POST(
         updatedAt: key.updatedAt,
       },
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to regenerate proxy key", code: "REGENERATE_ERROR" },
       { status: 500 }

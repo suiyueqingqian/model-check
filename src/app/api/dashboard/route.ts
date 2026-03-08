@@ -174,7 +174,7 @@ export async function GET(request: NextRequest) {
       },
       channels,
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to fetch dashboard data", code: "FETCH_ERROR" },
       { status: 500 }

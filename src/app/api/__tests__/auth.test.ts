@@ -1,6 +1,6 @@
 // API route tests
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { authenticateAdmin, verifyToken, extractToken } from "@/lib/auth";
 
 // Mock environment variables

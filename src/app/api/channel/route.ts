@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     }));
 
     return NextResponse.json({ channels: maskedChannels });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to fetch channels", code: "FETCH_ERROR" },
       { status: 500 }
@@ -190,7 +190,7 @@ export async function POST(request: NextRequest) {
         apiKey: channel.apiKey.slice(0, 8) + "...",
       },
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to create channel", code: "CREATE_ERROR" },
       { status: 500 }
@@ -289,7 +289,7 @@ export async function PUT(request: NextRequest) {
         apiKey: channel.apiKey.slice(0, 8) + "...",
       },
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to update channel", code: "UPDATE_ERROR" },
       { status: 500 }
@@ -331,7 +331,7 @@ export async function DELETE(request: NextRequest) {
     });
 
     return NextResponse.json({ success: true });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to delete channel", code: "DELETE_ERROR" },
       { status: 500 }

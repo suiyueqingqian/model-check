@@ -100,12 +100,12 @@ export async function validateProxyKey(apiKey: string): Promise<ValidateKeyResul
           lastUsedAt: new Date(),
           usageCount: { increment: 1 },
         },
-      }).catch((error) => {
+      }).catch(() => {
       });
 
       return { valid: true, keyRecord };
     }
-  } catch (error) {
+  } catch {
     // Fall through to check auto-generated key
   }
 

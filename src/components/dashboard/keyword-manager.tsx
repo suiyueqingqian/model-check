@@ -5,7 +5,6 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Plus,
-  Trash2,
   X,
   Loader2,
   ChevronDown,

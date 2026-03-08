@@ -123,7 +123,7 @@ export default function Home() {
           setIsDetectionRunning(false);
         }
       }
-    } catch (error) {
+    } catch {
     }
   }, []);
 
@@ -205,7 +205,7 @@ export default function Home() {
       // Delay to let the backend reset model status and queue jobs
       await new Promise((resolve) => setTimeout(resolve, 500));
       await fetchProgress();
-    } catch (error) {
+    } catch {
     }
   }, [fetchProgress]);
 

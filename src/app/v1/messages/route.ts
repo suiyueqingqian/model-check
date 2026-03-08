@@ -5,15 +5,15 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import {
-  findChannelByModelWithPermission,
+  getProxyChannelCandidatesWithPermission,
   buildUpstreamHeaders,
   proxyRequest,
+  recordProxyModelResult,
   streamResponse,
   errorResponse,
   normalizeBaseUrl,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
-import { prisma } from "@/lib/prisma";
 
 export async function POST(request: NextRequest) {
   // Verify proxy API key (async for multi-key support)
@@ -40,58 +40,83 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Find channel by model name with permission check (requires "channelName/modelName" format)
-    const channel = await findChannelByModelWithPermission(modelName, keyResult!, "CLAUDE");
-    if (!channel) {
+    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "CLAUDE");
+    if (candidates.length === 0) {
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);
     }
 
-    // Use actual model name (without channel prefix) for upstream request
-    const upstreamBody = { ...body, model: channel.actualModelName };
-
     const isStream = body.stream === true;
-    const baseUrl = normalizeBaseUrl(channel.baseUrl);
-    const url = `${baseUrl}/v1/messages`;
-
-    // Get anthropic-version from request or use default
-    // Also forward anthropic-beta header for features like code-execution, extended-thinking
     const anthropicVersion = request.headers.get("anthropic-version") || "2023-06-01";
     const anthropicBeta = request.headers.get("anthropic-beta");
+    let lastErrorMessage = `Model not found or access denied: ${modelName}`;
+    let lastStatus = 404;
 
-    const extraHeaders: Record<string, string> = {
-      "anthropic-version": anthropicVersion,
-    };
-    if (anthropicBeta) {
-      extraHeaders["anthropic-beta"] = anthropicBeta;
-    }
+    for (const channel of candidates) {
+      const startedAt = Date.now();
 
-    const headers = buildUpstreamHeaders(channel.apiKey, "anthropic", extraHeaders);
+      try {
+        const upstreamBody = { ...body, model: channel.actualModelName };
+        const baseUrl = normalizeBaseUrl(channel.baseUrl);
+        const url = `${baseUrl}/v1/messages`;
+        const extraHeaders: Record<string, string> = {
+          "anthropic-version": anthropicVersion,
+        };
+        if (anthropicBeta) {
+          extraHeaders["anthropic-beta"] = anthropicBeta;
+        }
 
-    // Forward request to upstream (with channel proxy support)
-    const response = await proxyRequest(url, "POST", headers, upstreamBody, channel.proxy);
+        const headers = buildUpstreamHeaders(channel.apiKey, "anthropic", extraHeaders);
+        const response = await proxyRequest(url, "POST", headers, upstreamBody, channel.proxy);
+        const latency = Date.now() - startedAt;
 
-    if (!response.ok) {
-      if (isUnifiedMode && channel.modelId) {
-        prisma.model.update({
-          where: { id: channel.modelId },
-          data: { lastStatus: false },
-        }).catch(() => {});
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "Unknown error");
+          lastErrorMessage = `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`;
+          lastStatus = response.status;
+
+          if (isUnifiedRouting && channel.modelId) {
+            await recordProxyModelResult(channel.modelId, "CLAUDE", false, {
+              latency,
+              statusCode: response.status,
+              errorMsg: lastErrorMessage,
+            }).catch(() => {});
+            continue;
+          }
+
+          return errorResponse(lastErrorMessage, lastStatus);
+        }
+
+        if (isUnifiedRouting && channel.modelId) {
+          await recordProxyModelResult(channel.modelId, "CLAUDE", true, {
+            latency,
+            statusCode: response.status,
+            responseContent: isStream ? "代理流式请求成功" : "代理请求成功",
+          }).catch(() => {});
+        }
+
+        if (isStream) {
+          return streamResponse(response);
+        }
+
+        const data = await response.json();
+        return NextResponse.json(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        lastErrorMessage = `Proxy error: ${message}`;
+        lastStatus = 502;
+
+        if (isUnifiedRouting && channel.modelId) {
+          await recordProxyModelResult(channel.modelId, "CLAUDE", false, {
+            errorMsg: lastErrorMessage,
+          }).catch(() => {});
+          continue;
+        }
+
+        return errorResponse(lastErrorMessage, lastStatus);
       }
-      const errorText = await response.text().catch(() => "Unknown error");
-      return errorResponse(
-        `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`,
-        response.status
-      );
     }
 
-    // Handle streaming response (SSE format)
-    if (isStream) {
-      return streamResponse(response);
-    }
-
-    // Handle non-streaming response
-    const data = await response.json();
-    return NextResponse.json(data);
+    return errorResponse(lastErrorMessage, lastStatus);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResponse(`Proxy error: ${message}`, 502);

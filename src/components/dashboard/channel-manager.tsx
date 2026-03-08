@@ -119,10 +119,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const [submitting, setSubmitting] = useState(false);
 
   // Sync state
-  const [syncingId, setSyncingId] = useState<string | null>(null);
-  const [syncingAll, setSyncingAll] = useState(false);
-  // Per-channel sync status message (shown on the channel card)
-  const [syncStatus, setSyncStatus] = useState<Record<string, { message: string; type: "success" | "error" }>>({});
   const [draggingChannelId, setDraggingChannelId] = useState<string | null>(null);
 
   // Delete confirmation
@@ -141,13 +137,9 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const [importFileName, setImportFileName] = useState("");
   const [importProgress, setImportProgress] = useState<{ phase: string; current: number; total: number; name: string } | null>(null);
 
-  // Sync all progress
-  const [syncAllProgress, setSyncAllProgress] = useState<{ current: number; total: number; name: string } | null>(null);
-
   // Channel keys info (for multi-key edit display)
   const [channelKeysInfo, setChannelKeysInfo] = useState<ChannelKeyInfo[]>([]);
   const [validating, setValidating] = useState(false);
-  const [validateResults, setValidateResults] = useState<ValidateResult[]>([]);
   const [maskedApiKey, setMaskedApiKey] = useState<string>("");
 
   // Key management in edit modal
@@ -164,7 +156,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   // Model filter modal state
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [filterChannels, setFilterChannels] = useState<{ id: string; name: string }[]>([]);
-  const [syncAllMode, setSyncAllMode] = useState(false);
   const [filterFromEdit, setFilterFromEdit] = useState(false);
 
   // Import result modal state (shows success + failed channels for user to handle)
@@ -202,7 +193,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     };
     document.addEventListener("keydown", handleEsc);
     return () => document.removeEventListener("keydown", handleEsc);
-  }, [showModal, showImportModal, showWebDAVModal, showFilterModal]);
+  }, [showModal, showImportModal, importing, showWebDAVModal, showFilterModal]);
 
   // Load cloud sync config from localStorage and API
   useEffect(() => {
@@ -309,7 +300,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     setMaskedApiKey("");
     setMainKeyFull("");
     setChannelKeysInfo([]);
-    setValidateResults([]);
     setShowModal(true);
   };
 
@@ -326,7 +316,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       multiKeys: "",
     });
     setChannelKeysInfo([]);
-    setValidateResults([]);
     setKeyViewMode("list");
     setNewSingleKey("");
     setEditingKeyTarget(null);
@@ -408,7 +397,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         if (keysSubmitted) {
           setFilterChannels([{ id: editingChannel.id, name: editingChannel.name }]);
           setFilterFromEdit(true);
-          setSyncAllMode(false);
           setShowFilterModal(true);
         }
       } else {
@@ -447,7 +435,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
           setShowModal(false);
           setFilterChannels([{ id: createData.channel.id, name: formData.name }]);
           setFilterFromEdit(false);
-          setSyncAllMode(false);
           setShowFilterModal(true);
         } else {
           setShowModal(false);
@@ -467,7 +454,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const handleValidateKeys = async () => {
     if (!editingChannel || validating) return;
     setValidating(true);
-    setValidateResults([]);
     try {
       const res = await fetch(`/api/channel/${editingChannel.id}/validate-keys`, {
         method: "POST",
@@ -476,7 +462,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       if (!res.ok) throw new Error("验证失败");
       const data = await res.json();
       const results: ValidateResult[] = data.results || [];
-      setValidateResults(results);
       // Update channelKeysInfo lastValid based on results
       setChannelKeysInfo((prev) =>
         prev.map((k) => {
@@ -541,7 +526,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       });
       if (!res.ok) throw new Error("删除失败");
       setChannelKeysInfo((prev) => prev.filter((k) => k.id !== keyId));
-      setValidateResults((prev) => prev.filter((r) => r.keyId !== keyId));
       toast("Key 已删除", "success");
     } catch (err) {
       toast(err instanceof Error ? err.message : "删除失败", "error");
@@ -608,7 +592,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     }
     const deletedIds = new Set(invalidKeys.map((k) => k.id));
     setChannelKeysInfo((prev) => prev.filter((k) => !deletedIds.has(k.id)));
-    setValidateResults((prev) => prev.filter((r) => !r.keyId || !deletedIds.has(r.keyId)));
     toast(`已删除 ${deleted} 个无效 Key`, "success");
     setBatchDeleting(false);
   };
@@ -704,100 +687,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       onUpdate();
     } catch (err) {
       setError(err instanceof Error ? err.message : "删除失败");
-    }
-  };
-
-  // Sync models
-  const handleSync = async (id: string) => {
-    setSyncingId(id);
-    // Clear any previous status for this channel
-    setSyncStatus((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-    try {
-      const response = await fetch(`/api/channel/${id}/sync`, {
-        method: "POST",
-        headers,
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "同步失败");
-
-      toast(`获取到 ${data.total} 个模型`, "success");
-    } catch (err) {
-      // Show error message on the channel card instead of global error
-      const message = err instanceof Error ? err.message : "同步失败";
-      setSyncStatus((prev) => ({ ...prev, [id]: { message, type: "error" } }));
-
-      // Auto clear after 8 seconds for errors
-      setTimeout(() => {
-        setSyncStatus((prev) => {
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        });
-      }, 8000);
-    } finally {
-      setSyncingId(null);
-    }
-  };
-
-  const handleSyncAll = async () => {
-    if (syncingAll || channels.length === 0) return;
-
-    setSyncingAll(true);
-    setSyncAllProgress(null);
-    setError(null);
-
-    try {
-      const concurrency = 3;
-      let totalModels = 0;
-      let failedCount = 0;
-      let processed = 0;
-
-      for (let index = 0; index < channels.length; index += concurrency) {
-        const batch = channels.slice(index, index + concurrency);
-        setSyncAllProgress({
-          current: processed,
-          total: channels.length,
-          name: batch.map((ch) => ch.name).join(", "),
-        });
-        const results = await Promise.allSettled(
-          batch.map(async (channel) => {
-            const response = await fetch(`/api/channel/${channel.id}/sync`, {
-              method: "POST",
-              headers,
-            });
-            const data = await response.json();
-            if (!response.ok) {
-              throw new Error(data.error || "同步失败");
-            }
-            return Number(data.total) || 0;
-          })
-        );
-
-        for (const result of results) {
-          if (result.status === "fulfilled") {
-            totalModels += result.value;
-          } else {
-            failedCount += 1;
-          }
-        }
-        processed += batch.length;
-      }
-
-      if (failedCount > 0) {
-        toast(`全量同步完成，获取到 ${totalModels} 个模型，${failedCount} 个渠道失败`, "error");
-      } else {
-        toast(`全量同步完成，获取到 ${totalModels} 个模型`, "success");
-      }
-    } catch (err) {
-      toast(err instanceof Error ? err.message : "全量同步失败", "error");
-    } finally {
-      setSyncingAll(false);
-      setSyncAllProgress(null);
-      onUpdate();
     }
   };
 
@@ -1000,7 +889,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         toast(`导入成功: 新增 ${result.imported}, 更新 ${result.updated}, 跳过 ${result.skipped}`, "success");
         // 如果有新导入的渠道，打开模型筛选弹窗
         if (result.importedChannels && result.importedChannels.length > 0) {
-          setSyncAllMode(true);
           setFilterFromEdit(false);
           setFilterChannels(result.importedChannels);
           setShowFilterModal(true);
@@ -1064,7 +952,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         // 如果有新导入的渠道，打开模型筛选弹窗
         if (result.importedChannels && result.importedChannels.length > 0) {
           setShowWebDAVModal(false);
-          setSyncAllMode(true);
           setFilterFromEdit(false);
           setFilterChannels(result.importedChannels);
           setShowFilterModal(true);
@@ -1157,7 +1044,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
           <button
             onClick={(e) => {
               e.stopPropagation();
-              setSyncAllMode(true);
               setFilterFromEdit(false);
               setFilterChannels(channels.map((c) => ({ id: c.id, name: c.name })));
               setShowFilterModal(true);
@@ -1188,26 +1074,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       {/* Content */}
       {isExpanded && (
         <div className="border-t border-border p-4 space-y-4">
-          {/* Sync all progress */}
-          {syncingAll && syncAllProgress && (
-            <div className="space-y-2 p-3 rounded-md bg-muted/50 border border-border">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground truncate max-w-[70%]">
-                  同步模型: {syncAllProgress.name}
-                </span>
-                <span className="text-muted-foreground shrink-0">
-                  {syncAllProgress.current}/{syncAllProgress.total}
-                </span>
-              </div>
-              <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-primary transition-all duration-300"
-                  style={{ width: `${Math.round((syncAllProgress.current / syncAllProgress.total) * 100)}%` }}
-                />
-              </div>
-            </div>
-          )}
-
           {/* Error */}
           {error && (
             <div className="p-3 rounded-md bg-destructive/10 text-destructive text-sm">
@@ -1263,19 +1129,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                     )}
                     {" "}| Key: {channel.apiKey}
                   </div>
-                  {/* Sync status message */}
-                  {syncStatus[channel.id] && (
-                    <div
-                      className={cn(
-                        "text-xs mt-2 px-2 py-1 rounded",
-                        syncStatus[channel.id].type === "success"
-                          ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                          : "bg-destructive/10 text-destructive"
-                      )}
-                    >
-                      {syncStatus[channel.id].message}
-                    </div>
-                  )}
                   <div className="flex items-center gap-1 mt-3 pt-2 border-t border-border">
                     <button
                       onClick={() => handleCopyApiKey(channel.id)}
@@ -1294,7 +1147,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                     </button>
                     <button
                       onClick={() => {
-                        setSyncAllMode(false);
                         setFilterFromEdit(false);
                         setFilterChannels([{ id: channel.id, name: channel.name }]);
                         setShowFilterModal(true);
@@ -1491,7 +1343,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                               } catch {
                                 // 加载失败时不阻塞切换
                               }
-                              setValidateResults([]);
                             }
                             setKeyViewMode("list");
                           }}
@@ -2249,7 +2100,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                   setShowImportResultModal(false);
                   // 如果有成功的渠道，打开模型筛选弹窗
                   if (importSuccessChannels.length > 0) {
-                    setSyncAllMode(true);
                     setFilterFromEdit(false);
                     setFilterChannels(importSuccessChannels);
                     setShowFilterModal(true);
@@ -2273,7 +2123,6 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
           onClose={() => {
             setShowFilterModal(false);
             setFilterChannels([]);
-            setSyncAllMode(false);
             setFilterFromEdit(false);
           }}
           onBack={filterFromEdit ? () => {

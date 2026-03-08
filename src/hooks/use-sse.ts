@@ -80,7 +80,7 @@ export function useSSE(options: UseSSEOptions = {}) {
 
         // Call callback via ref (won't cause re-renders)
         onProgressRef.current?.(data);
-      } catch (error) {
+      } catch {
       }
     };
 

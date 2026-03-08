@@ -195,7 +195,7 @@ export async function pauseAndDrainQueue(): Promise<{ cleared: number }> {
           // If no token, try to remove the job directly
           await job.remove().catch(() => {});
         }
-      } catch (err) {
+      } catch {
         // Job may have completed or already failed, ignore
       }
     });

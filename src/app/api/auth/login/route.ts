@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
       token,
       expiresIn: "7d",
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Internal server error", code: "SERVER_ERROR" },
       { status: 500 }

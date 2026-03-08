@@ -122,7 +122,7 @@ async function readRemoteData(config: WebDAVConfig): Promise<WebDAVExportData | 
     }
 
     return await response.json() as WebDAVExportData;
-  } catch (error) {
+  } catch {
     return null;
   }
 }
@@ -146,7 +146,7 @@ async function writeRemoteData(config: WebDAVConfig, data: WebDAVExportData): Pr
     }
 
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }

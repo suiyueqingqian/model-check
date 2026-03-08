@@ -38,6 +38,24 @@ export interface ProxyRequestContext {
   keyResult: ValidateKeyResult;
 }
 
+export type ProxyEndpointType = "CHAT" | "CLAUDE" | "GEMINI" | "CODEX";
+
+export interface ProxyChannelCandidate {
+  channelId: string;
+  channelName: string;
+  baseUrl: string;
+  apiKey: string;
+  proxy: string | null;
+  actualModelName: string;
+  modelId: string;
+  modelStatus: boolean | null;
+}
+
+export interface ProxyChannelCandidateResult {
+  isUnifiedRouting: boolean;
+  candidates: ProxyChannelCandidate[];
+}
+
 /**
  * Verify proxy API key from request (legacy sync version)
  * Key is always required (auto-generated if not configured)
@@ -125,16 +143,7 @@ export async function verifyProxyKeyAsync(request: NextRequest): Promise<{
  * Returns the channel that contains the specified model
  * Supports multi-key routing (round_robin / random) and filters out invalid keys
  */
-export async function findChannelByModel(modelName: string, preferredEndpoint?: string): Promise<{
-  channelId: string;
-  channelName: string;
-  baseUrl: string;
-  apiKey: string;
-  proxy: string | null;
-  actualModelName: string;
-  modelId: string;
-  modelStatus: boolean | null;
-} | null> {
+export async function findChannelByModel(modelName: string, preferredEndpoint?: string): Promise<ProxyChannelCandidate | null> {
   let actualModelName = modelName;
 
   // First, try exact match with full model name
@@ -292,20 +301,11 @@ export async function findChannelByModel(modelName: string, preferredEndpoint?: 
  * Find channel for unified model mode
  * Searches across all channels for a bare model name, picks a healthy one
  */
-async function findChannelByUnifiedModel(
+async function getUnifiedModelCandidates(
   modelName: string,
   keyResult: ValidateKeyResult,
   preferredEndpoint?: string
-): Promise<{
-  channelId: string;
-  channelName: string;
-  baseUrl: string;
-  apiKey: string;
-  proxy: string | null;
-  actualModelName: string;
-  modelId: string;
-  modelStatus: boolean | null;
-} | null> {
+): Promise<ProxyChannelCandidate[]> {
   const models = await prisma.model.findMany({
     where: {
       modelName,
@@ -357,7 +357,7 @@ async function findChannelByUnifiedModel(
   }
 
   if (endpointFiltered.length === 0) {
-    return null;
+    return [];
   }
 
   // 统一模式权限过滤
@@ -368,7 +368,7 @@ async function findChannelByUnifiedModel(
     if (allowedUnified && allowedUnified.length > 0) {
       // 用 allowedUnifiedModels 做裸模型名匹配
       if (!allowedUnified.includes(modelName)) {
-        return null;
+        return [];
       }
     } else {
       // 回退到现有 channelIds/modelIds 检查
@@ -376,41 +376,63 @@ async function findChannelByUnifiedModel(
       const allowedModelIds = parseStringArray(keyRecord.allowedModelIds);
       const hasChannelPerms = allowedChannelIds !== null && allowedChannelIds.length > 0;
       const hasModelPerms = allowedModelIds !== null && allowedModelIds.length > 0;
-      if (!hasChannelPerms && !hasModelPerms) return null;
+      if (!hasChannelPerms && !hasModelPerms) return [];
       permittedModels = endpointFiltered.filter((m) => {
         if (hasChannelPerms && allowedChannelIds!.includes(m.channel.id)) return true;
         if (hasModelPerms && allowedModelIds!.includes(m.id)) return true;
         return false;
       });
-      if (permittedModels.length === 0) return null;
+      if (permittedModels.length === 0) return [];
     }
   }
 
-  // 跨渠道随机选择（按 sortOrder 加权：sortOrder 越小权重越高）
-  const maxSort = Math.max(...permittedModels.map((m) => m.channel.sortOrder)) + 1;
-  const weights = permittedModels.map((m) => maxSort - m.channel.sortOrder + 1);
-  const totalWeight = weights.reduce((a, b) => a + b, 0);
-  let rand = Math.random() * totalWeight;
-  let selected = permittedModels[0];
-  for (let i = 0; i < permittedModels.length; i++) {
-    rand -= weights[i];
-    if (rand <= 0) {
-      selected = permittedModels[i];
-      break;
-    }
-  }
-
-  const apiKey = selected.channelKey?.apiKey ?? selected.channel.apiKey;
-  return {
+  return permittedModels.map((selected) => ({
     channelId: selected.channel.id,
     channelName: selected.channel.name,
     baseUrl: selected.channel.baseUrl.replace(/\/$/, ""),
-    apiKey,
+    apiKey: selected.channelKey?.apiKey ?? selected.channel.apiKey,
     proxy: selected.channel.proxy,
     actualModelName: modelName,
     modelId: selected.id,
     modelStatus: selected.lastStatus,
-  };
+  }));
+}
+
+function orderUnifiedCandidatesRoundRobin(
+  modelName: string,
+  preferredEndpoint: string | undefined,
+  candidates: ProxyChannelCandidate[]
+): ProxyChannelCandidate[] {
+  if (candidates.length <= 1) {
+    return candidates;
+  }
+
+  const counterKey = `unified:${preferredEndpoint || "ANY"}:${modelName}`;
+  if (roundRobinCounters.size >= ROUND_ROBIN_MAX_KEYS) {
+    roundRobinCounters.clear();
+  }
+
+  const current = roundRobinCounters.get(counterKey) || 0;
+  const startIndex = current % candidates.length;
+  roundRobinCounters.set(counterKey, (current + 1) % candidates.length);
+
+  return [
+    ...candidates.slice(startIndex),
+    ...candidates.slice(0, startIndex),
+  ];
+}
+
+async function findChannelByUnifiedModel(
+  modelName: string,
+  keyResult: ValidateKeyResult,
+  preferredEndpoint?: string
+): Promise<ProxyChannelCandidate | null> {
+  const candidates = await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return orderUnifiedCandidatesRoundRobin(modelName, preferredEndpoint, candidates)[0];
 }
 
 /**
@@ -421,16 +443,7 @@ export async function findChannelByModelWithPermission(
   modelName: string,
   keyResult: ValidateKeyResult,
   preferredEndpoint?: string
-): Promise<{
-  channelId: string;
-  channelName: string;
-  baseUrl: string;
-  apiKey: string;
-  proxy: string | null;
-  actualModelName: string;
-  modelId: string;
-  modelStatus: boolean | null;
-} | null> {
+): Promise<ProxyChannelCandidate | null> {
   // 统一模式：裸模型名（不含 /）走跨渠道路由
   const isUnifiedMode = keyResult.keyRecord?.unifiedMode === true;
   if (isUnifiedMode && !modelName.includes("/")) {
@@ -457,6 +470,64 @@ export async function findChannelByModelWithPermission(
   }
 
   return channel;
+}
+
+export async function getProxyChannelCandidatesWithPermission(
+  modelName: string,
+  keyResult: ValidateKeyResult,
+  preferredEndpoint?: string
+): Promise<ProxyChannelCandidateResult> {
+  const isUnifiedRouting = keyResult.keyRecord?.unifiedMode === true && !modelName.includes("/");
+
+  if (isUnifiedRouting) {
+    const candidates = await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint);
+    return {
+      isUnifiedRouting: true,
+      candidates: orderUnifiedCandidatesRoundRobin(modelName, preferredEndpoint, candidates),
+    };
+  }
+
+  const channel = await findChannelByModelWithPermission(modelName, keyResult, preferredEndpoint);
+  return {
+    isUnifiedRouting: false,
+    candidates: channel ? [channel] : [],
+  };
+}
+
+export async function recordProxyModelResult(
+  modelId: string,
+  endpointType: ProxyEndpointType,
+  success: boolean,
+  options?: {
+    latency?: number;
+    statusCode?: number;
+    errorMsg?: string;
+    responseContent?: string;
+  }
+): Promise<void> {
+  const now = new Date();
+
+  await prisma.$transaction([
+    prisma.model.update({
+      where: { id: modelId },
+      data: {
+        lastStatus: success,
+        lastLatency: success ? (options?.latency ?? null) : null,
+        lastCheckedAt: now,
+      },
+    }),
+    prisma.checkLog.create({
+      data: {
+        modelId,
+        endpointType,
+        status: success ? "SUCCESS" : "FAIL",
+        latency: options?.latency,
+        statusCode: options?.statusCode,
+        errorMsg: success ? null : (options?.errorMsg || "代理请求失败"),
+        responseContent: success ? (options?.responseContent || null) : null,
+      },
+    }),
+  ]);
 }
 
 /**
@@ -692,7 +763,7 @@ export function streamResponse(upstream: Response): Response {
           }
           controller.enqueue(value);
         }
-      } catch (error) {
+      } catch {
         // Upstream closed mid-stream — close gracefully so partial data still reaches the client
         try {
           controller.close();

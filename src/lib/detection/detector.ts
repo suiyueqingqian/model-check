@@ -425,6 +425,15 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
       if (retryResult) return retryResult;
     }
 
+    // CODEX endpoint failed for gpt-5 (non-codex) — fall back to Chat Completions
+    if (job.endpointType === EndpointType.CODEX) {
+      const name = job.modelName.toLowerCase();
+      if (/gpt-5/.test(name) && !name.includes("codex")) {
+        const retryResult = await retryWithChatEndpoint(job, startTime);
+        if (retryResult) return retryResult;
+      }
+    }
+
     return {
       status: CheckStatus.FAIL,
       latency,
@@ -448,6 +457,15 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
     if (job.endpointType === EndpointType.CLAUDE) {
       const retryResult = await retryClaudeWithThinking(job, startTime);
       if (retryResult) return retryResult;
+    }
+
+    // CODEX endpoint error for gpt-5 (non-codex) — fall back to Chat Completions
+    if (job.endpointType === EndpointType.CODEX) {
+      const name = job.modelName.toLowerCase();
+      if (/gpt-5/.test(name) && !name.includes("codex")) {
+        const retryResult = await retryWithChatEndpoint(job, startTime);
+        if (retryResult) return retryResult;
+      }
     }
 
     return {
@@ -509,6 +527,66 @@ async function retryClaudeWithThinking(
         latency,
         statusCode: response.status,
         endpointType: EndpointType.CLAUDE,
+        responseContent,
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Retry with Chat Completions API (/v1/chat/completions) for gpt-5 non-codex models
+ * Called when CODEX (/v1/responses) fails, as fallback
+ */
+async function retryWithChatEndpoint(
+  job: DetectionJobData,
+  originalStartTime: number
+): Promise<DetectionResult | null> {
+  const proxy = job.proxy || GLOBAL_PROXY;
+  const endpoint = buildEndpointDetection(job.baseUrl, job.apiKey, job.modelName, EndpointType.CHAT);
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DETECTION_TIMEOUT);
+
+    const response = await proxyFetch(endpoint.url, {
+      method: "POST",
+      headers: endpoint.headers,
+      body: JSON.stringify(endpoint.requestBody),
+      signal: controller.signal,
+    }, proxy);
+    clearTimeout(timeoutId);
+
+    const latency = Date.now() - originalStartTime;
+
+    if (response.ok) {
+      let responseContent: string | undefined;
+      let responseBody: unknown;
+      try {
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("text/event-stream")) {
+          const sseText = await response.text();
+          responseContent = extractStreamContent(sseText, EndpointType.CHAT);
+          responseBody = parseLastSSEEvent(sseText);
+        } else {
+          responseBody = await response.json();
+          responseContent = extractResponseContent(responseBody, EndpointType.CHAT);
+        }
+      } catch {
+        // Ignore parsing errors
+      }
+
+      const bodyError = checkResponseBodyForError(responseBody);
+      if (bodyError) return null;
+
+      return {
+        status: CheckStatus.SUCCESS,
+        latency,
+        statusCode: response.status,
+        endpointType: EndpointType.CHAT,
         responseContent,
       };
     }

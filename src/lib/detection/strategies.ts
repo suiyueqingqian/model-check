@@ -28,9 +28,8 @@ export function detectCliEndpointType(modelName: string): EndpointType | null {
   }
 
   // OpenAI Responses API (2025+):
-  // gpt-5.1, gpt-5.2, and gpt-5.3 series use the new Responses API (CODEX)
-  // gpt-4o, gpt-4, o1, o3, etc. still use Chat Completions API
-  if (/gpt-5\.[123]/.test(name)) {
+  // GPT-5 全系列使用 Responses API，gpt-4o/o1/o3 等仍用 Chat Completions
+  if (/gpt-5/.test(name)) {
     return EndpointType.CODEX;
   }
 
@@ -66,6 +65,11 @@ export function getEndpointsToTest(modelName: string): EndpointType[] {
 
   // Any model containing "codex" should only test Responses endpoint
   if (name.includes("codex")) {
+    return [EndpointType.CODEX];
+  }
+
+  // GPT-5 全系列只支持 Responses API
+  if (/gpt-5/.test(name)) {
     return [EndpointType.CODEX];
   }
 
@@ -242,6 +246,8 @@ function buildCodexEndpoint(
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
+      "User-Agent": "codex_cli_rs/0.0.1",
+      originator: "codex_cli_rs",
     },
     requestBody: {
       model: modelName,

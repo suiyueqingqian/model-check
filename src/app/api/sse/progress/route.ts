@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
           enableReadyCheck: false,
         });
 
-        subscriber.on("error", (err) => {
+        subscriber.on("error", () => {
         });
 
         // Handle messages
@@ -61,14 +61,14 @@ export async function GET(request: NextRequest) {
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify({ type: "progress", ...data })}\n\n`)
             );
-          } catch (error) {
+          } catch {
           }
         });
 
         // Subscribe to progress channel
         await subscriber.subscribe(PROGRESS_CHANNEL);
 
-      } catch (error) {
+      } catch {
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ type: "error", message: "Failed to connect to Redis" })}\n\n`)
         );

@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
     };
 
     return NextResponse.json(exportData);
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to export channels", code: "EXPORT_ERROR" },
       { status: 500 }

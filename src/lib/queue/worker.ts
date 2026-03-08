@@ -218,17 +218,18 @@ async function processDetectionJob(
     await prisma.$transaction(async (tx) => {
       if (result.status === "SUCCESS") {
         // Atomically add endpoint to array if not already present (PostgreSQL array operation)
+        // Use result.endpointType (may differ from job's when CHAT falls back to CODEX)
         await tx.$executeRaw`
           UPDATE "models"
           SET "detected_endpoints" =
             CASE
-              WHEN ${data.endpointType} = ANY("detected_endpoints") THEN "detected_endpoints"
-              ELSE COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY[${data.endpointType}]
+              WHEN ${result.endpointType} = ANY("detected_endpoints") THEN "detected_endpoints"
+              ELSE COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY[${result.endpointType}]
             END,
             "last_status" =
               CASE
-                WHEN ${data.endpointType} = ANY("detected_endpoints") THEN array_length(COALESCE("detected_endpoints", ARRAY[]::text[]), 1) > 0
-                ELSE array_length(COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY[${data.endpointType}], 1) > 0
+                WHEN ${result.endpointType} = ANY("detected_endpoints") THEN array_length(COALESCE("detected_endpoints", ARRAY[]::text[]), 1) > 0
+                ELSE array_length(COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY[${result.endpointType}], 1) > 0
               END,
             "last_latency" = ${result.latency},
             "last_checked_at" = ${new Date()}
@@ -238,8 +239,8 @@ async function processDetectionJob(
         // Atomically remove endpoint from array (PostgreSQL array_remove)
         await tx.$executeRaw`
           UPDATE "models"
-          SET "detected_endpoints" = array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${data.endpointType}),
-            "last_status" = COALESCE(array_length(array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${data.endpointType}), 1), 0) > 0,
+          SET "detected_endpoints" = array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}),
+            "last_status" = COALESCE(array_length(array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}), 1), 0) > 0,
             "last_latency" = ${result.latency},
             "last_checked_at" = ${new Date()}
           WHERE id = ${data.modelId}
@@ -258,6 +259,32 @@ async function processDetectionJob(
           responseContent: result.responseContent,
         },
       });
+
+      // gpt-5 (non-codex): /v1/responses 通过意味着 CHAT 也可用，同时记录两个端点
+      if (result.status === "SUCCESS" && result.endpointType === "CODEX") {
+        const name = (data.modelName || "").toLowerCase();
+        if (/gpt-5/.test(name) && !name.includes("codex")) {
+          await tx.$executeRaw`
+            UPDATE "models"
+            SET "detected_endpoints" =
+              CASE
+                WHEN 'CHAT' = ANY("detected_endpoints") THEN "detected_endpoints"
+                ELSE COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY['CHAT']
+              END
+            WHERE id = ${data.modelId}
+          `;
+          await tx.checkLog.create({
+            data: {
+              modelId: data.modelId,
+              endpointType: "CHAT",
+              status: result.status,
+              latency: result.latency,
+              statusCode: result.statusCode,
+              responseContent: result.responseContent,
+            },
+          });
+        }
+      }
     });
 
     // Check if this model has any remaining jobs (to determine if model detection is complete)
@@ -288,7 +315,7 @@ async function processDetectionJob(
 
     try {
       await redis.publish(PROGRESS_CHANNEL, JSON.stringify(progressData));
-    } catch (publishError) {
+    } catch {
       // Redis publish failure should not affect the detection result
     }
 
@@ -317,16 +344,16 @@ export function startWorker(): Worker<DetectionJobData, DetectionResult> {
   );
 
   // Event handlers
-  worker.on("completed", (job, result) => {
+  worker.on("completed", () => {
   });
 
-  worker.on("failed", (job, error) => {
+  worker.on("failed", () => {
   });
 
-  worker.on("error", (error) => {
+  worker.on("error", () => {
   });
 
-  worker.on("stalled", (jobId) => {
+  worker.on("stalled", () => {
   });
 
   return worker;

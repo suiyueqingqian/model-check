@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
       { error: "Invalid action. Use 'start' or 'stop'", code: "INVALID_ACTION" },
       { status: 400 }
     );
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to control worker", code: "WORKER_ERROR" },
       { status: 500 }

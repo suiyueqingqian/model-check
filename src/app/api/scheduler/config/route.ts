@@ -151,7 +151,7 @@ export async function GET(request: NextRequest) {
       channels,
       nextRun: cronStatus.detection.nextRun,
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to get scheduler config", code: "FETCH_ERROR" },
       { status: 500 }
@@ -275,7 +275,7 @@ export async function PUT(request: NextRequest) {
       },
       nextRun: cronStatus.detection.nextRun,
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to update scheduler config", code: "UPDATE_ERROR" },
       { status: 500 }

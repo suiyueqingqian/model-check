@@ -9,7 +9,7 @@ const globalForRedis = globalThis as unknown as {
   pubsubChannels: Set<string> | undefined;
 };
 
-function attachErrorHandler(client: Redis, label = "Redis") {
+function attachErrorHandler(client: Redis) {
   client.on("error", (err) => {
     if ((err as NodeJS.ErrnoException).code === "ECONNREFUSED") {
     } else {
@@ -39,7 +39,7 @@ function createRedisClient() {
   const originalDuplicate = client.duplicate.bind(client);
   client.duplicate = (...args: Parameters<typeof client.duplicate>) => {
     const dup = originalDuplicate(...args);
-    attachErrorHandler(dup, "Redis:dup");
+    attachErrorHandler(dup);
     return dup;
   };
 
@@ -90,7 +90,7 @@ function createPubSubManager(): PubSubManager {
         lazyConnect: true,
       });
 
-      attachErrorHandler(newSubscriber, "Redis:PubSub");
+      attachErrorHandler(newSubscriber);
 
       newSubscriber.on("message", (channel, message) => {
         emitter.emit(`message:${channel}`, message);
@@ -143,10 +143,10 @@ function createPubSubManager(): PubSubManager {
       ensureSubscriber().then((sub) => {
         if (wasNew) {
           sub.subscribe(channel)
-            .catch((err) => {
+            .catch(() => {
             });
         }
-      }).catch((err) => {
+      }).catch(() => {
       });
 
       // Return unsubscribe function

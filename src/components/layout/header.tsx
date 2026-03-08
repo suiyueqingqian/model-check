@@ -116,7 +116,7 @@ export function Header({
         const data = await response.json();
         setSchedulerStatus(data);
       }
-    } catch (error) {
+    } catch {
     }
   };
 
@@ -306,23 +306,6 @@ export function Header({
     } finally {
       setGuestUploading(false);
     }
-  };
-
-  // Format next run time
-  const formatNextRun = (isoString: string | null): string => {
-    if (!isoString) return "-";
-    const date = new Date(isoString);
-    const now = new Date();
-    const diffMs = date.getTime() - now.getTime();
-
-    if (diffMs < 0) return "即将执行";
-
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMins / 60);
-
-    if (diffMins < 60) return `${diffMins}分钟后`;
-    if (diffHours < 24) return `${diffHours}h${diffMins % 60}m`;
-    return date.toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   };
 
   // Check if any filter is active

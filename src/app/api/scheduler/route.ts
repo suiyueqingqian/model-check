@@ -55,7 +55,7 @@ export async function GET() {
       ...status,
       config,
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to get scheduler status", code: "STATUS_ERROR" },
       { status: 500 }
@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
     }
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to control scheduler", code: "SCHEDULER_ERROR" },
       { status: 500 }

@@ -129,50 +129,7 @@ function isModelAvailable(model: Model): boolean {
   return statuses.length > 0 && statuses.some((s) => s === "SUCCESS");
 }
 
-// Helper function to get health counts by endpoint category (Chat vs CLI)
-function getEndpointHealthCounts(models: Model[]): {
-  chat: { healthy: number; total: number };
-  cli: { healthy: number; total: number };
-} {
-  const result = {
-    chat: { healthy: 0, total: 0 },
-    cli: { healthy: 0, total: 0 },
-  };
-
-  for (const model of models) {
-    // Get latest status for each endpoint type
-    const endpointStatuses: Record<string, string> = {};
-    for (const log of model.checkLogs) {
-      if (!endpointStatuses[log.endpointType]) {
-        endpointStatuses[log.endpointType] = log.status;
-      }
-    }
-
-    // Check each detected endpoint
-    const endpoints = model.detectedEndpoints || [];
-    for (const ep of endpoints) {
-      const { type: epCategory } = formatEndpointType(ep);
-      const status = endpointStatuses[ep];
-
-      if (epCategory === "chat") {
-        result.chat.total++;
-        if (status === "SUCCESS") {
-          result.chat.healthy++;
-        }
-      } else {
-        // cli
-        result.cli.total++;
-        if (status === "SUCCESS") {
-          result.cli.healthy++;
-        }
-      }
-    }
-  }
-
-  return result;
-}
-
-export function ChannelCard({ channel, onRefresh, onDelete, className, onEndpointFilterChange, activeEndpointFilter, testingModelIds = new Set(), onTestModels, onStopModels }: ChannelCardProps) {
+export function ChannelCard({ channel, onDelete, className, onEndpointFilterChange, activeEndpointFilter, testingModelIds = new Set(), onTestModels, onStopModels }: ChannelCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [localEndpointFilter, setLocalEndpointFilter] = useState<string | null>(null);
   const [hoveringChannelStop, setHoveringChannelStop] = useState(false);
@@ -186,9 +143,6 @@ export function ChannelCard({ channel, onRefresh, onDelete, className, onEndpoin
   // Calculate healthy count based on checkLogs
   const healthyCount = channel.models.filter(isModelHealthy).length;
   const totalCount = channel.models.length;
-
-  // Calculate health counts by endpoint category
-  const endpointHealth = getEndpointHealthCounts(channel.models);
 
   // Build health summary text for collapsed view - only show total models count
   // Endpoint details are already shown in the colored badges on the right
@@ -287,7 +241,7 @@ export function ChannelCard({ channel, onRefresh, onDelete, className, onEndpoin
         }
 
         update(toastId, `渠道 ${channel.name} 测试已启动`, "success");
-      } catch (err) {
+      } catch {
         update(toastId, `渠道 ${channel.name} 测试失败`, "error");
       }
     }
@@ -337,7 +291,7 @@ export function ChannelCard({ channel, onRefresh, onDelete, className, onEndpoin
       }
 
       update(toastId, `模型 ${modelName} 测试已启动`, "success");
-    } catch (err) {
+    } catch {
       update(toastId, `模型 ${modelName} 测试失败`, "error");
     }
   };
@@ -622,10 +576,6 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
   const allSuccess = hasBeenTested && testedEndpoints.every(
     (ep) => endpointStatuses[ep]?.status === "SUCCESS"
   );
-  const anyFail = testedEndpoints.some(
-    (ep) => endpointStatuses[ep]?.status === "FAIL"
-  );
-
   // Overall status: all success = healthy, partial = partial, all fail = unhealthy, no tests = unknown
   const allFail = hasBeenTested && testedEndpoints.every(
     (ep) => endpointStatuses[ep]?.status === "FAIL"

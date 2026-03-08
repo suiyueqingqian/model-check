@@ -241,7 +241,7 @@ export async function POST(request: NextRequest) {
       webdav: webdavStatus,
       importedChannels,
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to import channels", code: "IMPORT_ERROR" },
       { status: 500 }

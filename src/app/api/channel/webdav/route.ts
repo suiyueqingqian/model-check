@@ -89,7 +89,7 @@ async function ensureParentDirectories(baseUrl: string, filename: string, header
         // Try to continue - the actual PUT will fail if there's a real permission issue
       } else {
       }
-    } catch (error) {
+    } catch {
       // Network errors should be logged but not thrown - let PUT fail with clearer error
     }
   }
@@ -581,7 +581,7 @@ export async function POST(request: NextRequest) {
             },
           });
           schedulerConfigRestored = true;
-        } catch (error) {
+        } catch {
         }
       }
 
@@ -609,7 +609,7 @@ export async function POST(request: NextRequest) {
               proxyKeysRestored++;
             }
             // Don't create new keys from WebDAV (security: keys should be created locally)
-          } catch (error) {
+          } catch {
           }
         }
       }

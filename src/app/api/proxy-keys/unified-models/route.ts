@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     const uniqueNames = [...new Set(models.map((m) => m.modelName))];
 
     return NextResponse.json({ models: uniqueNames });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to fetch unified models", code: "FETCH_ERROR" },
       { status: 500 }

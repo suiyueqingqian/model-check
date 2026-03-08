@@ -44,7 +44,7 @@ export async function GET(
     }
 
     return NextResponse.json({ key });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to get proxy key", code: "FETCH_ERROR" },
       { status: 500 }
@@ -114,7 +114,7 @@ export async function PUT(
         updatedAt: key.updatedAt,
       },
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to update proxy key", code: "UPDATE_ERROR" },
       { status: 500 }
@@ -154,7 +154,7 @@ export async function DELETE(
       success: true,
       message: "Proxy key deleted",
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to delete proxy key", code: "DELETE_ERROR" },
       { status: 500 }

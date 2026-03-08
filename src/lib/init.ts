@@ -1,7 +1,7 @@
 // Application initialization - Start worker and scheduler
 
 import { startWorker, isWorkerRunning } from "@/lib/queue/worker";
-import { startAllCronsWithConfig, getCronStatus } from "@/lib/scheduler";
+import { startAllCronsWithConfig } from "@/lib/scheduler";
 
 let initialized = false;
 
@@ -23,8 +23,5 @@ export async function initializeServices(): Promise<void> {
   await startAllCronsWithConfig();
 
   initialized = true;
-
-  // Log status
-  const cronStatus = getCronStatus();
 }
 

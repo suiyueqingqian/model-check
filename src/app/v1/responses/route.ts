@@ -5,15 +5,15 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import {
-  findChannelByModelWithPermission,
+  getProxyChannelCandidatesWithPermission,
   buildUpstreamHeaders,
   proxyRequest,
+  recordProxyModelResult,
   streamResponse,
   errorResponse,
   normalizeBaseUrl,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
-import { prisma } from "@/lib/prisma";
 
 export async function POST(request: NextRequest) {
   // Verify proxy API key (async for multi-key support)
@@ -40,46 +40,74 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Find channel by model name with permission check (requires "channelName/modelName" format)
-    const channel = await findChannelByModelWithPermission(modelName, keyResult!, "CODEX");
-    if (!channel) {
+    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "CODEX");
+    if (candidates.length === 0) {
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);
     }
 
-    // Use actual model name (without channel prefix) for upstream request
-    // Default to stream=true (required by Codex etc.), allow explicit stream=false for compatibility
     const isStream = body.stream !== false;
-    const upstreamBody = { ...body, model: channel.actualModelName, stream: isStream };
+    let lastErrorMessage = `Model not found or access denied: ${modelName}`;
+    let lastStatus = 404;
 
-    const baseUrl = normalizeBaseUrl(channel.baseUrl);
-    const url = `${baseUrl}/v1/responses`;
-    const headers = buildUpstreamHeaders(channel.apiKey, "openai");
+    for (const channel of candidates) {
+      const startedAt = Date.now();
 
-    // Forward request to upstream (with channel proxy support)
-    const response = await proxyRequest(url, "POST", headers, upstreamBody, channel.proxy);
+      try {
+        const upstreamBody = { ...body, model: channel.actualModelName, stream: isStream };
+        const baseUrl = normalizeBaseUrl(channel.baseUrl);
+        const url = `${baseUrl}/v1/responses`;
+        const headers = buildUpstreamHeaders(channel.apiKey, "openai");
+        const response = await proxyRequest(url, "POST", headers, upstreamBody, channel.proxy);
+        const latency = Date.now() - startedAt;
 
-    if (!response.ok) {
-      if (isUnifiedMode && channel.modelId) {
-        prisma.model.update({
-          where: { id: channel.modelId },
-          data: { lastStatus: false },
-        }).catch(() => {});
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "Unknown error");
+          lastErrorMessage = `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`;
+          lastStatus = response.status;
+
+          if (isUnifiedRouting && channel.modelId) {
+            await recordProxyModelResult(channel.modelId, "CODEX", false, {
+              latency,
+              statusCode: response.status,
+              errorMsg: lastErrorMessage,
+            }).catch(() => {});
+            continue;
+          }
+
+          return errorResponse(lastErrorMessage, lastStatus);
+        }
+
+        if (isUnifiedRouting && channel.modelId) {
+          await recordProxyModelResult(channel.modelId, "CODEX", true, {
+            latency,
+            statusCode: response.status,
+            responseContent: isStream ? "代理流式请求成功" : "代理请求成功",
+          }).catch(() => {});
+        }
+
+        if (isStream) {
+          return streamResponse(response);
+        }
+
+        const data = await response.json();
+        return NextResponse.json(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        lastErrorMessage = `Proxy error: ${message}`;
+        lastStatus = 502;
+
+        if (isUnifiedRouting && channel.modelId) {
+          await recordProxyModelResult(channel.modelId, "CODEX", false, {
+            errorMsg: lastErrorMessage,
+          }).catch(() => {});
+          continue;
+        }
+
+        return errorResponse(lastErrorMessage, lastStatus);
       }
-      const errorText = await response.text().catch(() => "Unknown error");
-      return errorResponse(
-        `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`,
-        response.status
-      );
     }
 
-    // Handle streaming response (SSE format with event: + data: lines)
-    if (isStream) {
-      return streamResponse(response);
-    }
-
-    // Handle non-streaming response
-    const data = await response.json();
-    return NextResponse.json(data);
+    return errorResponse(lastErrorMessage, lastStatus);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResponse(`Proxy error: ${message}`, 502);

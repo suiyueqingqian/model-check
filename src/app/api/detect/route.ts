@@ -87,11 +87,11 @@ export async function POST(request: NextRequest) {
 }
 
 // GET /api/detect - Get detection progress
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const progress = await getDetectionProgress();
     return NextResponse.json(progress);
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "获取检测进度失败", code: "PROGRESS_ERROR" },
       { status: 500 }

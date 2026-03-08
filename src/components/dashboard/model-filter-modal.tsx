@@ -51,6 +51,8 @@ export function ModelFilterModal({
   const [fetching, setFetching] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [fetchDone, setFetchDone] = useState(false);
+  const [fetchProgress, setFetchProgress] = useState({ completed: 0, total: 0, failed: 0 });
+  const [syncProgress, setSyncProgress] = useState({ completed: 0, total: 0, failed: 0 });
 
   const [channelData, setChannelData] = useState<Map<string, ChannelModelData>>(new Map());
   const [collapsedLeft, setCollapsedLeft] = useState<Set<string>>(new Set());
@@ -88,10 +90,11 @@ export function ModelFilterModal({
     if (targetChannels.length === 0) return;
     setFetching(true);
     setFetchDone(false);
+    setFetchProgress({ completed: 0, total: targetChannels.length, failed: 0 });
     const newData = new Map<string, ChannelModelData>();
 
     try {
-      const batchSize = 3;
+      const batchSize = 10;
       for (let i = 0; i < targetChannels.length; i += batchSize) {
         const batch = targetChannels.slice(i, i + batchSize);
         const results = await Promise.allSettled(
@@ -117,7 +120,6 @@ export function ModelFilterModal({
               }
             }
             const allModels = Array.from(models).sort();
-            // 将已有模型（且在获取列表中存在的）作为默认已选
             const existingModels: string[] = data.existingModels || [];
             const preSelected = new Set<string>(
               existingModels.filter((m: string) => models.has(m))
@@ -131,6 +133,7 @@ export function ModelFilterModal({
           })
         );
 
+        let batchFailed = 0;
         results.forEach((result, idx) => {
           const ch = batch[idx];
           if (result.status === "fulfilled") {
@@ -140,9 +143,15 @@ export function ModelFilterModal({
               modelPairs: result.value.modelPairs,
             });
           } else {
+            batchFailed++;
             newData.set(ch.id, { allModels: [], selectedModels: new Set(), modelPairs: [] });
           }
         });
+        setFetchProgress(prev => ({
+          ...prev,
+          completed: prev.completed + batch.length,
+          failed: prev.failed + batchFailed,
+        }));
       }
 
       setChannelData(newData);
@@ -399,10 +408,11 @@ export function ModelFilterModal({
   // Confirm sync - per channel
   const handleConfirmSync = async () => {
     setSyncing(true);
+    setSyncProgress({ completed: 0, total: targetChannels.length, failed: 0 });
     try {
       let totalSynced = 0;
       let failedCount = 0;
-      const batchSize = 3;
+      const batchSize = 10;
 
       for (let i = 0; i < targetChannels.length; i += batchSize) {
         const batch = targetChannels.slice(i, i + batchSize);
@@ -426,10 +436,16 @@ export function ModelFilterModal({
             return data.total || 0;
           })
         );
+        let batchFailed = 0;
         for (const result of results) {
           if (result.status === "fulfilled") totalSynced += result.value;
-          else failedCount++;
+          else { failedCount++; batchFailed++; }
         }
+        setSyncProgress(prev => ({
+          ...prev,
+          completed: prev.completed + batch.length,
+          failed: prev.failed + batchFailed,
+        }));
       }
 
       if (targetChannels.length > 1) {
@@ -716,11 +732,28 @@ export function ModelFilterModal({
 
           {/* Model lists */}
           {fetching ? (
-            <div className="flex items-center justify-center py-12 flex-1">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              <span className="ml-2 text-sm text-muted-foreground">
-                {isMultiChannel ? `正在获取模型 (${targetChannels.length} 个渠道)...` : "正在获取模型..."}
-              </span>
+            <div className="flex flex-col items-center justify-center py-12 flex-1 gap-4">
+              <div className="flex items-center">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-sm text-muted-foreground">
+                  {isMultiChannel
+                    ? `正在获取模型 (${fetchProgress.completed}/${fetchProgress.total} 个渠道)${fetchProgress.failed > 0 ? `，${fetchProgress.failed} 个失败` : ""}`
+                    : "正在获取模型..."}
+                </span>
+              </div>
+              {isMultiChannel && fetchProgress.total > 0 && (
+                <div className="w-64">
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
+                      style={{ width: `${(fetchProgress.completed / fetchProgress.total) * 100}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground text-center mt-1">
+                    {Math.round((fetchProgress.completed / fetchProgress.total) * 100)}%
+                  </p>
+                </div>
+              )}
             </div>
           ) : totalFetched > 0 ? (
             <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
@@ -783,7 +816,22 @@ export function ModelFilterModal({
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-2 px-5 py-4 border-t border-border shrink-0">
+        <div className="px-5 py-4 border-t border-border shrink-0 space-y-2">
+          {syncing && isMultiChannel && syncProgress.total > 0 && (
+            <div>
+              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                <span>正在同步 ({syncProgress.completed}/{syncProgress.total} 个渠道){syncProgress.failed > 0 ? `，${syncProgress.failed} 个失败` : ""}</span>
+                <span>{Math.round((syncProgress.completed / syncProgress.total) * 100)}%</span>
+              </div>
+              <div className="h-2 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
+                  style={{ width: `${(syncProgress.completed / syncProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
@@ -799,6 +847,7 @@ export function ModelFilterModal({
             {syncing && <Loader2 className="h-4 w-4 animate-spin" />}
             确认并同步 ({totalSelected})
           </button>
+          </div>
         </div>
       </div>
     </div>

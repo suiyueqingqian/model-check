@@ -56,7 +56,7 @@ export async function GET(request: NextRequest) {
     };
 
     return NextResponse.json({ keys: [builtInEntry, ...maskedKeys] });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to list proxy keys", code: "FETCH_ERROR" },
       { status: 500 }
@@ -141,7 +141,7 @@ export async function POST(request: NextRequest) {
         createdAt: proxyKey.createdAt,
       },
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json(
       { error: "Failed to create proxy key", code: "CREATE_ERROR" },
       { status: 500 }

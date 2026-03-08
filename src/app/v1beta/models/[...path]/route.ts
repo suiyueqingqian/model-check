@@ -6,15 +6,15 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import {
-  findChannelByModelWithPermission,
+  getProxyChannelCandidatesWithPermission,
   buildUpstreamHeaders,
   proxyRequest,
+  recordProxyModelResult,
   streamResponse,
   errorResponse,
   normalizeBaseUrl,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
-import { prisma } from "@/lib/prisma";
 
 function isPrefixedModelName(modelName: string): boolean {
   const slashIndex = modelName.indexOf("/");
@@ -57,53 +57,81 @@ export async function POST(
       }
     }
 
-    // Find channel by model name with permission check
-    const channel = await findChannelByModelWithPermission(modelName, keyResult!, "GEMINI");
-    if (!channel) {
+    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "GEMINI");
+    if (candidates.length === 0) {
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);
     }
 
     // Parse request body
     const body = await request.json();
 
-    // Determine if this is a streaming request
     const isStream = method === "streamGenerateContent";
+    let lastErrorMessage = `Model not found or access denied: ${modelName}`;
+    let lastStatus = 404;
 
-    // Normalize baseUrl - remove trailing /v1beta if present
-    let baseUrl = normalizeBaseUrl(channel.baseUrl);
-    if (baseUrl.endsWith("/v1beta")) {
-      baseUrl = baseUrl.slice(0, -7);
-    }
+    for (const channel of candidates) {
+      const startedAt = Date.now();
 
-    const upstreamModelPath = `${channel.actualModelName}:${method}`;
-    const url = `${baseUrl}/v1beta/models/${upstreamModelPath}`;
-    const headers = buildUpstreamHeaders(channel.apiKey, "gemini");
+      try {
+        let baseUrl = normalizeBaseUrl(channel.baseUrl);
+        if (baseUrl.endsWith("/v1beta")) {
+          baseUrl = baseUrl.slice(0, -7);
+        }
 
-    // Forward request to upstream (with channel proxy support)
-    const response = await proxyRequest(url, "POST", headers, body, channel.proxy);
+        const upstreamModelPath = `${channel.actualModelName}:${method}`;
+        const url = `${baseUrl}/v1beta/models/${upstreamModelPath}`;
+        const headers = buildUpstreamHeaders(channel.apiKey, "gemini");
+        const response = await proxyRequest(url, "POST", headers, body, channel.proxy);
+        const latency = Date.now() - startedAt;
 
-    if (!response.ok) {
-      if (isUnifiedMode && channel.modelId) {
-        prisma.model.update({
-          where: { id: channel.modelId },
-          data: { lastStatus: false },
-        }).catch(() => {});
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "Unknown error");
+          lastErrorMessage = `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`;
+          lastStatus = response.status;
+
+          if (isUnifiedRouting && channel.modelId) {
+            await recordProxyModelResult(channel.modelId, "GEMINI", false, {
+              latency,
+              statusCode: response.status,
+              errorMsg: lastErrorMessage,
+            }).catch(() => {});
+            continue;
+          }
+
+          return errorResponse(lastErrorMessage, lastStatus);
+        }
+
+        if (isUnifiedRouting && channel.modelId) {
+          await recordProxyModelResult(channel.modelId, "GEMINI", true, {
+            latency,
+            statusCode: response.status,
+            responseContent: isStream ? "代理流式请求成功" : "代理请求成功",
+          }).catch(() => {});
+        }
+
+        if (isStream) {
+          return streamResponse(response);
+        }
+
+        const data = await response.json();
+        return NextResponse.json(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        lastErrorMessage = `Proxy error: ${message}`;
+        lastStatus = 502;
+
+        if (isUnifiedRouting && channel.modelId) {
+          await recordProxyModelResult(channel.modelId, "GEMINI", false, {
+            errorMsg: lastErrorMessage,
+          }).catch(() => {});
+          continue;
+        }
+
+        return errorResponse(lastErrorMessage, lastStatus);
       }
-      const errorText = await response.text().catch(() => "Unknown error");
-      return errorResponse(
-        `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`,
-        response.status
-      );
     }
 
-    // Handle streaming response
-    if (isStream) {
-      return streamResponse(response);
-    }
-
-    // Handle non-streaming response
-    const data = await response.json();
-    return NextResponse.json(data);
+    return errorResponse(lastErrorMessage, lastStatus);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResponse(`Proxy error: ${message}`, 502);
@@ -134,40 +162,72 @@ export async function GET(
       }
     }
 
-    // Find channel by model name with permission check
-    const channel = await findChannelByModelWithPermission(modelName, keyResult!, "GEMINI");
-    if (!channel) {
+    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "GEMINI");
+    if (candidates.length === 0) {
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);
     }
 
-    // Normalize baseUrl
-    let baseUrl = normalizeBaseUrl(channel.baseUrl);
-    if (baseUrl.endsWith("/v1beta")) {
-      baseUrl = baseUrl.slice(0, -7);
-    }
+    let lastErrorMessage = `Model not found or access denied: ${modelName}`;
+    let lastStatus = 404;
 
-    const url = `${baseUrl}/v1beta/models/${channel.actualModelName}`;
-    const headers = buildUpstreamHeaders(channel.apiKey, "gemini");
+    for (const channel of candidates) {
+      const startedAt = Date.now();
 
-    // Forward request to upstream (with channel proxy support)
-    const response = await proxyRequest(url, "GET", headers, undefined, channel.proxy);
+      try {
+        let baseUrl = normalizeBaseUrl(channel.baseUrl);
+        if (baseUrl.endsWith("/v1beta")) {
+          baseUrl = baseUrl.slice(0, -7);
+        }
 
-    if (!response.ok) {
-      if (isUnifiedMode && channel.modelId) {
-        prisma.model.update({
-          where: { id: channel.modelId },
-          data: { lastStatus: false },
-        }).catch(() => {});
+        const url = `${baseUrl}/v1beta/models/${channel.actualModelName}`;
+        const headers = buildUpstreamHeaders(channel.apiKey, "gemini");
+        const response = await proxyRequest(url, "GET", headers, undefined, channel.proxy);
+        const latency = Date.now() - startedAt;
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "Unknown error");
+          lastErrorMessage = `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`;
+          lastStatus = response.status;
+
+          if (isUnifiedRouting && channel.modelId) {
+            await recordProxyModelResult(channel.modelId, "GEMINI", false, {
+              latency,
+              statusCode: response.status,
+              errorMsg: lastErrorMessage,
+            }).catch(() => {});
+            continue;
+          }
+
+          return errorResponse(lastErrorMessage, lastStatus);
+        }
+
+        if (isUnifiedRouting && channel.modelId) {
+          await recordProxyModelResult(channel.modelId, "GEMINI", true, {
+            latency,
+            statusCode: response.status,
+            responseContent: "代理请求成功",
+          }).catch(() => {});
+        }
+
+        const data = await response.json();
+        return NextResponse.json(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        lastErrorMessage = `Proxy error: ${message}`;
+        lastStatus = 502;
+
+        if (isUnifiedRouting && channel.modelId) {
+          await recordProxyModelResult(channel.modelId, "GEMINI", false, {
+            errorMsg: lastErrorMessage,
+          }).catch(() => {});
+          continue;
+        }
+
+        return errorResponse(lastErrorMessage, lastStatus);
       }
-      const errorText = await response.text().catch(() => "Unknown error");
-      return errorResponse(
-        `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`,
-        response.status
-      );
     }
 
-    const data = await response.json();
-    return NextResponse.json(data);
+    return errorResponse(lastErrorMessage, lastStatus);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return errorResponse(`Proxy error: ${message}`, 502);
