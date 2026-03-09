@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Loader2, Search, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Search, Trash2, X } from "lucide-react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
@@ -41,6 +41,21 @@ interface ProxyRequestLogProps {
 const DEFAULT_PAGE_SIZE = 10;
 const PAGE_SIZE_OPTIONS = [5, 10, 15, 20, 25, 50];
 const AUTO_REFRESH_MS = 5000;
+
+const ENDPOINT_OPTIONS = [
+  { value: "all", label: "所有端点" },
+  { value: "CHAT", label: "Chat" },
+  { value: "CLAUDE", label: "Claude" },
+  { value: "GEMINI", label: "Gemini" },
+  { value: "CODEX", label: "Responses" },
+  { value: "IMAGE", label: "Image" },
+] as const;
+
+const STATUS_OPTIONS = [
+  { value: "all", label: "全部结果" },
+  { value: "success", label: "成功" },
+  { value: "fail", label: "失败" },
+] as const;
 
 function formatTime(value: string): string {
   return new Date(value).toLocaleString("zh-CN", {
@@ -87,13 +102,8 @@ function getUpstreamPath(value: string | null): string {
   }
 }
 
-function getForwardingSummary(requestPath: string, endpointType: string | null): string | null {
-  const upstreamPath = getUpstreamPath(endpointType);
-  if (upstreamPath === "-" || requestPath === upstreamPath) {
-    return null;
-  }
-
-  return `实际转发: ${formatEndpointLabel(endpointType)} ${upstreamPath}`;
+function getStatusLabel(value: string): string {
+  return STATUS_OPTIONS.find((item) => item.value === value)?.label || "全部结果";
 }
 
 function DetailItem({
@@ -294,173 +304,205 @@ export function ProxyRequestLog({
   }
 
   const totalPages = data?.pagination.totalPages ?? 1;
+  const hasActiveFilters = debouncedSearch.trim().length > 0 || endpointType !== "all" || status !== "all";
+  const activeFilterLabels: string[] = [];
+
+  if (debouncedSearch.trim()) {
+    activeFilterLabels.push(`搜索：${debouncedSearch.trim()}`);
+  }
+  if (endpointType !== "all") {
+    activeFilterLabels.push(`端点：${formatEndpointLabel(endpointType)}`);
+  }
+  if (status !== "all") {
+    activeFilterLabels.push(`结果：${getStatusLabel(status)}`);
+  }
+
+  const resetFilters = () => {
+    setSearch("");
+    setDebouncedSearch("");
+    setEndpointType("all");
+    setStatus("all");
+    setPage(1);
+  };
 
   return (
     <section className={cn(
-      "space-y-4",
-      standalone ? "w-full" : "rounded-lg border bg-card p-4"
+      "space-y-3",
+      standalone ? "w-full" : "rounded-2xl border border-border bg-card p-4"
     )}>
       <div className={cn(
-        "flex flex-col gap-3",
-        standalone && "rounded-lg border bg-card p-5 shadow-sm"
+        "rounded-2xl border border-border bg-card p-4 dark:bg-card",
+        standalone && "shadow-sm"
       )}>
-        {loading && (
-          <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            加载中
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="grid flex-1 gap-3 md:grid-cols-[minmax(0,1.6fr)_180px_160px]">
+            <label className="relative block">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                }}
+                placeholder="搜索模型、渠道、路径、错误"
+                className="h-10 w-full rounded-xl border border-input bg-background px-4 pl-10 pr-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/20"
+              />
+            </label>
+
+            <select
+              value={endpointType}
+              onChange={(e) => {
+                setPage(1);
+                setEndpointType(e.target.value);
+              }}
+              className="h-10 rounded-xl border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/20"
+            >
+              {ENDPOINT_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+
+            <select
+              value={status}
+              onChange={(e) => {
+                setPage(1);
+                setStatus(e.target.value);
+              }}
+              className="h-10 rounded-xl border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/20"
+            >
+              {STATUS_OPTIONS.map((item) => (
+                <option key={item.value} value={item.value}>{item.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {loading && (
+              <div className="inline-flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-xs text-muted-foreground dark:bg-muted/20">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                同步中
+              </div>
+            )}
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="inline-flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+              >
+                <X className="h-3.5 w-3.5" />
+                清空筛选
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => handleDeleteLogs("filtered")}
+              disabled={deletingTarget !== null || !data || data.pagination.total === 0}
+              className="inline-flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50 disabled:text-muted-foreground"
+            >
+              {deletingTarget === "filtered" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              清空结果
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDeleteLogs("all")}
+              disabled={deletingTarget !== null || !data || data.pagination.total === 0}
+              className="inline-flex items-center gap-2 rounded-xl border border-red-300/70 bg-background px-3 py-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/10 disabled:opacity-50 disabled:text-muted-foreground dark:border-red-500/40 dark:bg-muted/20 dark:text-red-400"
+            >
+              {deletingTarget === "all" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              清空全部
+            </button>
+          </div>
+        </div>
+
+        {hasActiveFilters && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {activeFilterLabels.map((label) => (
+              <span
+                key={label}
+                className="inline-flex items-center rounded-full border border-border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground dark:bg-muted/20"
+              >
+                {label}
+              </span>
+            ))}
           </div>
         )}
-
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_160px_140px]">
-          <label className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-              }}
-              placeholder="搜模型、渠道、路径、错误"
-              className="w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm"
-            />
-          </label>
-
-          <select
-            value={endpointType}
-            onChange={(e) => {
-              setPage(1);
-              setEndpointType(e.target.value);
-            }}
-            className="rounded-md border bg-background px-3 py-2 text-sm"
-          >
-            <option value="all">所有端点</option>
-            <option value="CHAT">Chat</option>
-            <option value="CLAUDE">Claude</option>
-            <option value="GEMINI">Gemini</option>
-            <option value="CODEX">Responses</option>
-            <option value="IMAGE">Image</option>
-          </select>
-
-          <select
-            value={status}
-            onChange={(e) => {
-              setPage(1);
-              setStatus(e.target.value);
-            }}
-            className="rounded-md border bg-background px-3 py-2 text-sm"
-          >
-            <option value="all">全部结果</option>
-            <option value="success">成功</option>
-            <option value="fail">失败</option>
-          </select>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => handleDeleteLogs("filtered")}
-            disabled={deletingTarget !== null || !data || data.pagination.total === 0}
-            className="inline-flex items-center gap-1 rounded-md border px-3 py-2 text-sm text-foreground hover:bg-accent disabled:opacity-50 disabled:text-muted-foreground"
-          >
-            {deletingTarget === "filtered" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-            清空当前筛选
-          </button>
-          <button
-            type="button"
-            onClick={() => handleDeleteLogs("all")}
-            disabled={deletingTarget !== null || !data || data.pagination.total === 0}
-            className="inline-flex items-center gap-1 rounded-md border border-red-300 px-3 py-2 text-sm text-red-500 hover:bg-red-500/10 disabled:opacity-50 disabled:text-muted-foreground"
-          >
-            {deletingTarget === "all" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-            清空全部
-          </button>
-        </div>
       </div>
 
       {loading && !data ? (
         <div className={cn(
-          "flex min-h-[320px] items-center justify-center rounded-lg border bg-card",
+          "flex min-h-[240px] items-center justify-center rounded-2xl border border-border bg-card dark:bg-card",
           standalone && "shadow-sm"
         )}>
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : error ? (
         <div className={cn(
-          "rounded-lg border bg-card p-4 text-sm text-red-500",
+          "rounded-2xl border border-red-300/60 bg-red-500/5 p-4 text-sm text-red-600 dark:border-red-500/40 dark:text-red-400",
           standalone && "shadow-sm"
         )}>
           {error}
         </div>
       ) : data && data.logs.length > 0 ? (
         <div className={cn(
-          "overflow-hidden rounded-lg border bg-card",
+          "overflow-hidden rounded-2xl border border-border bg-card dark:bg-card",
           standalone && "shadow-sm"
         )}>
-          <div className="divide-y">
+          <div className="hidden grid-cols-[180px_100px_minmax(0,1.3fr)_minmax(0,1fr)_90px_80px_40px] gap-3 border-b border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground lg:grid dark:bg-muted/10 md:px-5">
+            <span>时间</span>
+            <span>类型</span>
+            <span>模型 / 路径</span>
+            <span>渠道 / Key</span>
+            <span>结果</span>
+            <span>耗时</span>
+            <span className="text-right">操作</span>
+          </div>
+          <div className="divide-y divide-border">
             {data.logs.map((log) => {
               const isExpanded = expandedId === log.id;
 
               return (
-                <div key={log.id}>
-                  <div className="grid w-full gap-2 px-4 py-2.5 transition-colors hover:bg-accent/40 lg:grid-cols-[minmax(0,1fr)_40px] lg:items-center">
+                <div key={log.id} className="overflow-hidden">
+                  <div className="grid w-full gap-3 px-4 py-3 transition-colors hover:bg-muted/30 dark:hover:bg-muted/10 md:px-5 lg:grid-cols-[minmax(0,1fr)_40px] lg:items-center">
                     <button
                       type="button"
                       onClick={() => setExpandedId((prev) => prev === log.id ? null : log.id)}
-                      className="grid w-full gap-2 text-left lg:grid-cols-[190px_110px_minmax(0,1.4fr)_minmax(0,1fr)_110px_90px_32px] lg:items-center"
+                      className="grid w-full gap-3 text-left lg:grid-cols-[180px_100px_minmax(0,1.3fr)_minmax(0,1fr)_90px_80px_32px] lg:items-center"
                     >
-                    <div className="text-sm text-muted-foreground">
+                    <div className="text-xs text-muted-foreground md:text-sm">
                       {formatTime(log.createdAt)}
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="rounded bg-muted px-2 py-1 font-medium">
+                      <span className="rounded-full border border-border bg-background px-2 py-1 font-medium dark:bg-muted/20">
                         {log.requestMethod}
                       </span>
-                      <span className="rounded border px-2 py-1 font-medium">
+                      <span className="rounded-full border border-border bg-muted/40 px-2 py-1 font-medium dark:bg-muted/20">
                         {formatEndpointLabel(log.endpointType)}
                       </span>
                     </div>
 
                     <div className="min-w-0">
-                      <div className="truncate font-mono text-sm" title={log.requestedModel || "-"}>
+                      <div className="truncate font-mono text-sm font-medium text-foreground" title={log.requestedModel || "-"}>
                         {log.requestedModel || "-"}
                       </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
-                        <span className="rounded border border-blue-500/20 bg-blue-500/10 px-1.5 py-0.5 text-blue-600 dark:text-blue-300">
-                          用户入口
-                        </span>
-                        <span className="truncate font-mono text-muted-foreground" title={log.requestPath}>
-                          {log.requestPath}
-                        </span>
+                      <div className="mt-1 truncate font-mono text-xs text-muted-foreground" title={log.requestPath}>
+                        {log.requestPath}
                       </div>
-                      {getForwardingSummary(log.requestPath, log.endpointType) && (
-                        <div
-                          className="truncate text-xs text-amber-600 dark:text-amber-300"
-                          title={getForwardingSummary(log.requestPath, log.endpointType) || ""}
-                        >
-                          {getForwardingSummary(log.requestPath, log.endpointType)}
-                        </div>
-                      )}
                     </div>
 
                     <div className="min-w-0 text-sm">
-                      <div className="truncate" title={log.channelName || "-"}>
+                      <div className="truncate text-foreground" title={log.channelName || "-"}>
                         {log.channelName || "-"}
                       </div>
                       <div className="truncate text-xs text-muted-foreground" title={log.proxyKeyName || "-"}>
-                        Key: {log.proxyKeyName || "-"}
+                        {log.proxyKeyName || "-"}
                       </div>
                     </div>
 
-                    <div className="text-sm">
-                      <div className={cn(
-                        "font-medium",
-                        log.success ? "text-emerald-600" : "text-red-500"
-                      )}>
-                        {log.success ? "成功" : "失败"}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {formatEndpointLabel(log.endpointType)} · {log.statusCode ?? "-"}{log.isStream ? " · 流式" : ""}
-                      </div>
+                    <div className={cn(
+                      "text-sm font-medium",
+                      log.success ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400"
+                    )}>
+                      {log.success ? "成功" : "失败"}
                     </div>
 
                     <div className="text-sm text-muted-foreground">
@@ -476,7 +518,7 @@ export function ProxyRequestLog({
                       type="button"
                       onClick={() => void handleDeleteLogs("single", log.id)}
                       disabled={deletingTarget !== null}
-                      className="flex h-9 w-9 items-center justify-center rounded-md text-red-500 hover:bg-red-500/10 disabled:opacity-50 disabled:text-muted-foreground"
+                      className="flex h-9 w-9 items-center justify-center rounded-xl text-red-500 transition-colors hover:bg-red-500/10 disabled:opacity-50 disabled:text-muted-foreground"
                       title="删除这条日志"
                     >
                       {deletingTarget === log.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -484,8 +526,8 @@ export function ProxyRequestLog({
                   </div>
 
                   {isExpanded && (
-                    <div className="border-t bg-muted/20 px-4 py-2.5">
-                    <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="border-t border-border bg-muted/20 px-4 py-3 dark:bg-muted/10 md:px-5">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                       <DetailItem label="请求模型" value={log.requestedModel || "-"} mono />
                       <DetailItem label="实际模型" value={log.actualModelName || "-"} mono />
                       <DetailItem label="用户请求入口" value={log.requestPath} mono />
@@ -502,15 +544,15 @@ export function ProxyRequestLog({
                     </div>
 
                     {log.requestPath !== getUpstreamPath(log.endpointType) && (
-                      <div className="mt-2 rounded-md border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-600 dark:text-blue-300">
-                        这条日志里的 {log.requestPath} 是用户请求打进来的入口，不代表实际上游端点。项目实际尝试的是 {getUpstreamPath(log.endpointType)}。
+                      <div className="mt-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
+                        实际上游：{getUpstreamPath(log.endpointType)}
                       </div>
                     )}
 
                       {log.errorMsg && (
                         <div className="mt-2.5 space-y-1.5">
                           <div className="text-xs text-muted-foreground">错误详情</div>
-                          <pre className="overflow-x-auto rounded-md bg-red-500/10 px-3 py-2 text-xs text-red-500 whitespace-pre-wrap break-all">
+                          <pre className="rounded-xl border border-red-300/50 bg-red-500/5 px-3 py-2 text-xs text-red-600 whitespace-pre-wrap break-all dark:border-red-500/30 dark:text-red-400">
                             {log.errorMsg}
                           </pre>
                         </div>
@@ -522,7 +564,7 @@ export function ProxyRequestLog({
             })}
           </div>
 
-          <div className="flex flex-col gap-3 border-t px-4 py-3 text-sm text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 border-t border-border px-4 py-3 text-sm text-muted-foreground md:px-5 lg:flex-row lg:items-center lg:justify-between">
             <span>
               第 {page} / {totalPages} 页，共 {data.pagination.total} 条
             </span>
@@ -533,7 +575,7 @@ export function ProxyRequestLog({
                   setPage(1);
                   setPageSize(parseInt(e.target.value, 10));
                 }}
-                className="rounded-md border bg-background px-3 py-2 text-sm text-foreground"
+                className="h-10 rounded-xl border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/20"
               >
                 {PAGE_SIZE_OPTIONS.map((value) => (
                   <option key={value} value={value}>
@@ -547,7 +589,7 @@ export function ProxyRequestLog({
                 type="button"
                 onClick={() => setPage((prev) => Math.max(1, prev - 1))}
                 disabled={page <= 1 || loading}
-                className="rounded-md border px-3 py-2 text-foreground hover:bg-accent disabled:opacity-50 disabled:text-muted-foreground"
+                className="rounded-xl border border-border px-3 py-2 text-foreground transition-colors hover:bg-accent disabled:opacity-50 disabled:text-muted-foreground"
               >
                 上一页
               </button>
@@ -555,7 +597,7 @@ export function ProxyRequestLog({
                 type="button"
                 onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
                 disabled={page >= totalPages || loading}
-                className="rounded-md border px-3 py-2 text-foreground hover:bg-accent disabled:opacity-50 disabled:text-muted-foreground"
+                className="rounded-xl border border-border px-3 py-2 text-foreground transition-colors hover:bg-accent disabled:opacity-50 disabled:text-muted-foreground"
               >
                 下一页
               </button>
@@ -565,7 +607,7 @@ export function ProxyRequestLog({
         </div>
       ) : (
         <div className={cn(
-          "rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground",
+          "rounded-2xl border border-border bg-card p-6 text-center text-sm text-muted-foreground dark:bg-card",
           standalone && "shadow-sm"
         )}>
           暂无代理请求日志
