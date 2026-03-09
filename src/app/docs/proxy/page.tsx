@@ -158,6 +158,7 @@ export default function ProxyDocsPage() {
             <CollapsibleSection title="OpenAI" icon="🤖" color="text-green-600">
               <Endpoint method="POST" path="/v1/chat/completions" desc="Chat Completions API" />
               <Endpoint method="POST" path="/v1/responses" desc="Responses API (Codex)" />
+              <Endpoint method="POST" path="/v1/images/generations" desc="Images API" />
               <div className="mt-3 space-y-4">
                 <div>
                   <p className="text-sm font-medium mb-2">Chat Completions 示例</p>
@@ -171,6 +172,22 @@ export default function ProxyDocsPage() {
     "stream": true
   }'`}
                     id="example-chat"
+                    copied={copied}
+                    onCopy={copyToClipboard}
+                  />
+                </div>
+                <div>
+                  <p className="text-sm font-medium mb-2">Images 示例</p>
+                  <CodeBlock
+                    code={`curl ${baseUrl || "https://your-domain.com"}/v1/images/generations \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "my-channel/dall-e-3",
+    "prompt": "A small red circle on white background",
+    "size": "1024x1024"
+  }'`}
+                    id="example-image"
                     copied={copied}
                     onCopy={copyToClipboard}
                   />
@@ -294,6 +311,7 @@ message = client.messages.create(
             <li>模型名称必须使用 channelName/modelName 格式（例如 my-channel/gpt-4o）</li>
             <li>模型名称必须与数据库中的模型完全匹配</li>
             <li>只有检测成功的模型才会出现在 /v1/models 列表中</li>
+            <li>图片生成请使用 /v1/images/generations，当前不支持流式图片返回</li>
             <li>流式响应会透明转发，保持原始 SSE 格式</li>
             <li>代理超时时间为 10 分钟，支持长时间对话</li>
           </ul>
