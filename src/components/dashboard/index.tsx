@@ -78,6 +78,7 @@ interface DashboardProps {
 }
 
 const PAGE_SIZE = 10;
+const AUTO_REFRESH_MS = 5000;
 
 export function Dashboard({
   refreshKey = 0,
@@ -202,6 +203,14 @@ export function Dashboard({
     fetchData(controller.signal, pageToFetch, search, endpointFilter, statusFilter);
     return () => controller.abort();
   }, [fetchData, refreshKey, search, endpointFilter, statusFilter]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchData(undefined, currentPageRef.current, search, endpointFilter, statusFilter);
+    }, AUTO_REFRESH_MS);
+
+    return () => clearInterval(timer);
+  }, [fetchData, search, endpointFilter, statusFilter]);
 
   // Sort models within channels - filtering is done server-side
   const sortedChannels = useMemo(() => {

@@ -28,7 +28,10 @@ import {
   isClaudeModelName,
   isGeminiModelName,
 } from "@/lib/proxy/compat";
-import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
+import {
+  shouldTryResponsesFallbackForChatModel,
+  shouldUseResponsesOnlyForChatModel,
+} from "@/lib/utils/model-name";
 import { createAsyncErrorHandler, isExpectedCloseError, logWarn } from "@/lib/utils/error";
 
 const CLI_DETECT_PROMPT = process.env.DETECT_PROMPT || "1+1=2? yes or no";
@@ -469,6 +472,10 @@ function buildAttemptList(
     return [attempts.CHAT];
   }
 
+  if (shouldUseResponsesOnlyForChatModel(actualModelName)) {
+    return [attempts.CODEX];
+  }
+
   return preferredProxyEndpoint === "CODEX"
     ? [attempts.CODEX, attempts.CHAT]
     : [attempts.CHAT, attempts.CODEX];
@@ -612,6 +619,8 @@ export async function POST(request: NextRequest) {
         ? "CLAUDE"
         : typeof modelName === "string" && isGeminiModelName(modelName)
           ? "GEMINI"
+          : typeof modelName === "string" && shouldUseResponsesOnlyForChatModel(modelName)
+            ? "CODEX"
           : "CHAT";
 
     const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(
@@ -632,9 +641,7 @@ export async function POST(request: NextRequest) {
     }
 
     const isStream = body.stream === true;
-    const shouldTryResponsesFallback =
-      isGptFiveOrNewerModel(modelName) &&
-      !modelName.toLowerCase().includes("codex");
+    const shouldTryResponsesFallback = shouldTryResponsesFallbackForChatModel(modelName);
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
     let finalFailureLog: {

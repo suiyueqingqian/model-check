@@ -27,6 +27,14 @@ export function isResponsesCompatibleChatModel(modelName: string): boolean {
   return isGptFiveOrNewerModel(modelName) && !isCodexNamedModel(modelName);
 }
 
+export function shouldTryResponsesFallbackForChatModel(modelName: string): boolean {
+  return isGptFiveOrNewerModel(modelName);
+}
+
+export function shouldUseResponsesOnlyForChatModel(modelName: string): boolean {
+  return isCodexNamedModel(modelName);
+}
+
 export function getDisplayEndpoints(modelName: string, endpoints: string[] = []): string[] {
   const merged = new Set(endpoints);
 

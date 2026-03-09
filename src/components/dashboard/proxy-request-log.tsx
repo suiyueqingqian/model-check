@@ -106,6 +106,16 @@ function getStatusLabel(value: string): string {
   return STATUS_OPTIONS.find((item) => item.value === value)?.label || "全部结果";
 }
 
+function getPathBadges(requestPath: string, endpointType: string | null): string[] {
+  const upstreamPath = getUpstreamPath(endpointType);
+
+  if (upstreamPath === "-" || requestPath === upstreamPath) {
+    return ["同一路径"];
+  }
+
+  return ["用户请求", "上游请求"];
+}
+
 function DetailItem({
   label,
   value,
@@ -394,15 +404,6 @@ export function ProxyRequestLog({
             )}
             <button
               type="button"
-              onClick={() => handleDeleteLogs("filtered")}
-              disabled={deletingTarget !== null || !data || data.pagination.total === 0}
-              className="inline-flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50 disabled:text-muted-foreground"
-            >
-              {deletingTarget === "filtered" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-              清空结果
-            </button>
-            <button
-              type="button"
               onClick={() => handleDeleteLogs("all")}
               disabled={deletingTarget !== null || !data || data.pagination.total === 0}
               className="inline-flex items-center gap-2 rounded-xl border border-red-300/70 bg-background px-3 py-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-500/10 disabled:opacity-50 disabled:text-muted-foreground dark:border-red-500/40 dark:bg-muted/20 dark:text-red-400"
@@ -446,7 +447,7 @@ export function ProxyRequestLog({
           "overflow-hidden rounded-2xl border border-border bg-card dark:bg-card",
           standalone && "shadow-sm"
         )}>
-          <div className="hidden grid-cols-[180px_100px_minmax(0,1.3fr)_minmax(0,1fr)_90px_80px_40px] gap-3 border-b border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground lg:grid dark:bg-muted/10 md:px-5">
+          <div className="hidden grid-cols-[180px_100px_minmax(0,1.3fr)_minmax(0,1fr)_90px_80px_48px] gap-3 border-b border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground lg:grid dark:bg-muted/10 md:px-5">
             <span>时间</span>
             <span>类型</span>
             <span>模型 / 路径</span>
@@ -458,14 +459,17 @@ export function ProxyRequestLog({
           <div className="divide-y divide-border">
             {data.logs.map((log) => {
               const isExpanded = expandedId === log.id;
+              const pathBadges = getPathBadges(log.requestPath, log.endpointType);
+              const upstreamPath = getUpstreamPath(log.endpointType);
+              const hasDifferentUpstreamPath = upstreamPath !== "-" && log.requestPath !== upstreamPath;
 
               return (
                 <div key={log.id} className="overflow-hidden">
-                  <div className="grid w-full gap-3 px-4 py-3 transition-colors hover:bg-muted/30 dark:hover:bg-muted/10 md:px-5 lg:grid-cols-[minmax(0,1fr)_40px] lg:items-center">
+                  <div className="grid w-full gap-3 px-4 py-3 transition-colors hover:bg-muted/30 dark:hover:bg-muted/10 md:px-5 lg:grid-cols-[minmax(0,1fr)_48px] lg:items-center">
                     <button
                       type="button"
                       onClick={() => setExpandedId((prev) => prev === log.id ? null : log.id)}
-                      className="grid w-full gap-3 text-left lg:grid-cols-[180px_100px_minmax(0,1.3fr)_minmax(0,1fr)_90px_80px_32px] lg:items-center"
+                      className="grid w-full gap-3 text-left lg:grid-cols-[180px_100px_minmax(0,1.3fr)_minmax(0,1fr)_90px_80px_40px] lg:items-center"
                     >
                     <div className="text-xs text-muted-foreground md:text-sm">
                       {formatTime(log.createdAt)}
@@ -483,6 +487,16 @@ export function ProxyRequestLog({
                     <div className="min-w-0">
                       <div className="truncate font-mono text-sm font-medium text-foreground" title={log.requestedModel || "-"}>
                         {log.requestedModel || "-"}
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        {pathBadges.map((badge) => (
+                          <span
+                            key={badge}
+                            className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground dark:bg-muted/20"
+                          >
+                            {badge}
+                          </span>
+                        ))}
                       </div>
                       <div className="mt-1 truncate font-mono text-xs text-muted-foreground" title={log.requestPath}>
                         {log.requestPath}
@@ -505,11 +519,11 @@ export function ProxyRequestLog({
                       {log.success ? "成功" : "失败"}
                     </div>
 
-                    <div className="text-sm text-muted-foreground">
+                    <div className="text-sm text-muted-foreground lg:text-left">
                       {log.latency ? `${log.latency}ms` : "-"}
                     </div>
 
-                    <div className="flex justify-end text-muted-foreground">
+                    <div className="flex justify-end text-muted-foreground lg:justify-center">
                       {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                     </div>
                     </button>
@@ -530,9 +544,17 @@ export function ProxyRequestLog({
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                       <DetailItem label="请求模型" value={log.requestedModel || "-"} mono />
                       <DetailItem label="实际模型" value={log.actualModelName || "-"} mono />
-                      <DetailItem label="用户请求入口" value={log.requestPath} mono />
-                      <DetailItem label="项目选择的上游端点" value={formatEndpointLabel(log.endpointType)} />
-                      <DetailItem label="项目尝试的上游路径" value={getUpstreamPath(log.endpointType)} mono />
+                      <DetailItem
+                        label={hasDifferentUpstreamPath ? "请求路径" : "路径"}
+                        value={log.requestPath}
+                        mono
+                      />
+                      <DetailItem label="上游端点" value={formatEndpointLabel(log.endpointType)} />
+                      <DetailItem
+                        label={hasDifferentUpstreamPath ? "上游路径" : "实际路径"}
+                        value={upstreamPath}
+                        mono
+                      />
                       <DetailItem label="请求方法" value={log.requestMethod} />
                       <DetailItem label="请求时间" value={formatTime(log.createdAt)} />
                       <DetailItem label="渠道名" value={log.channelName || "-"} />
@@ -543,9 +565,20 @@ export function ProxyRequestLog({
                       <DetailItem label="执行结果" value={log.success ? "成功" : "失败"} />
                     </div>
 
-                    {log.requestPath !== getUpstreamPath(log.endpointType) && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {pathBadges.map((badge) => (
+                        <span
+                          key={`detail-${badge}`}
+                          className="rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground dark:bg-muted/20"
+                        >
+                          {badge}
+                        </span>
+                      ))}
+                    </div>
+
+                    {hasDifferentUpstreamPath && (
                       <div className="mt-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
-                        实际上游：{getUpstreamPath(log.endpointType)}
+                        用户路径：{log.requestPath} · 上游路径：{upstreamPath}
                       </div>
                     )}
 
