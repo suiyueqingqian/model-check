@@ -18,6 +18,7 @@ import {
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
 import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
+import { createAsyncErrorHandler, isExpectedCloseError, logWarn } from "@/lib/utils/error";
 
 const CLI_DETECT_PROMPT = process.env.DETECT_PROMPT || "1+1=2? yes or no";
 const RESPONSES_HEADERS = {
@@ -388,12 +389,14 @@ function convertChatStreamToResponsesStream(
         if (!completed) {
           try {
             controller.error(e instanceof Error ? e : new Error("Stream interrupted"));
-          } catch {
-            // controller already closed
+          } catch (controllerError) {
+            if (!isExpectedCloseError(controllerError)) {
+              logWarn("[ResponsesProxy] 写入转换流失败", controllerError);
+            }
           }
         }
       } finally {
-        await reader.cancel().catch(() => {});
+        await reader.cancel().catch(createAsyncErrorHandler("[ResponsesProxy] 关闭转换流失败", "warn"));
       }
     },
     cancel() {
@@ -515,6 +518,9 @@ export async function POST(request: NextRequest) {
   try {
     const requestPath = request.nextUrl?.pathname ?? new URL(request.url).pathname;
     const requestMethod = request.method;
+    const handleWriteRequestLogError = createAsyncErrorHandler("[ResponsesProxy] 写请求日志失败", "warn");
+    const handleRecordModelResultError = createAsyncErrorHandler("[ResponsesProxy] 记录模型结果失败", "warn");
+    const handlePreferredEndpointError = createAsyncErrorHandler("[ResponsesProxy] 记录优先代理端点失败", "warn");
     const writeRequestLog = (options: {
       endpointType?: "CHAT" | "CODEX";
       requestedModel?: string | null;
@@ -532,7 +538,13 @@ export async function POST(request: NextRequest) {
       requestPath,
       requestMethod,
       ...options,
-    }).catch(() => {});
+    }).catch(handleWriteRequestLogError);
+    const recordModelResult = (
+      ...args: Parameters<typeof recordProxyModelResult>
+    ) => recordProxyModelResult(...args).catch(handleRecordModelResultError);
+    const savePreferredProxyEndpoint = (
+      ...args: Parameters<typeof rememberPreferredProxyEndpoint>
+    ) => rememberPreferredProxyEndpoint(...args).catch(handlePreferredEndpointError);
 
     const body = await request.json();
     const modelName = body.model;
@@ -654,13 +666,13 @@ export async function POST(request: NextRequest) {
               if (isUnifiedRouting && channel.modelId) {
                 return streamResponse(response, {
                   onComplete: () => Promise.all([
-                    recordProxyModelResult(channel.modelId!, attempt.endpointType, true, {
+                    recordModelResult(channel.modelId!, attempt.endpointType, true, {
                       channelId: channel.channelId,
                       modelName: channel.actualModelName,
                       latency,
                       statusCode: response.status,
                       responseContent: "代理流式请求成功",
-                    }).catch(() => {}),
+                    }),
                     writeRequestLog({
                       endpointType: attempt.endpointType,
                       requestedModel: modelName,
@@ -675,13 +687,13 @@ export async function POST(request: NextRequest) {
                     }),
                   ]).then(() => {}),
                   onError: () => Promise.all([
-                    recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                    recordModelResult(channel.modelId!, attempt.endpointType, false, {
                       channelId: channel.channelId,
                       modelName: channel.actualModelName,
                       latency,
                       statusCode: 502,
                       errorMsg: "流式传输中断",
-                    }).catch(() => {}),
+                    }),
                     writeRequestLog({
                       endpointType: attempt.endpointType,
                       requestedModel: modelName,
@@ -705,7 +717,7 @@ export async function POST(request: NextRequest) {
                     rememberPreferredProxyEndpoint(
                       channel.modelId!,
                       attempt.endpointType
-                    ).catch(() => {}),
+                    ).catch(handlePreferredEndpointError),
                     writeRequestLog({
                       endpointType: attempt.endpointType,
                       requestedModel: modelName,
@@ -720,11 +732,11 @@ export async function POST(request: NextRequest) {
                     }),
                   ]).then(() => {}),
                   onError: () => Promise.all([
-                    recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                    recordModelResult(channel.modelId!, attempt.endpointType, false, {
                       latency,
                       statusCode: 502,
                       errorMsg: "流式传输中断",
-                    }).catch(() => {}),
+                    }),
                     writeRequestLog({
                       endpointType: attempt.endpointType,
                       requestedModel: modelName,
@@ -774,20 +786,20 @@ export async function POST(request: NextRequest) {
             const data = await response.json();
 
             if (channel.modelId && !isUnifiedRouting) {
-              await rememberPreferredProxyEndpoint(
+              await savePreferredProxyEndpoint(
                 channel.modelId,
                 attempt.endpointType
-              ).catch(() => {});
+              );
             }
 
             if (isUnifiedRouting && channel.modelId) {
-              await recordProxyModelResult(channel.modelId, attempt.endpointType, true, {
+              await recordModelResult(channel.modelId, attempt.endpointType, true, {
                 channelId: channel.channelId,
                 modelName: channel.actualModelName,
                 latency,
                 statusCode: response.status,
                 responseContent: "代理请求成功",
-              }).catch(() => {});
+              });
             }
 
             await writeRequestLog({
@@ -812,13 +824,13 @@ export async function POST(request: NextRequest) {
             if (isUnifiedRouting && channel.modelId) {
               return withStreamTracking(convertedResponse,
                 () => Promise.all([
-                  recordProxyModelResult(channel.modelId!, attempt.endpointType, true, {
+                  recordModelResult(channel.modelId!, attempt.endpointType, true, {
                     channelId: channel.channelId,
                     modelName: channel.actualModelName,
                     latency,
                     statusCode: response.status,
                     responseContent: "代理流式请求成功",
-                  }).catch(() => {}),
+                  }),
                   writeRequestLog({
                     endpointType: attempt.endpointType,
                     requestedModel: modelName,
@@ -833,13 +845,13 @@ export async function POST(request: NextRequest) {
                   }),
                 ]).then(() => {}),
                 () => Promise.all([
-                  recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                  recordModelResult(channel.modelId!, attempt.endpointType, false, {
                     channelId: channel.channelId,
                     modelName: channel.actualModelName,
                     latency,
                     statusCode: 502,
                     errorMsg: "流式传输中断",
-                  }).catch(() => {}),
+                  }),
                   writeRequestLog({
                     endpointType: attempt.endpointType,
                     requestedModel: modelName,
@@ -864,7 +876,7 @@ export async function POST(request: NextRequest) {
                   rememberPreferredProxyEndpoint(
                     channel.modelId!,
                     attempt.endpointType
-                  ).catch(() => {}),
+                  ).catch(handlePreferredEndpointError),
                   writeRequestLog({
                     endpointType: attempt.endpointType,
                     requestedModel: modelName,
@@ -879,11 +891,11 @@ export async function POST(request: NextRequest) {
                   }),
                 ]).then(() => {}),
                 () => Promise.all([
-                  recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                  recordModelResult(channel.modelId!, attempt.endpointType, false, {
                     latency,
                     statusCode: 502,
                     errorMsg: "流式传输中断",
-                  }).catch(() => {}),
+                  }),
                   writeRequestLog({
                     endpointType: attempt.endpointType,
                     requestedModel: modelName,
@@ -935,20 +947,20 @@ export async function POST(request: NextRequest) {
           const convertedPayload = buildResponsesFromChatCompletion(data, modelName);
 
           if (channel.modelId && !isUnifiedRouting) {
-            await rememberPreferredProxyEndpoint(
+            await savePreferredProxyEndpoint(
               channel.modelId,
               attempt.endpointType
-            ).catch(() => {});
+            );
           }
 
           if (isUnifiedRouting && channel.modelId) {
-            await recordProxyModelResult(channel.modelId, attempt.endpointType, true, {
+            await recordModelResult(channel.modelId, attempt.endpointType, true, {
               channelId: channel.channelId,
               modelName: channel.actualModelName,
               latency,
               statusCode: response.status,
               responseContent: "代理请求成功",
-            }).catch(() => {});
+            });
           }
 
           await writeRequestLog({
@@ -995,11 +1007,11 @@ export async function POST(request: NextRequest) {
     if (pendingFailures.length > 0) {
       await Promise.all(
         pendingFailures.map((failure) =>
-          recordProxyModelResult(failure.modelId, failure.endpointType, false, {
+          recordModelResult(failure.modelId, failure.endpointType, false, {
             latency: failure.latency,
             statusCode: failure.statusCode,
             errorMsg: failure.errorMsg,
-          }).catch(() => {})
+          })
         )
       );
     }

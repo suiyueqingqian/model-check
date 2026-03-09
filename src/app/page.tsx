@@ -7,6 +7,7 @@ import { Header, EndpointFilter, StatusFilter } from "@/components/layout/header
 import { LoginModal } from "@/components/ui/login-modal";
 import { Dashboard } from "@/components/dashboard";
 import { useSSE } from "@/hooks/use-sse";
+import { logWarn } from "@/lib/utils/error";
 
 // Polling interval for testing status (5 seconds)
 const TESTING_STATUS_POLL_INTERVAL = 5000;
@@ -123,7 +124,8 @@ export default function Home() {
           setIsDetectionRunning(false);
         }
       }
-    } catch {
+    } catch (error) {
+      logWarn("[Home] 获取检测进度失败", error);
     }
   }, []);
 
@@ -205,7 +207,8 @@ export default function Home() {
       // Delay to let the backend reset model status and queue jobs
       await new Promise((resolve) => setTimeout(resolve, 500));
       await fetchProgress();
-    } catch {
+    } catch (error) {
+      logWarn("[Home] 启动后同步检测进度失败", error);
     }
   }, [fetchProgress]);
 

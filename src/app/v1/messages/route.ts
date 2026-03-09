@@ -15,6 +15,7 @@ import {
   normalizeBaseUrl,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
+import { createAsyncErrorHandler } from "@/lib/utils/error";
 
 type ProxyAttemptFailure = {
   modelId: string;
@@ -31,6 +32,8 @@ export async function POST(request: NextRequest) {
   try {
     const requestPath = request.nextUrl?.pathname ?? new URL(request.url).pathname;
     const requestMethod = request.method;
+    const handleWriteRequestLogError = createAsyncErrorHandler("[ClaudeProxy] 写请求日志失败", "warn");
+    const handleRecordModelResultError = createAsyncErrorHandler("[ClaudeProxy] 记录模型结果失败", "warn");
     const writeRequestLog = (options: {
       requestedModel?: string | null;
       actualModelName?: string | null;
@@ -48,7 +51,10 @@ export async function POST(request: NextRequest) {
       requestMethod,
       endpointType: "CLAUDE",
       ...options,
-    }).catch(() => {});
+    }).catch(handleWriteRequestLogError);
+    const recordModelResult = (
+      ...args: Parameters<typeof recordProxyModelResult>
+    ) => recordProxyModelResult(...args).catch(handleRecordModelResultError);
 
     // Parse request body
     const body = await request.json();
@@ -150,28 +156,26 @@ export async function POST(request: NextRequest) {
             errorMsg: lastErrorMessage,
           };
 
-          if (isUnifiedRouting && channel.modelId) {
+          if (channel.modelId) {
             pendingFailures.push({
               modelId: channel.modelId,
               latency,
               statusCode: response.status,
               errorMsg: lastErrorMessage,
             });
-            continue;
           }
-
-          return errorResponse(lastErrorMessage, lastStatus);
+          continue;
         }
 
         if (isStream) {
           if (isUnifiedRouting && channel.modelId) {
             return streamResponse(response, {
               onComplete: () => Promise.all([
-                recordProxyModelResult(channel.modelId!, "CLAUDE", true, {
+                recordModelResult(channel.modelId!, "CLAUDE", true, {
                   latency,
                   statusCode: response.status,
                   responseContent: "代理流式请求成功",
-                }).catch(() => {}),
+                }),
                 writeRequestLog({
                   requestedModel: modelName,
                   actualModelName: channel.actualModelName,
@@ -185,11 +189,11 @@ export async function POST(request: NextRequest) {
                 }),
               ]).then(() => {}),
               onError: () => Promise.all([
-                recordProxyModelResult(channel.modelId!, "CLAUDE", false, {
+                recordModelResult(channel.modelId!, "CLAUDE", false, {
                   latency,
                   statusCode: 502,
                   errorMsg: "流式传输中断",
-                }).catch(() => {}),
+                }),
                 writeRequestLog({
                   requestedModel: modelName,
                   actualModelName: channel.actualModelName,
@@ -236,11 +240,11 @@ export async function POST(request: NextRequest) {
         const data = await response.json();
 
         if (isUnifiedRouting && channel.modelId) {
-          await recordProxyModelResult(channel.modelId, "CLAUDE", true, {
+          await recordModelResult(channel.modelId, "CLAUDE", true, {
             latency,
             statusCode: response.status,
             responseContent: "代理请求成功",
-          }).catch(() => {});
+          });
         }
 
         await writeRequestLog({
@@ -270,28 +274,26 @@ export async function POST(request: NextRequest) {
           errorMsg: lastErrorMessage,
         };
 
-        if (isUnifiedRouting && channel.modelId) {
+        if (channel.modelId) {
           pendingFailures.push({
             modelId: channel.modelId,
             latency: Date.now() - startedAt,
             statusCode: 502,
             errorMsg: lastErrorMessage,
           });
-          continue;
         }
-
-        return errorResponse(lastErrorMessage, lastStatus);
+        continue;
       }
     }
 
-    if (isUnifiedRouting && pendingFailures.length > 0) {
+    if (pendingFailures.length > 0) {
       await Promise.all(
         pendingFailures.map((failure) =>
-          recordProxyModelResult(failure.modelId, "CLAUDE", false, {
+          recordModelResult(failure.modelId, "CLAUDE", false, {
             latency: failure.latency,
             statusCode: failure.statusCode,
             errorMsg: failure.errorMsg,
-          }).catch(() => {})
+          })
         )
       );
     }

@@ -12,6 +12,7 @@ import {
   normalizeBaseUrl,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
+import { createAsyncErrorHandler } from "@/lib/utils/error";
 
 type ProxyAttemptFailure = {
   modelId: string;
@@ -27,6 +28,8 @@ export async function POST(request: NextRequest) {
   try {
     const requestPath = request.nextUrl?.pathname ?? new URL(request.url).pathname;
     const requestMethod = request.method;
+    const handleWriteRequestLogError = createAsyncErrorHandler("[ImageProxy] 写请求日志失败", "warn");
+    const handleRecordModelResultError = createAsyncErrorHandler("[ImageProxy] 记录模型结果失败", "warn");
     const writeRequestLog = (options: {
       requestedModel?: string | null;
       actualModelName?: string | null;
@@ -43,7 +46,10 @@ export async function POST(request: NextRequest) {
       requestMethod,
       endpointType: "IMAGE",
       ...options,
-    }).catch(() => {});
+    }).catch(handleWriteRequestLogError);
+    const recordModelResult = (
+      ...args: Parameters<typeof recordProxyModelResult>
+    ) => recordProxyModelResult(...args).catch(handleRecordModelResultError);
 
     const body = await request.json();
     const modelName = body.model;
@@ -145,13 +151,13 @@ export async function POST(request: NextRequest) {
         const data = await response.json();
 
         if (channel.modelId) {
-          await recordProxyModelResult(channel.modelId, "IMAGE", true, {
+          await recordModelResult(channel.modelId, "IMAGE", true, {
             channelId: channel.channelId,
             modelName: channel.actualModelName,
             latency,
             statusCode: response.status,
             responseContent: "代理请求成功",
-          }).catch(() => {});
+          });
         }
 
         await writeRequestLog({
@@ -194,11 +200,11 @@ export async function POST(request: NextRequest) {
     if (pendingFailures.length > 0) {
       await Promise.all(
         pendingFailures.map((failure) =>
-          recordProxyModelResult(failure.modelId, "IMAGE", false, {
+          recordModelResult(failure.modelId, "IMAGE", false, {
             latency: failure.latency,
             statusCode: failure.statusCode,
             errorMsg: failure.errorMsg,
-          }).catch(() => {})
+          })
         )
       );
     }

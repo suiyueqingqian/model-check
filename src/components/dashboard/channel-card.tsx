@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { ChevronDown, ChevronUp, Clock, Zap, PlayCircle, Square, Loader2, Trash2, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusIndicator } from "@/components/ui/status-indicator";
@@ -136,10 +136,6 @@ function isModelHealthy(model: Model): boolean {
   return model.lastStatus === true;
 }
 
-function isModelAvailable(model: Model): boolean {
-  return model.lastStatus === true;
-}
-
 export function ChannelCard({ channel, onDelete, className, onEndpointFilterChange, activeEndpointFilter, testingModelIds = EMPTY_SET, onTestModels, onStopModels }: ChannelCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [localEndpointFilter, setLocalEndpointFilter] = useState<string | null>(null);
@@ -173,7 +169,7 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
   // Check if all models are unavailable after detection
   // A model is unavailable only if BOTH chat and cli endpoints fail (no endpoint works)
   const checkedModels = channel.models.filter((m) => m.lastStatus !== null);
-  const availableCount = checkedModels.filter(isModelAvailable).length;
+  const availableCount = checkedModels.filter(isModelHealthy).length;
   const isAllUnhealthy = checkedModels.length > 0 && availableCount === 0;
 
   // Handle endpoint filter click
@@ -606,7 +602,7 @@ function EndpointBadge({
       title={log ? `${label}: ${statusCode} - ${log.status}` : `${label}: 未检测`}
     >
       {label}
-      {statusCode && (
+      {statusCode != null && (
         <span className={cn(
           "font-mono font-bold",
           isSuccess ? "opacity-90" : "text-red-500 dark:text-red-400"
@@ -621,6 +617,7 @@ function EndpointBadge({
 function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItemProps) {
   const [hoveringStop, setHoveringStop] = useState(false);
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
 
   // Copy channel/model name to clipboard
   const handleCopy = async (e: React.MouseEvent) => {
@@ -629,7 +626,8 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
     } catch {
       console.warn("复制失败");
     }
@@ -643,7 +641,6 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
   const testedEndpoints = Object.keys(semanticStatuses);
   const isHealthy = model.lastStatus === true;
   const isUnknown = model.lastStatus === null;
-  const isPartial = false;
 
   // Get the latest latency from any endpoint
   const latestLog = model.checkLogs[0];
@@ -658,16 +655,14 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
             ? "border-gray-300 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-900 dark:border-gray-600"
             : isHealthy
               ? "border-emerald-400 bg-gradient-to-br from-emerald-50 to-green-100 dark:from-emerald-900/30 dark:to-green-900/20 dark:border-emerald-500 shadow-emerald-100 dark:shadow-emerald-900/20"
-              : isPartial
-                ? "border-amber-400 bg-gradient-to-br from-amber-50 to-yellow-100 dark:from-amber-900/30 dark:to-yellow-900/20 dark:border-amber-500 shadow-amber-100 dark:shadow-amber-900/20"
-                : "border-red-400 bg-gradient-to-br from-red-50 to-rose-100 dark:from-red-900/30 dark:to-rose-900/20 dark:border-red-500 shadow-red-100 dark:shadow-red-900/20"
+              : "border-red-400 bg-gradient-to-br from-red-50 to-rose-100 dark:from-red-900/30 dark:to-rose-900/20 dark:border-red-500 shadow-red-100 dark:shadow-red-900/20"
       )}
     >
       {/* Model name row */}
       <div className="flex items-center justify-between gap-2 mb-2">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <StatusIndicator
-            status={isUnknown ? "unknown" : isHealthy ? "healthy" : isPartial ? "partial" : "unhealthy"}
+            status={isUnknown ? "unknown" : isHealthy ? "healthy" : "unhealthy"}
             size="sm"
           />
           <span className="font-mono text-sm truncate font-medium max-w-[200px] sm:max-w-none" title={model.modelName}>

@@ -6,9 +6,10 @@ import { SocksProxyAgent } from "socks-proxy-agent";
 import https from "https";
 import http from "http";
 
-// Cache proxy agents to avoid creating new ones for each request
+// Cache proxy agents to avoid creating new ones for each request (LRU 淘汰防止内存泄漏)
 const httpProxyAgentCache = new Map<string, ProxyAgent>();
 const socksProxyAgentCache = new Map<string, SocksProxyAgent>();
+const MAX_AGENT_CACHE_SIZE = 100;
 const SUPPORTED_PROXY_PROTOCOLS = new Set(["http:", "https:", "socks5:", "socks4:"]);
 
 /**
@@ -100,6 +101,10 @@ function wrapProxyError(error: unknown, proxyUrl: string): Error {
 function getHttpProxyAgent(proxyUrl: string): ProxyAgent {
   let agent = httpProxyAgentCache.get(proxyUrl);
   if (!agent) {
+    if (httpProxyAgentCache.size >= MAX_AGENT_CACHE_SIZE) {
+      const oldest = httpProxyAgentCache.keys().next().value!;
+      httpProxyAgentCache.delete(oldest);
+    }
     agent = new ProxyAgent(proxyUrl);
     httpProxyAgentCache.set(proxyUrl, agent);
   }
@@ -112,6 +117,10 @@ function getHttpProxyAgent(proxyUrl: string): ProxyAgent {
 function getSocksProxyAgent(proxyUrl: string): SocksProxyAgent {
   let agent = socksProxyAgentCache.get(proxyUrl);
   if (!agent) {
+    if (socksProxyAgentCache.size >= MAX_AGENT_CACHE_SIZE) {
+      const oldest = socksProxyAgentCache.keys().next().value!;
+      socksProxyAgentCache.delete(oldest);
+    }
     agent = new SocksProxyAgent(proxyUrl);
     socksProxyAgentCache.set(proxyUrl, agent);
   }

@@ -100,6 +100,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 校验数组类型字段
+    const isStringArray = (v: unknown): v is string[] =>
+      Array.isArray(v) && v.every((i) => typeof i === "string");
+
+    if (allowedChannelIds != null && !isStringArray(allowedChannelIds)) {
+      return NextResponse.json(
+        { error: "allowedChannelIds must be a string array", code: "INVALID_TYPE" },
+        { status: 400 }
+      );
+    }
+    if (allowedModelIds != null && !isStringArray(allowedModelIds)) {
+      return NextResponse.json(
+        { error: "allowedModelIds must be a string array", code: "INVALID_TYPE" },
+        { status: 400 }
+      );
+    }
+    if (allowedUnifiedModels != null && !isStringArray(allowedUnifiedModels)) {
+      return NextResponse.json(
+        { error: "allowedUnifiedModels must be a string array", code: "INVALID_TYPE" },
+        { status: 400 }
+      );
+    }
+
     // Generate or use custom key
     let key = customKey;
     if (!key) {

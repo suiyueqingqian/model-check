@@ -2,7 +2,7 @@
 
 "use client";
 
-import { createContext, useContext, useState, useCallback, useRef, useEffect, ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo, ReactNode } from "react";
 import { X, CheckCircle, XCircle, Loader2, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -30,9 +30,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   // 组件卸载时清理所有 timer
   useEffect(() => {
+    const timers = timersRef.current;
     return () => {
-      timersRef.current.forEach((timer) => clearTimeout(timer));
-      timersRef.current.clear();
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
     };
   }, []);
 
@@ -79,8 +80,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     }
   }, [setAutoDismiss]);
 
+  const contextValue = useMemo(() => ({ toast, dismiss, update }), [toast, dismiss, update]);
+
   return (
-    <ToastContext.Provider value={{ toast, dismiss, update }}>
+    <ToastContext.Provider value={contextValue}>
       {children}
 
       {/* All toasts - centered with prominent style */}

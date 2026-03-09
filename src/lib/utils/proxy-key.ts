@@ -4,6 +4,7 @@
 import { randomBytes } from "crypto";
 import prisma from "@/lib/prisma";
 import type { ProxyKey } from "@/generated/prisma";
+import { logError } from "@/lib/utils/error";
 
 const ENV_PROXY_API_KEY = process.env.PROXY_API_KEY;
 export const BUILTIN_PROXY_KEY_ROUTE_ID = "__builtin__";
@@ -98,13 +99,6 @@ export function getProxyApiKey(): string {
   }
 
   return generatedKey;
-}
-
-/**
- * Check if the key was auto-generated or from environment
- */
-export function isKeyFromEnvironment(): boolean {
-  return !!ENV_PROXY_API_KEY;
 }
 
 export async function getBuiltInProxyKeyRecord(): Promise<ProxyKey | null> {
@@ -202,7 +196,8 @@ export async function validateProxyKey(apiKey: string): Promise<ValidateKeyResul
         lastUsedAt: new Date(),
         usageCount: { increment: 1 },
       },
-    }).catch(() => {
+    }).catch((err) => {
+      console.error("[ProxyKey] Failed to update usage stats:", err.message);
     });
 
     return { valid: true, keyRecord: builtInRecord };
@@ -234,12 +229,14 @@ export async function validateProxyKey(apiKey: string): Promise<ValidateKeyResul
           lastUsedAt: new Date(),
           usageCount: { increment: 1 },
         },
-      }).catch(() => {
+      }).catch((err) => {
+        console.error("[ProxyKey] Failed to update usage stats:", err.message);
       });
 
       return { valid: true, keyRecord };
     }
-  } catch {
+  } catch (error) {
+    logError("[ProxyKey] 查询代理 key 失败", error);
   }
 
   if (!ENV_PROXY_API_KEY) {

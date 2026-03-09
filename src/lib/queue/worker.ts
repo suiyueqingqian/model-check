@@ -8,9 +8,9 @@ import type { DetectionJobData, DetectionResult } from "@/lib/detection/types";
 import { DETECTION_QUEUE_NAME, PROGRESS_CHANNEL } from "./constants";
 
 // Worker configuration (from environment variables)
-const WORKER_CONCURRENCY = 50; // BullMQ worker pool size (should be >= MAX_GLOBAL_CONCURRENCY)
+const WORKER_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || "50", 10);
 const SEMAPHORE_POLL_MS = 500; // Poll interval when waiting for slot
-const SEMAPHORE_TTL = 120; // TTL in seconds for semaphore keys (auto-cleanup)
+const SEMAPHORE_TTL = 660; // TTL in seconds for semaphore keys (should > PROXY_TIMEOUT 600s)
 const CONFIG_CACHE_TTL_MS = 5000;
 
 interface WorkerRuntimeConfig {
@@ -259,6 +259,7 @@ async function processDetectionJob(
             UPDATE "models"
             SET "detected_endpoints" = array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}),
               "last_status" = COALESCE(array_length(array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}), 1), 0) > 0,
+              "last_latency" = NULL,
               "last_checked_at" = ${new Date()}
             WHERE id = ${data.modelId}
           `;

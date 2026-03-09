@@ -2,13 +2,23 @@
 
 "use client";
 
-import { createContext, useContext, useState, ReactNode, useCallback } from "react";
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback } from "react";
+
+function isTokenExpired(token: string): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload.exp * 1000 < Date.now();
+  } catch {
+    return true;
+  }
+}
 
 interface AuthContextType {
   token: string | null;
   isAuthenticated: boolean;
   login: (password: string) => Promise<boolean>;
   logout: () => void;
+  authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -18,8 +28,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (typeof window === "undefined") {
       return null;
     }
-    return localStorage.getItem("auth_token");
+    const saved = localStorage.getItem("auth_token");
+    if (saved && isTokenExpired(saved)) {
+      localStorage.removeItem("auth_token");
+      return null;
+    }
+    return saved;
   });
+
+  // 定时检查 token 是否过期
+  useEffect(() => {
+    if (!token) return;
+    const clearAuth = () => {
+      setToken(null);
+      localStorage.removeItem("auth_token");
+    };
+    const remaining = (() => {
+      try {
+        const payload = JSON.parse(atob(token.split(".")[1]));
+        return payload.exp * 1000 - Date.now();
+      } catch {
+        return 0;
+      }
+    })();
+    const timer = setTimeout(clearAuth, Math.max(0, remaining));
+    return () => clearTimeout(timer);
+  }, [token]);
 
   const login = useCallback(async (password: string): Promise<boolean> => {
     try {
@@ -51,6 +85,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("auth_token");
   }, []);
 
+  // 封装 fetch，401 时自动退出登录
+  const authFetch = useCallback(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    if (token && !headers.has("Authorization")) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    const response = await fetch(input, { ...init, headers });
+    if (response.status === 401 && token) {
+      setToken(null);
+      localStorage.removeItem("auth_token");
+    }
+    return response;
+  }, [token]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -58,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!token,
         login,
         logout,
+        authFetch,
       }}
     >
       {children}

@@ -3,6 +3,7 @@
 import { CronJob } from "cron";
 import { triggerFullDetection, triggerSelectiveDetection } from "@/lib/queue/service";
 import prisma from "@/lib/prisma";
+import { logError } from "@/lib/utils/error";
 
 // Environment variable defaults
 const ENV_AUTO_DETECT_ENABLED = process.env.AUTO_DETECT_ENABLED !== "false";
@@ -15,7 +16,7 @@ const CRON_SCHEDULE_SEPARATOR = "||";
 const INTERVAL_SCHEDULE_PREFIX = "interval:";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60 * 1000;
-const MAX_DAILY_RUNS = 6;
+const MAX_DAILY_RUNS = parseInt(process.env.MAX_DAILY_RUNS || "6", 10);
 
 type IntervalUnit = "minute" | "hour" | "day";
 
@@ -192,13 +193,22 @@ function stopDetectionSchedulers(): void {
 }
 
 let isDetectionRunning = false;
+let detectionStartedAt = 0;
+const DETECTION_TIMEOUT_MS = 30 * 60 * 1000; // 30分钟超时保护
 
 async function runDetectionOnce(): Promise<void> {
   if (isDetectionRunning) {
-    console.warn("[Scheduler] runDetectionOnce skipped: previous run still in progress");
-    return;
+    // 超时保护：如果上次运行超过 30 分钟仍未结束，强制重置
+    if (detectionStartedAt > 0 && Date.now() - detectionStartedAt > DETECTION_TIMEOUT_MS) {
+      console.warn("[Scheduler] runDetectionOnce: previous run exceeded timeout, forcing reset");
+      isDetectionRunning = false;
+    } else {
+      console.warn("[Scheduler] runDetectionOnce skipped: previous run still in progress");
+      return;
+    }
   }
   isDetectionRunning = true;
+  detectionStartedAt = Date.now();
   try {
     // Guard: re-check enabled from DB before every run
     // (module-level state may be stale due to Next.js chunk isolation)
@@ -222,6 +232,7 @@ async function runDetectionOnce(): Promise<void> {
     console.error("[Scheduler] runDetectionOnce failed:", e);
   } finally {
     isDetectionRunning = false;
+    detectionStartedAt = 0;
   }
 }
 
@@ -258,13 +269,15 @@ export async function loadSchedulerConfig(): Promise<typeof currentConfig> {
         cronSchedule: config.cronSchedule,
         timezone: config.timezone,
         detectAllChannels: config.detectAllChannels,
-        selectedChannelIds: config.selectedChannelIds as string[] | null,
-        selectedModelIds: config.selectedModelIds as Record<string, string[]> | null,
+        selectedChannelIds: Array.isArray(config.selectedChannelIds) ? config.selectedChannelIds as string[] : null,
+        selectedModelIds: config.selectedModelIds && typeof config.selectedModelIds === "object" && !Array.isArray(config.selectedModelIds) ? config.selectedModelIds as Record<string, string[]> : null,
       };
     } else {
-      // Initialize database with environment defaults
-      await prisma.schedulerConfig.create({
-        data: {
+      // Initialize database with environment defaults (upsert 避免多进程竞态冲突)
+      await prisma.schedulerConfig.upsert({
+        where: { id: "default" },
+        update: {},
+        create: {
           id: "default",
           enabled: ENV_AUTO_DETECT_ENABLED,
           cronSchedule: ENV_DETECTION_SCHEDULE,
@@ -361,7 +374,8 @@ export function startCleanupCron(): CronJob {
     async () => {
       try {
         await cleanupOldLogs();
-      } catch {
+      } catch (error) {
+        logError("[Scheduler] 清理日志失败", error);
       }
     },
     null, // onComplete

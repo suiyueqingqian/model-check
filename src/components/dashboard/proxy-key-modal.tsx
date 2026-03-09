@@ -56,6 +56,14 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
   const [copied, setCopied] = useState(false);
   const isBuiltInEdit = !!editingKey && editingKey.source !== "database";
 
+  // ESC 关闭
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handleEsc);
+    return () => document.removeEventListener("keydown", handleEsc);
+  }, [isOpen, onClose]);
+
   // Load channels for selector
   useEffect(() => {
     if (!isOpen || !token) return;
@@ -150,7 +158,6 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
       // Auto-generate a key
       handleGenerateKey();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingKey, isOpen]);
 
   // 渠道加载完成后初始化模型选择（不覆盖基础字段）
@@ -179,11 +186,11 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
 
   // Generate a new key value
   const handleGenerateKey = () => {
-    // Generate key on client side (will be regenerated server-side if not provided)
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const randomValues = crypto.getRandomValues(new Uint8Array(48));
     let result = "sk-";
     for (let i = 0; i < 48; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
+      result += chars.charAt(randomValues[i] % chars.length);
     }
     setGeneratedKey(result);
   };

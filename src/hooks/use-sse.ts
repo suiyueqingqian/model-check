@@ -3,6 +3,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
+import { logWarn } from "@/lib/utils/error";
 
 interface ProgressEvent {
   type: "connected" | "progress" | "heartbeat" | "error";
@@ -81,7 +82,8 @@ export function useSSE(options: UseSSEOptions = {}) {
 
         // Call callback via ref (won't cause re-renders)
         onProgressRef.current?.(data);
-      } catch {
+      } catch (error) {
+        logWarn("[SSE] 解析事件数据失败", error);
       }
     };
 

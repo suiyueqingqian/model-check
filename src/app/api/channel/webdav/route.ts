@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAuth } from "@/lib/middleware/auth";
+import { logError } from "@/lib/utils/error";
 import type { ChannelExportData } from "../export/route";
 
 // Environment variables for WebDAV configuration
@@ -584,7 +585,8 @@ export async function POST(request: NextRequest) {
             },
           });
           schedulerConfigRestored = true;
-        } catch {
+        } catch (error) {
+          logError("[WebDAV] 恢复调度配置失败", error);
         }
       }
 
@@ -612,7 +614,8 @@ export async function POST(request: NextRequest) {
               proxyKeysRestored++;
             }
             // Don't create new keys from WebDAV (security: keys should be created locally)
-          } catch {
+          } catch (error) {
+            logError(`[WebDAV] 恢复代理 key 配置失败: ${String(pk.name ?? "unknown")}`, error);
           }
         }
       }

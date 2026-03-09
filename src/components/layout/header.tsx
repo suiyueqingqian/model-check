@@ -10,6 +10,7 @@ import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/ui/toast";
 import { SchedulerModal } from "@/components/dashboard/scheduler-modal";
 import { cn } from "@/lib/utils";
+import { logWarn } from "@/lib/utils/error";
 
 // Filter types
 export type EndpointFilter = "all" | "CHAT" | "CLAUDE" | "GEMINI" | "CODEX";
@@ -116,7 +117,8 @@ export function Header({
         const data = await response.json();
         setSchedulerStatus(data);
       }
-    } catch {
+    } catch (error) {
+      logWarn("[Header] 获取调度状态失败", error);
     }
   }, []);
 
@@ -155,8 +157,8 @@ export function Header({
           setHasUpdate(data.hasUpdate ?? false);
           setLatestVersion(data.latest ?? null);
         }
-      } catch {
-        // ignore
+      } catch (error) {
+        logWarn("[Header] 检查版本更新失败", error);
       }
     };
 
@@ -230,7 +232,8 @@ export function Header({
         // If failed, notify parent to stop
         onDetectionStop?.();
       }
-    } catch {
+    } catch (error) {
+      logWarn("[Header] 启动检测失败", error);
       update(toastId, "网络错误", "error");
       // If failed, notify parent to stop
       onDetectionStop?.();
@@ -262,7 +265,8 @@ export function Header({
       } else {
         update(toastId, data.error || "停止检测失败", "error");
       }
-    } catch {
+    } catch (error) {
+      logWarn("[Header] 停止检测失败", error);
       update(toastId, "网络错误", "error");
     } finally {
       setIsStopping(false);
@@ -282,7 +286,10 @@ export function Header({
         body: JSON.stringify(guestUploadForm),
       });
 
-      const data = await response.json().catch(() => ({}));
+      const data = await response.json().catch((error) => {
+        logWarn("[Header] 解析访客上传响应失败", error);
+        return {};
+      });
 
       if (!response.ok) {
         const message = data?.code === "MODEL_FETCH_FAILED"
@@ -300,7 +307,8 @@ export function Header({
         baseUrl: "",
         apiKey: "",
       });
-    } catch {
+    } catch (error) {
+      logWarn("[Header] 访客上传失败", error);
       const message = "上传失败，请稍后重试";
       toast(message, "error");
     } finally {

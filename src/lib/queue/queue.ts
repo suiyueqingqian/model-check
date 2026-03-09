@@ -3,6 +3,7 @@
 import { Queue } from "bullmq";
 import redis from "@/lib/redis";
 import type { DetectionJobData } from "@/lib/detection/types";
+import { createAsyncErrorHandler, logWarn } from "@/lib/utils/error";
 import { DETECTION_QUEUE_NAME, DETECTION_STOPPED_KEY, DETECTION_STOPPED_TTL, CANCELLED_MODELS_KEY, CANCELLED_MODELS_TTL, PROGRESS_BASELINE_KEY } from "./constants";
 
 const MODEL_REMAINING_PREFIX = "detection:model_remaining:";
@@ -197,6 +198,7 @@ async function scanKeys(pattern: string): Promise<string[]> {
  */
 export async function pauseAndDrainQueue(): Promise<{ cleared: number }> {
   const queue = getDetectionQueue();
+  const handleRemoveJobError = createAsyncErrorHandler("[Queue] 删除任务失败", "warn");
 
   // Set stopped flag so workers skip remaining jobs
   await redis.set(DETECTION_STOPPED_KEY, "1", "EX", DETECTION_STOPPED_TTL);
@@ -225,10 +227,10 @@ export async function pauseAndDrainQueue(): Promise<{ cleared: number }> {
           await job.moveToFailed(new Error("Detection stopped by user"), job.token, true);
         } else {
           // If no token, try to remove the job directly
-          await job.remove().catch(() => {});
+          await job.remove().catch(handleRemoveJobError);
         }
-      } catch {
-        // Job may have completed or already failed, ignore
+      } catch (error) {
+        logWarn("[Queue] 取消活动任务失败", error);
       }
     });
     await Promise.allSettled(failPromises);
@@ -293,6 +295,11 @@ export async function clearModelCancelled(modelId: string): Promise<void> {
   await redis.srem(CANCELLED_MODELS_KEY, modelId);
 }
 
+export async function clearModelsCancelled(modelIds: string[]): Promise<void> {
+  if (modelIds.length === 0) return;
+  await redis.srem(CANCELLED_MODELS_KEY, ...modelIds);
+}
+
 /**
  * Save current completed/failed counts as baseline for progress calculation
  */
@@ -328,6 +335,20 @@ export async function decrementModelRemaining(modelId: string): Promise<boolean>
   return false;
 }
 
+export async function decrementModelRemainingBy(modelId: string, count: number): Promise<boolean> {
+  if (count <= 0) {
+    return false;
+  }
+
+  const key = `${MODEL_REMAINING_PREFIX}${modelId}`;
+  const remaining = await redis.decrby(key, count);
+  if (remaining <= 0) {
+    await redis.del(key);
+    return true;
+  }
+  return false;
+}
+
 /**
  * Remove waiting/delayed jobs for specific model IDs (选择性停止)
  */
@@ -335,23 +356,46 @@ export async function removeJobsByModelIds(modelIds: string[]): Promise<number> 
   const queue = getDetectionQueue();
   const modelIdSet = new Set(modelIds);
 
-  const [waitingJobs, delayedJobs] = await Promise.all([
+  const [waitingJobs, delayedJobs, activeJobs] = await Promise.all([
     queue.getJobs(["waiting"], 0, 5000),
     queue.getJobs(["delayed"], 0, 5000),
+    queue.getJobs(["active"], 0, 1000),
   ]);
 
+  const jobsToRemove = [...waitingJobs, ...delayedJobs]
+    .filter((job) => job.data?.modelId && modelIdSet.has(job.data.modelId));
+
   const removeResults = await Promise.allSettled(
-    [...waitingJobs, ...delayedJobs]
-      .filter(job => job.data?.modelId && modelIdSet.has(job.data.modelId))
-      .map(async (job) => {
-        await job.remove();
-      })
+    jobsToRemove.map(async (job) => {
+      await job.remove();
+      return job.data.modelId;
+    })
   );
 
   const removed = removeResults.filter(r => r.status === "fulfilled").length;
 
   // Mark models as cancelled so active jobs skip DB writes
   await markModelsCancelled(modelIds);
+
+  const activeModelIdSet = new Set(
+    activeJobs
+      .map((job) => job.data?.modelId)
+      .filter((modelId): modelId is string => !!modelId && modelIdSet.has(modelId))
+  );
+
+  const removedByModel = new Map<string, number>();
+  for (const result of removeResults) {
+    if (result.status !== "fulfilled") continue;
+    const modelId = result.value;
+    removedByModel.set(modelId, (removedByModel.get(modelId) || 0) + 1);
+  }
+
+  for (const [modelId, count] of removedByModel) {
+    const isModelComplete = await decrementModelRemainingBy(modelId, count);
+    if (isModelComplete && !activeModelIdSet.has(modelId)) {
+      await clearModelCancelled(modelId);
+    }
+  }
 
   return removed;
 }

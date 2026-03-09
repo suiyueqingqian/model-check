@@ -2,7 +2,7 @@
 
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-import { randomBytes } from "crypto";
+import { randomBytes, timingSafeEqual } from "crypto";
 
 // Auto-generated JWT secret (persists for the lifetime of the process)
 let generatedJwtSecret: string | null = null;
@@ -26,7 +26,6 @@ function getJwtSecret(): string {
 const JWT_EXPIRES_IN = "7d";
 
 interface JWTPayload {
-  role: "admin";
   iat: number;
   exp: number;
 }
@@ -48,8 +47,10 @@ export async function authenticateAdmin(password: string): Promise<string | null
     // Bcrypt hash
     isValid = await bcrypt.compare(password, adminPassword);
   } else {
-    // Plain text comparison
-    isValid = password === adminPassword;
+    // 常数时间比较，防止时序攻击
+    const a = Buffer.from(password);
+    const b = Buffer.from(adminPassword);
+    isValid = a.length === b.length && timingSafeEqual(a, b);
   }
 
   if (!isValid) {
@@ -57,7 +58,7 @@ export async function authenticateAdmin(password: string): Promise<string | null
   }
 
   // Generate JWT token
-  const token = jwt.sign({ role: "admin" } as Omit<JWTPayload, "iat" | "exp">, getJwtSecret(), {
+  const token = jwt.sign({} as Omit<JWTPayload, "iat" | "exp">, getJwtSecret(), {
     expiresIn: JWT_EXPIRES_IN,
   });
 

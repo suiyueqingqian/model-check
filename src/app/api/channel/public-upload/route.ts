@@ -176,6 +176,15 @@ export async function POST(request: NextRequest) {
 
     // Validate channel by fetching OpenAI-compatible /v1/models
     const modelResult = await fetchModels(normalizedBaseUrl, apiKey);
+
+    // 二次 DNS 校验，防止 DNS rebinding（请求期间域名解析可能已变为内网 IP）
+    if (await isUnsafeBaseUrl(parsedUrl)) {
+      return NextResponse.json(
+        { error: "Base URL 不允许本地或内网地址", code: "UNSAFE_BASE_URL" },
+        { status: 400 }
+      );
+    }
+
     if (modelResult.error || modelResult.models.length === 0) {
       return NextResponse.json(
         { error: "请检查你的渠道是否可用", code: "MODEL_FETCH_FAILED" },

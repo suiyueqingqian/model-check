@@ -305,9 +305,9 @@ export async function PUT(request: NextRequest) {
       if (keyMode === "multi" && keys !== undefined && typeof keys === "string") {
         await tx.channelKey.deleteMany({ where: { channelId: id } });
         // Parse and create new keys, exclude main apiKey by value
-        const mainKey = updateData.apiKey as string | undefined;
+        const mainKey = (updateData.apiKey as string | undefined) ?? updatedChannel.apiKey;
         const keyList = keys.split(/[,\n]/).map((k: string) => k.trim()).filter(Boolean);
-        const extraKeys = mainKey ? keyList.filter((k: string) => k !== mainKey) : keyList;
+        const extraKeys = keyList.filter((k: string) => k !== mainKey);
         if (extraKeys.length > 0) {
           await tx.channelKey.createMany({
             data: extraKeys.map((k: string) => ({

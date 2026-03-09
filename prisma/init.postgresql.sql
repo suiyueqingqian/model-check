@@ -135,6 +135,30 @@ CREATE TABLE IF NOT EXISTS "model_keywords" (
   PRIMARY KEY ("id")
 );
 
+CREATE TABLE IF NOT EXISTS "proxy_request_logs" (
+  "id" TEXT NOT NULL,
+  "proxy_key_id" TEXT,
+  "channel_id" TEXT,
+  "model_id" TEXT,
+  "request_path" VARCHAR(200) NOT NULL,
+  "request_method" VARCHAR(10) NOT NULL,
+  "endpoint_type" "EndpointType",
+  "requested_model" VARCHAR(200),
+  "actual_model_name" VARCHAR(200),
+  "channel_name" VARCHAR(100),
+  "proxy_key_name" VARCHAR(100),
+  "is_stream" BOOLEAN NOT NULL DEFAULT false,
+  "success" BOOLEAN NOT NULL,
+  "status_code" INTEGER,
+  "latency" INTEGER,
+  "error_msg" TEXT,
+  "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY ("id"),
+  CONSTRAINT "proxy_request_logs_proxy_key_id_fkey" FOREIGN KEY ("proxy_key_id") REFERENCES "proxy_keys"("id") ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT "proxy_request_logs_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channels"("id") ON DELETE SET NULL ON UPDATE CASCADE,
+  CONSTRAINT "proxy_request_logs_model_id_fkey" FOREIGN KEY ("model_id") REFERENCES "models"("id") ON DELETE SET NULL ON UPDATE CASCADE
+);
+
 -- ==========================================
 -- 3. 兼容升级：逐字段补齐（已存在则跳过）
 -- ==========================================
@@ -184,6 +208,20 @@ ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "last_used_at" TIMESTAMP(3);
 ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "usage_count" INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "unified_mode" BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "allowed_unified_models" JSONB;
+
+-- proxy_request_logs: 后加的字段
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "proxy_key_id" TEXT;
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "channel_id" TEXT;
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "model_id" TEXT;
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "endpoint_type" "EndpointType";
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "requested_model" VARCHAR(200);
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "actual_model_name" VARCHAR(200);
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "channel_name" VARCHAR(100);
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "proxy_key_name" VARCHAR(100);
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "is_stream" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "status_code" INTEGER;
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "latency" INTEGER;
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "error_msg" TEXT;
 
 -- 默认内置代理 key 初始化
 -- 从 app.proxy_api_key 读取；为空时跳过
@@ -287,6 +325,36 @@ DO $$ BEGIN
     UNIQUE NULLS NOT DISTINCT ("channel_id", "model_name", "channel_key_id");
 END $$;
 
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'proxy_request_logs_proxy_key_id_fkey'
+  ) THEN
+    ALTER TABLE "proxy_request_logs"
+      ADD CONSTRAINT "proxy_request_logs_proxy_key_id_fkey"
+      FOREIGN KEY ("proxy_key_id") REFERENCES "proxy_keys"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'proxy_request_logs_channel_id_fkey'
+  ) THEN
+    ALTER TABLE "proxy_request_logs"
+      ADD CONSTRAINT "proxy_request_logs_channel_id_fkey"
+      FOREIGN KEY ("channel_id") REFERENCES "channels"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'proxy_request_logs_model_id_fkey'
+  ) THEN
+    ALTER TABLE "proxy_request_logs"
+      ADD CONSTRAINT "proxy_request_logs_model_id_fkey"
+      FOREIGN KEY ("model_id") REFERENCES "models"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
+
 -- ==========================================
 -- 5. 索引（已存在则跳过）
 -- ==========================================
@@ -297,3 +365,11 @@ CREATE INDEX IF NOT EXISTS "channel_keys_channel_id_idx" ON "channel_keys"("chan
 CREATE INDEX IF NOT EXISTS "models_channel_key_id_idx" ON "models"("channel_key_id");
 CREATE UNIQUE INDEX IF NOT EXISTS "channels_name_key" ON "channels"("name");
 CREATE UNIQUE INDEX IF NOT EXISTS "model_keywords_keyword_key" ON "model_keywords"("keyword");
+
+CREATE INDEX IF NOT EXISTS "proxy_request_logs_created_at_idx" ON "proxy_request_logs"("created_at");
+CREATE INDEX IF NOT EXISTS "proxy_request_logs_success_created_at_idx" ON "proxy_request_logs"("success", "created_at");
+CREATE INDEX IF NOT EXISTS "proxy_request_logs_endpoint_type_created_at_idx" ON "proxy_request_logs"("endpoint_type", "created_at");
+CREATE INDEX IF NOT EXISTS "proxy_request_logs_requested_model_created_at_idx" ON "proxy_request_logs"("requested_model", "created_at");
+CREATE INDEX IF NOT EXISTS "proxy_request_logs_channel_id_created_at_idx" ON "proxy_request_logs"("channel_id", "created_at");
+CREATE INDEX IF NOT EXISTS "proxy_request_logs_proxy_key_id_created_at_idx" ON "proxy_request_logs"("proxy_key_id", "created_at");
+CREATE INDEX IF NOT EXISTS "proxy_request_logs_model_id_created_at_idx" ON "proxy_request_logs"("model_id", "created_at");

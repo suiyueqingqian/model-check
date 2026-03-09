@@ -1,5 +1,6 @@
 import Redis from "ioredis";
 import { EventEmitter } from "events";
+import { createAsyncErrorHandler } from "@/lib/utils/error";
 
 const globalForRedis = globalThis as unknown as {
   redis: Redis | undefined;
@@ -12,7 +13,9 @@ const globalForRedis = globalThis as unknown as {
 function attachErrorHandler(client: Redis) {
   client.on("error", (err) => {
     if ((err as NodeJS.ErrnoException).code === "ECONNREFUSED") {
+      console.error("[Redis] 连接被拒绝:", err.message);
     } else {
+      console.error("[Redis] 错误:", err.message);
     }
   });
 }
@@ -64,6 +67,10 @@ function createPubSubManager(): PubSubManager {
   let subscriber: Redis | null = globalForRedis.pubsubSubscriber ?? null;
   let isSubscriberConnected = globalForRedis.pubsubConnected ?? false;
   let subscriberPromise: Promise<Redis> | null = null;
+  const handleReconnectError = createAsyncErrorHandler("[Redis] 订阅连接重连失败", "warn");
+  const handleSubscribeError = createAsyncErrorHandler("[Redis] 订阅频道失败", "warn");
+  const handleEnsureSubscriberError = createAsyncErrorHandler("[Redis] 初始化订阅连接失败", "warn");
+  const handleUnsubscribeError = createAsyncErrorHandler("[Redis] 取消订阅频道失败", "warn");
 
   // Store in global immediately
   globalForRedis.pubsubEmitter = emitter;
@@ -104,7 +111,7 @@ function createPubSubManager(): PubSubManager {
         // 延迟触发重连
         setTimeout(() => {
           if (!isSubscriberConnected && !subscriberPromise) {
-            ensureSubscriber().catch(() => {});
+            ensureSubscriber().catch(handleReconnectError);
           }
         }, 3000);
       });
@@ -145,11 +152,9 @@ function createPubSubManager(): PubSubManager {
       ensureSubscriber().then((sub) => {
         if (wasNew) {
           sub.subscribe(channel)
-            .catch(() => {
-            });
+            .catch(handleSubscribeError);
         }
-      }).catch(() => {
-      });
+      }).catch(handleEnsureSubscriberError);
 
       // Return unsubscribe function
       return () => {
@@ -158,7 +163,7 @@ function createPubSubManager(): PubSubManager {
         if (emitter.listenerCount(eventName) === 0) {
           subscribedChannels.delete(channel);
           if (subscriber && isSubscriberConnected) {
-            subscriber.unsubscribe(channel).catch(() => {});
+            subscriber.unsubscribe(channel).catch(handleUnsubscribeError);
           }
         }
       };

@@ -33,7 +33,9 @@ describe("Authentication", () => {
 
       const payload = verifyToken(token!);
       expect(payload).toBeTruthy();
-      expect(payload?.role).toBe("admin");
+      expect(typeof payload?.iat).toBe("number");
+      expect(typeof payload?.exp).toBe("number");
+      expect((payload?.exp ?? 0) > (payload?.iat ?? 0)).toBe(true);
     });
 
     it("should return null for invalid token", () => {

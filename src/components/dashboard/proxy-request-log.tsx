@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Loader2, Search } from "lucide-react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { cn } from "@/lib/utils";
@@ -92,6 +92,7 @@ export function ProxyRequestLog({
 }: ProxyRequestLogProps) {
   const { isAuthenticated, token } = useAuth();
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [endpointType, setEndpointType] = useState("all");
   const [status, setStatus] = useState("all");
   const [page, setPage] = useState(1);
@@ -100,6 +101,16 @@ export function ProxyRequestLog({
   const [data, setData] = useState<ProxyRequestLogResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+  // 搜索防抖
+  useEffect(() => {
+    debounceRef.current = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 400);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [search]);
 
   const fetchLogs = useCallback(async (
     nextPage: number,
@@ -155,29 +166,24 @@ export function ProxyRequestLog({
     }
   }, [token]);
 
+  // 自动刷新（首次加载 + 定时刷新合并）
   useEffect(() => {
-    if (!isAuthenticated || !token) {
-      return;
-    }
+    if (!isAuthenticated || !token) return;
 
-    fetchLogs(page, pageSize, search, endpointType, status);
-  }, [isAuthenticated, token, page, pageSize, search, endpointType, status, refreshKey, fetchLogs]);
+    // 首次立即加载
+    fetchLogs(page, pageSize, debouncedSearch, endpointType, status);
 
-  useEffect(() => {
-    if (!isAuthenticated || !token) {
-      return;
-    }
-
+    // 定时自动刷新
     const timer = setInterval(() => {
-      void fetchLogs(page, pageSize, search, endpointType, status, true);
+      void fetchLogs(page, pageSize, debouncedSearch, endpointType, status, true);
     }, AUTO_REFRESH_MS);
 
     return () => clearInterval(timer);
-  }, [isAuthenticated, token, page, pageSize, search, endpointType, status, fetchLogs]);
+  }, [isAuthenticated, token, page, pageSize, debouncedSearch, endpointType, status, refreshKey, fetchLogs]);
 
   useEffect(() => {
     setExpandedId(null);
-  }, [page, pageSize, search, endpointType, status]);
+  }, [page, pageSize, debouncedSearch, endpointType, status]);
 
   if (!isAuthenticated) {
     return (
@@ -213,7 +219,6 @@ export function ProxyRequestLog({
             <input
               value={search}
               onChange={(e) => {
-                setPage(1);
                 setSearch(e.target.value);
               }}
               placeholder="搜模型、渠道、路径、错误"

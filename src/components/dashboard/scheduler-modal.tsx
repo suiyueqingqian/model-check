@@ -282,6 +282,14 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
   const [minDelayMs, setMinDelayMs] = useState(3000);
   const [maxDelayMs, setMaxDelayMs] = useState(5000);
 
+  // ESC 关闭
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handleEsc);
+    return () => document.removeEventListener("keydown", handleEsc);
+  }, [isOpen, onClose]);
+
   // Load config on open
   useEffect(() => {
     if (!isOpen || !token) return;

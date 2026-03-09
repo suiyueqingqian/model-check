@@ -9,6 +9,7 @@ import {
   getQueueStats,
   getTestingModelIds,
   clearStoppedFlag,
+  clearModelsCancelled,
   isQueueRunning,
   saveProgressBaseline,
   getProgressBaseline,
@@ -201,7 +202,8 @@ export async function triggerChannelDetection(
   jobIds: string[];
 }> {
 
-  // 单渠道检测不清除全局 stopped 标志，避免影响正在进行的全量检测
+  // 清理上一次停止留下的全局标记，避免新任务被 worker 直接跳过
+  await clearStoppedFlag();
   await saveProgressBaseline();
 
   const channel = await prisma.channel.findUnique({
@@ -230,6 +232,8 @@ export async function triggerChannelDetection(
   const modelsToTest = modelIds
     ? channel.models.filter((m) => modelIds.includes(m.id))
     : channel.models;
+
+  await clearModelsCancelled(modelsToTest.map((m) => m.id));
 
   // Reset models status to "untested" state before detection
   if (modelsToTest.length > 0) {
@@ -263,7 +267,8 @@ export async function triggerModelDetection(modelId: string): Promise<{
   jobIds: string[];
 }> {
 
-  // 单模型检测不清除全局 stopped 标志，避免影响正在进行的全量检测
+  // 清理上一次停止留下的全局标记，避免新任务被 worker 直接跳过
+  await clearStoppedFlag();
   await saveProgressBaseline();
 
   const model = await prisma.model.findUnique({
@@ -278,6 +283,8 @@ export async function triggerModelDetection(modelId: string): Promise<{
   if (!model.channel.enabled) {
     throw new Error(`Channel is disabled: ${model.channel.id}`);
   }
+
+  await clearModelsCancelled([model.id]);
 
   // Reset model status to "untested" state before detection
   await prisma.model.update({

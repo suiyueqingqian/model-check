@@ -87,7 +87,10 @@ export async function POST(request: NextRequest) {
 }
 
 // GET /api/detect - Get detection progress
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authError = requireAuth(request);
+  if (authError) return authError;
+
   try {
     const progress = await getDetectionProgress();
     return NextResponse.json(progress);

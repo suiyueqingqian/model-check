@@ -19,6 +19,7 @@ import {
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
+import { isAbortError, logWarn } from "@/lib/utils/error";
 
 interface Keyword {
   id: string;
@@ -83,7 +84,10 @@ export function ModelFilterModal({
           const data = await res.json();
           setKeywords(data.keywords || []);
         }
-      } catch { /* ignore */ }
+      } catch (error) {
+        if (isAbortError(error)) return;
+        logWarn("[ModelFilter] 获取关键词失败", error);
+      }
     })();
     return () => controller.abort();
   }, [token]);
@@ -187,8 +191,7 @@ export function ModelFilterModal({
     const controller = new AbortController();
     fetchModels(controller.signal);
     return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, fetchModels]);
 
   // Filter logic
   const enabledKeywords = useMemo(
@@ -335,7 +338,8 @@ export function ModelFilterModal({
         setKeywords(data.keywords || []);
       }
       setSearchText("");
-    } catch {
+    } catch (error) {
+      logWarn("[ModelFilter] 添加关键词失败", error);
       toast("添加失败", "error");
     } finally {
       setAdding(false);
@@ -346,7 +350,8 @@ export function ModelFilterModal({
     try {
       await fetch(`/api/model-keywords?id=${id}`, { method: "DELETE", headers });
       setKeywords((prev) => prev.filter((k) => k.id !== id));
-    } catch {
+    } catch (error) {
+      logWarn("[ModelFilter] 删除关键词失败", error);
       toast("删除失败", "error");
     }
   };
@@ -360,7 +365,8 @@ export function ModelFilterModal({
         body: JSON.stringify({ id, enabled }),
       });
       if (!res.ok) throw new Error();
-    } catch {
+    } catch (error) {
+      logWarn("[ModelFilter] 切换关键词状态失败", error);
       setKeywords((prev) => prev.map((k) => (k.id === id ? { ...k, enabled: !enabled } : k)));
       toast("更新失败", "error");
     }
@@ -377,7 +383,8 @@ export function ModelFilterModal({
         body: JSON.stringify({ enabled }),
       });
       if (!res.ok) throw new Error();
-    } catch {
+    } catch (error) {
+      logWarn("[ModelFilter] 批量切换关键词失败", error);
       setKeywords(previous);
       toast("批量更新失败", "error");
     } finally {
@@ -399,7 +406,8 @@ export function ModelFilterModal({
           })
         )
       );
-    } catch {
+    } catch (error) {
+      logWarn("[ModelFilter] 反转关键词状态失败", error);
       setKeywords(previous);
       toast("更新失败", "error");
     }
@@ -416,7 +424,8 @@ export function ModelFilterModal({
       if (!res.ok) throw new Error();
       setKeywords((prev) => prev.map((k) => (k.id === id ? { ...k, keyword: editValue.trim() } : k)));
       setEditingId(null);
-    } catch {
+    } catch (error) {
+      logWarn("[ModelFilter] 保存关键词失败", error);
       toast("更新失败", "error");
     }
   };

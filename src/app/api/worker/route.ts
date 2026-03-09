@@ -5,7 +5,10 @@ import { requireAuth } from "@/lib/middleware/auth";
 import { startWorker, stopWorker, isWorkerRunning } from "@/lib/queue/worker";
 
 // GET /api/worker - Get worker status
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authError = requireAuth(request);
+  if (authError) return authError;
+
   return NextResponse.json({
     running: isWorkerRunning(),
     timestamp: new Date().toISOString(),

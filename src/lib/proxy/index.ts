@@ -3,7 +3,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { redis } from "@/lib/redis";
 import { proxyFetch } from "@/lib/utils/proxy-fetch";
+import { createAsyncErrorHandler, isExpectedCloseError, logWarn } from "@/lib/utils/error";
 import {
   BUILTIN_PROXY_KEY_DB_ID,
   getProxyApiKey,
@@ -13,20 +15,46 @@ import {
 } from "@/lib/utils/proxy-key";
 import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 
-// Round-robin counter per channel (auto-clears when too many stale keys accumulate)
-// TODO: 轮询计数器存储在进程内 Map 中，多实例部署时需迁移到 Redis
+// Round-robin counter: 优先使用 Redis INCR（多实例安全），无 Redis 时退回内存 Map
 const roundRobinCounters = new Map<string, number>();
 const ROUND_ROBIN_MAX_KEYS = 10000;
+const ROUND_ROBIN_REDIS_PREFIX = "rr:";
+const ROUND_ROBIN_REDIS_TTL = 3600;
+let hasLoggedRoundRobinRedisFallback = false;
 
 function evictRoundRobinCounters(): void {
   if (roundRobinCounters.size < ROUND_ROBIN_MAX_KEYS) return;
-  // Map 按插入顺序迭代，淘汰前半部分（最旧的）
   const evictCount = Math.floor(roundRobinCounters.size / 2);
   let i = 0;
   for (const key of roundRobinCounters.keys()) {
     if (i++ >= evictCount) break;
     roundRobinCounters.delete(key);
   }
+}
+
+async function nextRoundRobin(counterKey: string): Promise<number> {
+  if (redis) {
+    try {
+      const redisKey = `${ROUND_ROBIN_REDIS_PREFIX}${counterKey}`;
+      const val = await redis.incr(redisKey);
+      if (val === 1) {
+        await redis.expire(redisKey, ROUND_ROBIN_REDIS_TTL)
+          .catch(createAsyncErrorHandler("[Proxy] 设置轮询计数过期时间失败", "warn"));
+      }
+      return val - 1;
+    } catch (error) {
+      if (!hasLoggedRoundRobinRedisFallback) {
+        hasLoggedRoundRobinRedisFallback = true;
+        logWarn("[Proxy] Redis 轮询计数不可用，已退回内存模式", error);
+      }
+    }
+  }
+  if (roundRobinCounters.size >= ROUND_ROBIN_MAX_KEYS) {
+    evictRoundRobinCounters();
+  }
+  const current = roundRobinCounters.get(counterKey) || 0;
+  roundRobinCounters.set(counterKey, current + 1);
+  return current;
 }
 
 /**
@@ -377,12 +405,8 @@ export async function findChannelByModel(modelName: string, preferredEndpoint?: 
     } else {
       // round_robin
       const counterKey = `${channel.id}:${actualModelName}`;
-      if (roundRobinCounters.size >= ROUND_ROBIN_MAX_KEYS) {
-        evictRoundRobinCounters();
-      }
-      const current = roundRobinCounters.get(counterKey) || 0;
+      const current = await nextRoundRobin(counterKey);
       selected = sameChannelModels[current % sameChannelModels.length];
-      roundRobinCounters.set(counterKey, (current + 1) % sameChannelModels.length);
     }
   } else {
     selected = sameChannelModels[0];
@@ -525,12 +549,8 @@ async function getUnifiedModelCandidates(
         balancedModels.push(group[Math.floor(Math.random() * group.length)]);
       } else {
         const rrKey = `unified:${channelId}:${modelName}`;
-        if (roundRobinCounters.size >= ROUND_ROBIN_MAX_KEYS) {
-          evictRoundRobinCounters();
-        }
-        const idx = (roundRobinCounters.get(rrKey) || 0) % group.length;
-        roundRobinCounters.set(rrKey, idx + 1);
-        balancedModels.push(group[idx]);
+        const idx = await nextRoundRobin(rrKey);
+        balancedModels.push(group[idx % group.length]);
       }
     }
   }
@@ -551,23 +571,18 @@ async function getUnifiedModelCandidates(
   }));
 }
 
-function orderUnifiedCandidatesRoundRobin(
+async function orderUnifiedCandidatesRoundRobin(
   modelName: string,
   preferredEndpoint: string | undefined,
   candidates: ProxyChannelCandidate[]
-): ProxyChannelCandidate[] {
+): Promise<ProxyChannelCandidate[]> {
   if (candidates.length <= 1) {
     return candidates;
   }
 
   const counterKey = `unified:${preferredEndpoint || "ANY"}:${modelName}`;
-  if (roundRobinCounters.size >= ROUND_ROBIN_MAX_KEYS) {
-    evictRoundRobinCounters();
-  }
-
-  const current = roundRobinCounters.get(counterKey) || 0;
+  const current = await nextRoundRobin(counterKey);
   const startIndex = current % candidates.length;
-  roundRobinCounters.set(counterKey, (current + 1) % candidates.length);
 
   return [
     ...candidates.slice(startIndex),
@@ -585,7 +600,7 @@ async function findChannelByUnifiedModel(
     return null;
   }
 
-  return orderUnifiedCandidatesRoundRobin(modelName, preferredEndpoint, candidates)[0];
+  return (await orderUnifiedCandidatesRoundRobin(modelName, preferredEndpoint, candidates))[0];
 }
 
 /**
@@ -636,7 +651,7 @@ export async function getProxyChannelCandidatesWithPermission(
     const candidates = await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint);
     return {
       isUnifiedRouting: true,
-      candidates: orderUnifiedCandidatesRoundRobin(modelName, preferredEndpoint, candidates),
+      candidates: await orderUnifiedCandidatesRoundRobin(modelName, preferredEndpoint, candidates),
     };
   }
 
@@ -925,6 +940,7 @@ export async function proxyRequest(
 
   try {
     if (effectiveProxy) {
+      // 使用代理发送请求
     }
 
     const response = await proxyFetch(
@@ -1004,8 +1020,10 @@ export function streamResponse(
     callbacks?.onError?.(error);
     try {
       controller.error(error);
-    } catch {
-      // controller already closed or errored
+    } catch (controllerError) {
+      if (!isExpectedCloseError(controllerError)) {
+        logWarn("[Proxy] 写入流错误失败", controllerError);
+      }
     }
   };
 
@@ -1019,7 +1037,7 @@ export function streamResponse(
         idleTimer = setTimeout(() => {
           const err = new Error("Stream idle timeout (60s no data)");
           failStream(controller, err);
-          reader.cancel().catch(() => {});
+          reader.cancel().catch(createAsyncErrorHandler("[Proxy] 取消空闲流失败", "warn"));
         }, IDLE_TIMEOUT_MS);
       };
 

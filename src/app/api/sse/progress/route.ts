@@ -4,6 +4,7 @@
 import { NextRequest } from "next/server";
 import { pubsubManager } from "@/lib/redis";
 import { PROGRESS_CHANNEL } from "@/lib/queue/constants";
+import { logError, logWarn } from "@/lib/utils/error";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -47,10 +48,12 @@ export async function GET(request: NextRequest) {
             controller.enqueue(
               encoder.encode(`data: ${JSON.stringify({ type: "progress", ...data })}\n\n`)
             );
-          } catch {
+          } catch (error) {
+            logWarn("[SSE] 解析进度消息失败", error);
           }
         });
-      } catch {
+      } catch (error) {
+        logError("[SSE] 订阅进度频道失败", error);
         controller.enqueue(
           encoder.encode(`data: ${JSON.stringify({ type: "error", message: "Failed to subscribe" })}\n\n`)
         );

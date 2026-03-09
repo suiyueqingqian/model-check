@@ -92,7 +92,7 @@ export function Dashboard({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-  const { isAuthenticated, token } = useAuth();
+  const { isAuthenticated, token, authFetch } = useAuth();
   const { toast, update } = useToast();
 
   const fetchData = useCallback(async (
@@ -103,12 +103,6 @@ export function Dashboard({
     status: StatusFilter = "all"
   ) => {
     try {
-      const token = localStorage.getItem("auth_token");
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      }
-
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(PAGE_SIZE),
@@ -125,7 +119,7 @@ export function Dashboard({
         params.set("statusFilter", status);
       }
 
-      const response = await fetch(`/api/dashboard?${params}`, { headers, signal });
+      const response = await authFetch(`/api/dashboard?${params}`, { signal });
       if (!response.ok) {
         throw new Error("获取数据失败");
       }
@@ -149,7 +143,7 @@ export function Dashboard({
         setLoading(false);
       }
     }
-  }, []);
+  }, [authFetch]);
 
   // Delete channel handler
   const handleDeleteChannel = useCallback(async (channelId: string) => {
@@ -256,6 +250,10 @@ export function Dashboard({
 
   const { pagination } = data;
   const totalPages = pagination?.totalPages || 1;
+  const hasActiveFilters =
+    search.trim().length > 0 ||
+    endpointFilter !== "all" ||
+    statusFilter !== "all";
 
   return (
     <div className="space-y-6">
@@ -271,7 +269,7 @@ export function Dashboard({
       {/* Channels List */}
       {sortedChannels.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
-          {data.channels.length === 0 ? "暂无渠道配置" : "没有匹配的结果"}
+          {hasActiveFilters ? "没有匹配的结果" : "暂无渠道配置"}
         </div>
       ) : (
         <div className="grid gap-4">

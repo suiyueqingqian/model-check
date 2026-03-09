@@ -16,6 +16,7 @@ import {
   normalizeBaseUrl,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
+import { createAsyncErrorHandler } from "@/lib/utils/error";
 
 type ProxyAttemptFailure = {
   modelId: string;
@@ -40,6 +41,8 @@ export async function POST(
   try {
     const requestPath = request.nextUrl?.pathname ?? new URL(request.url).pathname;
     const requestMethod = request.method;
+    const handleWriteRequestLogError = createAsyncErrorHandler("[GeminiProxy] 写请求日志失败", "warn");
+    const handleRecordModelResultError = createAsyncErrorHandler("[GeminiProxy] 记录模型结果失败", "warn");
     const writeRequestLog = (options: {
       requestedModel?: string | null;
       actualModelName?: string | null;
@@ -57,7 +60,10 @@ export async function POST(
       requestMethod,
       endpointType: "GEMINI",
       ...options,
-    }).catch(() => {});
+    }).catch(handleWriteRequestLogError);
+    const recordModelResult = (
+      ...args: Parameters<typeof recordProxyModelResult>
+    ) => recordProxyModelResult(...args).catch(handleRecordModelResultError);
 
     // Reconstruct the path from catch-all segments
     const { path } = await params;
@@ -178,11 +184,11 @@ export async function POST(
           if (isUnifiedRouting && channel.modelId) {
             return streamResponse(response, {
               onComplete: () => Promise.all([
-                recordProxyModelResult(channel.modelId!, "GEMINI", true, {
+                recordModelResult(channel.modelId!, "GEMINI", true, {
                   latency,
                   statusCode: response.status,
                   responseContent: "代理流式请求成功",
-                }).catch(() => {}),
+                }),
                 writeRequestLog({
                   requestedModel: modelName,
                   actualModelName: channel.actualModelName,
@@ -196,11 +202,11 @@ export async function POST(
                 }),
               ]).then(() => {}),
               onError: () => Promise.all([
-                recordProxyModelResult(channel.modelId!, "GEMINI", false, {
+                recordModelResult(channel.modelId!, "GEMINI", false, {
                   latency,
                   statusCode: 502,
                   errorMsg: "流式传输中断",
-                }).catch(() => {}),
+                }),
                 writeRequestLog({
                   requestedModel: modelName,
                   actualModelName: channel.actualModelName,
@@ -247,11 +253,11 @@ export async function POST(
         const data = await response.json();
 
         if (isUnifiedRouting && channel.modelId) {
-          await recordProxyModelResult(channel.modelId, "GEMINI", true, {
+          await recordModelResult(channel.modelId, "GEMINI", true, {
             latency,
             statusCode: response.status,
             responseContent: "代理请求成功",
-          }).catch(() => {});
+          });
         }
 
         await writeRequestLog({
@@ -298,11 +304,11 @@ export async function POST(
     if (isUnifiedRouting && pendingFailures.length > 0) {
       await Promise.all(
         pendingFailures.map((failure) =>
-          recordProxyModelResult(failure.modelId, "GEMINI", false, {
+          recordModelResult(failure.modelId, "GEMINI", false, {
             latency: failure.latency,
             statusCode: failure.statusCode,
             errorMsg: failure.errorMsg,
-          }).catch(() => {})
+          })
         )
       );
     }
@@ -339,6 +345,8 @@ export async function GET(
   try {
     const requestPath = request.nextUrl?.pathname ?? new URL(request.url).pathname;
     const requestMethod = request.method;
+    const handleWriteRequestLogError = createAsyncErrorHandler("[GeminiProxy] 写请求日志失败", "warn");
+    const handleRecordModelResultError = createAsyncErrorHandler("[GeminiProxy] 记录模型结果失败", "warn");
     const writeRequestLog = (options: {
       requestedModel?: string | null;
       actualModelName?: string | null;
@@ -355,7 +363,10 @@ export async function GET(
       requestMethod,
       endpointType: "GEMINI",
       ...options,
-    }).catch(() => {});
+    }).catch(handleWriteRequestLogError);
+    const recordModelResult = (
+      ...args: Parameters<typeof recordProxyModelResult>
+    ) => recordProxyModelResult(...args).catch(handleRecordModelResultError);
 
     const { path } = await params;
     const modelName = path.join("/");
@@ -451,11 +462,11 @@ export async function GET(
         const data = await response.json();
 
         if (isUnifiedRouting && channel.modelId) {
-          await recordProxyModelResult(channel.modelId, "GEMINI", true, {
+          await recordModelResult(channel.modelId, "GEMINI", true, {
             latency,
             statusCode: response.status,
             responseContent: "代理请求成功",
-          }).catch(() => {});
+          });
         }
 
         await writeRequestLog({
@@ -501,11 +512,11 @@ export async function GET(
     if (isUnifiedRouting && pendingFailures.length > 0) {
       await Promise.all(
         pendingFailures.map((failure) =>
-          recordProxyModelResult(failure.modelId, "GEMINI", false, {
+          recordModelResult(failure.modelId, "GEMINI", false, {
             latency: failure.latency,
             statusCode: failure.statusCode,
             errorMsg: failure.errorMsg,
-          }).catch(() => {})
+          })
         )
       );
     }

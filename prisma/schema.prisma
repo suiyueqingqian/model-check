@@ -131,6 +131,8 @@ model ProxyRequestLog {
   @@index([endpointType, createdAt])
   @@index([requestedModel, createdAt])
   @@index([channelId, createdAt])
+  @@index([proxyKeyId, createdAt])
+  @@index([modelId, createdAt])
   @@map("proxy_request_logs")
 }
 
