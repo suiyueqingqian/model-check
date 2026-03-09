@@ -56,6 +56,7 @@ export const ModelName = {
   CheckLog: 'CheckLog',
   SchedulerConfig: 'SchedulerConfig',
   ProxyKey: 'ProxyKey',
+  ProxyRequestLog: 'ProxyRequestLog',
   ChannelKey: 'ChannelKey',
   ModelKeyword: 'ModelKeyword'
 } as const
@@ -160,6 +161,29 @@ export const ProxyKeyScalarFieldEnum = {
 } as const
 
 export type ProxyKeyScalarFieldEnum = (typeof ProxyKeyScalarFieldEnum)[keyof typeof ProxyKeyScalarFieldEnum]
+
+
+export const ProxyRequestLogScalarFieldEnum = {
+  id: 'id',
+  proxyKeyId: 'proxyKeyId',
+  channelId: 'channelId',
+  modelId: 'modelId',
+  requestPath: 'requestPath',
+  requestMethod: 'requestMethod',
+  endpointType: 'endpointType',
+  requestedModel: 'requestedModel',
+  actualModelName: 'actualModelName',
+  channelName: 'channelName',
+  proxyKeyName: 'proxyKeyName',
+  isStream: 'isStream',
+  success: 'success',
+  statusCode: 'statusCode',
+  latency: 'latency',
+  errorMsg: 'errorMsg',
+  createdAt: 'createdAt'
+} as const
+
+export type ProxyRequestLogScalarFieldEnum = (typeof ProxyRequestLogScalarFieldEnum)[keyof typeof ProxyRequestLogScalarFieldEnum]
 
 
 export const ChannelKeyScalarFieldEnum = {

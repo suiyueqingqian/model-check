@@ -268,6 +268,7 @@ export type ProxyKeyWhereInput = {
   usageCount?: Prisma.IntFilter<"ProxyKey"> | number
   createdAt?: Prisma.DateTimeFilter<"ProxyKey"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"ProxyKey"> | Date | string
+  proxyRequestLogs?: Prisma.ProxyRequestLogListRelationFilter
 }
 
 export type ProxyKeyOrderByWithRelationInput = {
@@ -284,6 +285,7 @@ export type ProxyKeyOrderByWithRelationInput = {
   usageCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+  proxyRequestLogs?: Prisma.ProxyRequestLogOrderByRelationAggregateInput
 }
 
 export type ProxyKeyWhereUniqueInput = Prisma.AtLeast<{
@@ -303,6 +305,7 @@ export type ProxyKeyWhereUniqueInput = Prisma.AtLeast<{
   usageCount?: Prisma.IntFilter<"ProxyKey"> | number
   createdAt?: Prisma.DateTimeFilter<"ProxyKey"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"ProxyKey"> | Date | string
+  proxyRequestLogs?: Prisma.ProxyRequestLogListRelationFilter
 }, "id" | "key">
 
 export type ProxyKeyOrderByWithAggregationInput = {
@@ -359,6 +362,7 @@ export type ProxyKeyCreateInput = {
   usageCount?: number
   createdAt?: Date | string
   updatedAt?: Date | string
+  proxyRequestLogs?: Prisma.ProxyRequestLogCreateNestedManyWithoutProxyKeyInput
 }
 
 export type ProxyKeyUncheckedCreateInput = {
@@ -375,6 +379,7 @@ export type ProxyKeyUncheckedCreateInput = {
   usageCount?: number
   createdAt?: Date | string
   updatedAt?: Date | string
+  proxyRequestLogs?: Prisma.ProxyRequestLogUncheckedCreateNestedManyWithoutProxyKeyInput
 }
 
 export type ProxyKeyUpdateInput = {
@@ -391,6 +396,7 @@ export type ProxyKeyUpdateInput = {
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  proxyRequestLogs?: Prisma.ProxyRequestLogUpdateManyWithoutProxyKeyNestedInput
 }
 
 export type ProxyKeyUncheckedUpdateInput = {
@@ -407,6 +413,7 @@ export type ProxyKeyUncheckedUpdateInput = {
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  proxyRequestLogs?: Prisma.ProxyRequestLogUncheckedUpdateManyWithoutProxyKeyNestedInput
 }
 
 export type ProxyKeyCreateManyInput = {
@@ -507,6 +514,136 @@ export type ProxyKeySumOrderByAggregateInput = {
   usageCount?: Prisma.SortOrder
 }
 
+export type ProxyKeyNullableScalarRelationFilter = {
+  is?: Prisma.ProxyKeyWhereInput | null
+  isNot?: Prisma.ProxyKeyWhereInput | null
+}
+
+export type ProxyKeyCreateNestedOneWithoutProxyRequestLogsInput = {
+  create?: Prisma.XOR<Prisma.ProxyKeyCreateWithoutProxyRequestLogsInput, Prisma.ProxyKeyUncheckedCreateWithoutProxyRequestLogsInput>
+  connectOrCreate?: Prisma.ProxyKeyCreateOrConnectWithoutProxyRequestLogsInput
+  connect?: Prisma.ProxyKeyWhereUniqueInput
+}
+
+export type ProxyKeyUpdateOneWithoutProxyRequestLogsNestedInput = {
+  create?: Prisma.XOR<Prisma.ProxyKeyCreateWithoutProxyRequestLogsInput, Prisma.ProxyKeyUncheckedCreateWithoutProxyRequestLogsInput>
+  connectOrCreate?: Prisma.ProxyKeyCreateOrConnectWithoutProxyRequestLogsInput
+  upsert?: Prisma.ProxyKeyUpsertWithoutProxyRequestLogsInput
+  disconnect?: Prisma.ProxyKeyWhereInput | boolean
+  delete?: Prisma.ProxyKeyWhereInput | boolean
+  connect?: Prisma.ProxyKeyWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.ProxyKeyUpdateToOneWithWhereWithoutProxyRequestLogsInput, Prisma.ProxyKeyUpdateWithoutProxyRequestLogsInput>, Prisma.ProxyKeyUncheckedUpdateWithoutProxyRequestLogsInput>
+}
+
+export type ProxyKeyCreateWithoutProxyRequestLogsInput = {
+  id?: string
+  name: string
+  key: string
+  enabled?: boolean
+  allowAllModels?: boolean
+  allowedChannelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  unifiedMode?: boolean
+  allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  lastUsedAt?: Date | string | null
+  usageCount?: number
+  createdAt?: Date | string
+  updatedAt?: Date | string
+}
+
+export type ProxyKeyUncheckedCreateWithoutProxyRequestLogsInput = {
+  id?: string
+  name: string
+  key: string
+  enabled?: boolean
+  allowAllModels?: boolean
+  allowedChannelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  unifiedMode?: boolean
+  allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  lastUsedAt?: Date | string | null
+  usageCount?: number
+  createdAt?: Date | string
+  updatedAt?: Date | string
+}
+
+export type ProxyKeyCreateOrConnectWithoutProxyRequestLogsInput = {
+  where: Prisma.ProxyKeyWhereUniqueInput
+  create: Prisma.XOR<Prisma.ProxyKeyCreateWithoutProxyRequestLogsInput, Prisma.ProxyKeyUncheckedCreateWithoutProxyRequestLogsInput>
+}
+
+export type ProxyKeyUpsertWithoutProxyRequestLogsInput = {
+  update: Prisma.XOR<Prisma.ProxyKeyUpdateWithoutProxyRequestLogsInput, Prisma.ProxyKeyUncheckedUpdateWithoutProxyRequestLogsInput>
+  create: Prisma.XOR<Prisma.ProxyKeyCreateWithoutProxyRequestLogsInput, Prisma.ProxyKeyUncheckedCreateWithoutProxyRequestLogsInput>
+  where?: Prisma.ProxyKeyWhereInput
+}
+
+export type ProxyKeyUpdateToOneWithWhereWithoutProxyRequestLogsInput = {
+  where?: Prisma.ProxyKeyWhereInput
+  data: Prisma.XOR<Prisma.ProxyKeyUpdateWithoutProxyRequestLogsInput, Prisma.ProxyKeyUncheckedUpdateWithoutProxyRequestLogsInput>
+}
+
+export type ProxyKeyUpdateWithoutProxyRequestLogsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  key?: Prisma.StringFieldUpdateOperationsInput | string
+  enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  allowAllModels?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  allowedChannelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  usageCount?: Prisma.IntFieldUpdateOperationsInput | number
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+}
+
+export type ProxyKeyUncheckedUpdateWithoutProxyRequestLogsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  key?: Prisma.StringFieldUpdateOperationsInput | string
+  enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  allowAllModels?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  allowedChannelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  usageCount?: Prisma.IntFieldUpdateOperationsInput | number
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+}
+
+
+/**
+ * Count Type ProxyKeyCountOutputType
+ */
+
+export type ProxyKeyCountOutputType = {
+  proxyRequestLogs: number
+}
+
+export type ProxyKeyCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  proxyRequestLogs?: boolean | ProxyKeyCountOutputTypeCountProxyRequestLogsArgs
+}
+
+/**
+ * ProxyKeyCountOutputType without action
+ */
+export type ProxyKeyCountOutputTypeDefaultArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the ProxyKeyCountOutputType
+   */
+  select?: Prisma.ProxyKeyCountOutputTypeSelect<ExtArgs> | null
+}
+
+/**
+ * ProxyKeyCountOutputType without action
+ */
+export type ProxyKeyCountOutputTypeCountProxyRequestLogsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.ProxyRequestLogWhereInput
+}
 
 
 export type ProxyKeySelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
@@ -523,6 +660,8 @@ export type ProxyKeySelect<ExtArgs extends runtime.Types.Extensions.InternalArgs
   usageCount?: boolean
   createdAt?: boolean
   updatedAt?: boolean
+  proxyRequestLogs?: boolean | Prisma.ProxyKey$proxyRequestLogsArgs<ExtArgs>
+  _count?: boolean | Prisma.ProxyKeyCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["proxyKey"]>
 
 export type ProxyKeySelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
@@ -574,10 +713,18 @@ export type ProxyKeySelectScalar = {
 }
 
 export type ProxyKeyOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "key" | "enabled" | "allowAllModels" | "allowedChannelIds" | "allowedModelIds" | "unifiedMode" | "allowedUnifiedModels" | "lastUsedAt" | "usageCount" | "createdAt" | "updatedAt", ExtArgs["result"]["proxyKey"]>
+export type ProxyKeyInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  proxyRequestLogs?: boolean | Prisma.ProxyKey$proxyRequestLogsArgs<ExtArgs>
+  _count?: boolean | Prisma.ProxyKeyCountOutputTypeDefaultArgs<ExtArgs>
+}
+export type ProxyKeyIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
+export type ProxyKeyIncludeUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
 
 export type $ProxyKeyPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   name: "ProxyKey"
-  objects: {}
+  objects: {
+    proxyRequestLogs: Prisma.$ProxyRequestLogPayload<ExtArgs>[]
+  }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
     name: string
@@ -986,6 +1133,7 @@ readonly fields: ProxyKeyFieldRefs;
  */
 export interface Prisma__ProxyKeyClient<T, Null = never, ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs, GlobalOmitOptions = {}> extends Prisma.PrismaPromise<T> {
   readonly [Symbol.toStringTag]: "PrismaPromise"
+  proxyRequestLogs<T extends Prisma.ProxyKey$proxyRequestLogsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.ProxyKey$proxyRequestLogsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ProxyRequestLogPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1045,6 +1193,10 @@ export type ProxyKeyFindUniqueArgs<ExtArgs extends runtime.Types.Extensions.Inte
    */
   omit?: Prisma.ProxyKeyOmit<ExtArgs> | null
   /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyKeyInclude<ExtArgs> | null
+  /**
    * Filter, which ProxyKey to fetch.
    */
   where: Prisma.ProxyKeyWhereUniqueInput
@@ -1063,6 +1215,10 @@ export type ProxyKeyFindUniqueOrThrowArgs<ExtArgs extends runtime.Types.Extensio
    */
   omit?: Prisma.ProxyKeyOmit<ExtArgs> | null
   /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyKeyInclude<ExtArgs> | null
+  /**
    * Filter, which ProxyKey to fetch.
    */
   where: Prisma.ProxyKeyWhereUniqueInput
@@ -1080,6 +1236,10 @@ export type ProxyKeyFindFirstArgs<ExtArgs extends runtime.Types.Extensions.Inter
    * Omit specific fields from the ProxyKey
    */
   omit?: Prisma.ProxyKeyOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyKeyInclude<ExtArgs> | null
   /**
    * Filter, which ProxyKey to fetch.
    */
@@ -1129,6 +1289,10 @@ export type ProxyKeyFindFirstOrThrowArgs<ExtArgs extends runtime.Types.Extension
    */
   omit?: Prisma.ProxyKeyOmit<ExtArgs> | null
   /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyKeyInclude<ExtArgs> | null
+  /**
    * Filter, which ProxyKey to fetch.
    */
   where?: Prisma.ProxyKeyWhereInput
@@ -1177,6 +1341,10 @@ export type ProxyKeyFindManyArgs<ExtArgs extends runtime.Types.Extensions.Intern
    */
   omit?: Prisma.ProxyKeyOmit<ExtArgs> | null
   /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyKeyInclude<ExtArgs> | null
+  /**
    * Filter, which ProxyKeys to fetch.
    */
   where?: Prisma.ProxyKeyWhereInput
@@ -1219,6 +1387,10 @@ export type ProxyKeyCreateArgs<ExtArgs extends runtime.Types.Extensions.Internal
    * Omit specific fields from the ProxyKey
    */
   omit?: Prisma.ProxyKeyOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyKeyInclude<ExtArgs> | null
   /**
    * The data needed to create a ProxyKey.
    */
@@ -1267,6 +1439,10 @@ export type ProxyKeyUpdateArgs<ExtArgs extends runtime.Types.Extensions.Internal
    * Omit specific fields from the ProxyKey
    */
   omit?: Prisma.ProxyKeyOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyKeyInclude<ExtArgs> | null
   /**
    * The data needed to update a ProxyKey.
    */
@@ -1334,6 +1510,10 @@ export type ProxyKeyUpsertArgs<ExtArgs extends runtime.Types.Extensions.Internal
    */
   omit?: Prisma.ProxyKeyOmit<ExtArgs> | null
   /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyKeyInclude<ExtArgs> | null
+  /**
    * The filter to search for the ProxyKey to update in case it exists.
    */
   where: Prisma.ProxyKeyWhereUniqueInput
@@ -1360,6 +1540,10 @@ export type ProxyKeyDeleteArgs<ExtArgs extends runtime.Types.Extensions.Internal
    */
   omit?: Prisma.ProxyKeyOmit<ExtArgs> | null
   /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyKeyInclude<ExtArgs> | null
+  /**
    * Filter which ProxyKey to delete.
    */
   where: Prisma.ProxyKeyWhereUniqueInput
@@ -1380,6 +1564,30 @@ export type ProxyKeyDeleteManyArgs<ExtArgs extends runtime.Types.Extensions.Inte
 }
 
 /**
+ * ProxyKey.proxyRequestLogs
+ */
+export type ProxyKey$proxyRequestLogsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the ProxyRequestLog
+   */
+  select?: Prisma.ProxyRequestLogSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the ProxyRequestLog
+   */
+  omit?: Prisma.ProxyRequestLogOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyRequestLogInclude<ExtArgs> | null
+  where?: Prisma.ProxyRequestLogWhereInput
+  orderBy?: Prisma.ProxyRequestLogOrderByWithRelationInput | Prisma.ProxyRequestLogOrderByWithRelationInput[]
+  cursor?: Prisma.ProxyRequestLogWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.ProxyRequestLogScalarFieldEnum | Prisma.ProxyRequestLogScalarFieldEnum[]
+}
+
+/**
  * ProxyKey without action
  */
 export type ProxyKeyDefaultArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -1391,4 +1599,8 @@ export type ProxyKeyDefaultArgs<ExtArgs extends runtime.Types.Extensions.Interna
    * Omit specific fields from the ProxyKey
    */
   omit?: Prisma.ProxyKeyOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyKeyInclude<ExtArgs> | null
 }

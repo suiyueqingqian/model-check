@@ -4,7 +4,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { proxyFetch } from "@/lib/utils/proxy-fetch";
-import { getProxyApiKey, validateProxyKey, canAccessModel, type ValidateKeyResult } from "@/lib/utils/proxy-key";
+import {
+  BUILTIN_PROXY_KEY_DB_ID,
+  getProxyApiKey,
+  validateProxyKey,
+  canAccessModel,
+  type ValidateKeyResult,
+} from "@/lib/utils/proxy-key";
 import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 
 // Round-robin counter per channel (auto-clears when too many stale keys accumulate)
@@ -84,6 +90,23 @@ export interface ProxyRequestContext {
 }
 
 export type ProxyEndpointType = "CHAT" | "CLAUDE" | "GEMINI" | "CODEX" | "IMAGE";
+
+export interface ProxyRequestLogInput {
+  keyResult?: ValidateKeyResult;
+  requestPath: string;
+  requestMethod: string;
+  endpointType?: ProxyEndpointType;
+  requestedModel?: string | null;
+  actualModelName?: string | null;
+  channelId?: string | null;
+  channelName?: string | null;
+  modelId?: string | null;
+  isStream?: boolean;
+  success: boolean;
+  statusCode?: number;
+  latency?: number;
+  errorMsg?: string | null;
+}
 
 export interface ProxyChannelCandidate {
   channelId: string;
@@ -181,6 +204,33 @@ export async function verifyProxyKeyAsync(request: NextRequest): Promise<{
   }
 
   return { keyResult };
+}
+
+export async function recordProxyRequestLog(input: ProxyRequestLogInput): Promise<void> {
+  const keyRecord = input.keyResult?.keyRecord;
+  const proxyKeyId = keyRecord && keyRecord.id !== BUILTIN_PROXY_KEY_DB_ID
+    ? keyRecord.id
+    : null;
+
+  await prisma.proxyRequestLog.create({
+    data: {
+      proxyKeyId,
+      channelId: input.channelId ?? null,
+      modelId: input.modelId ?? null,
+      requestPath: input.requestPath,
+      requestMethod: input.requestMethod,
+      endpointType: input.endpointType ?? null,
+      requestedModel: input.requestedModel ?? null,
+      actualModelName: input.actualModelName ?? null,
+      channelName: input.channelName ?? null,
+      proxyKeyName: keyRecord?.name ?? null,
+      isStream: input.isStream === true,
+      success: input.success,
+      statusCode: input.statusCode,
+      latency: input.latency,
+      errorMsg: input.errorMsg ? input.errorMsg.slice(0, 1000) : null,
+    },
+  });
 }
 
 /**

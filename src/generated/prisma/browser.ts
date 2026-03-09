@@ -43,6 +43,11 @@ export type SchedulerConfig = Prisma.SchedulerConfigModel
  */
 export type ProxyKey = Prisma.ProxyKeyModel
 /**
+ * Model ProxyRequestLog
+ * 
+ */
+export type ProxyRequestLog = Prisma.ProxyRequestLogModel
+/**
  * Model ChannelKey
  * 
  */

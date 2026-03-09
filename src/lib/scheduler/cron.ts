@@ -379,15 +379,24 @@ export async function cleanupOldLogs(): Promise<{ deleted: number }> {
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - ENV_LOG_RETENTION_DAYS);
 
-  const result = await prisma.checkLog.deleteMany({
-    where: {
-      createdAt: {
-        lt: cutoffDate,
+  const [checkLogResult, proxyRequestLogResult] = await Promise.all([
+    prisma.checkLog.deleteMany({
+      where: {
+        createdAt: {
+          lt: cutoffDate,
+        },
       },
-    },
-  });
+    }),
+    prisma.proxyRequestLog.deleteMany({
+      where: {
+        createdAt: {
+          lt: cutoffDate,
+        },
+      },
+    }),
+  ]);
 
-  return { deleted: result.count };
+  return { deleted: checkLogResult.count + proxyRequestLogResult.count };
 }
 
 /**

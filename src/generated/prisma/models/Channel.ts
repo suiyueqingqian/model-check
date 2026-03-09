@@ -266,6 +266,7 @@ export type ChannelWhereInput = {
   updatedAt?: Prisma.DateTimeFilter<"Channel"> | Date | string
   models?: Prisma.ModelListRelationFilter
   channelKeys?: Prisma.ChannelKeyListRelationFilter
+  proxyRequestLogs?: Prisma.ProxyRequestLogListRelationFilter
 }
 
 export type ChannelOrderByWithRelationInput = {
@@ -282,6 +283,7 @@ export type ChannelOrderByWithRelationInput = {
   updatedAt?: Prisma.SortOrder
   models?: Prisma.ModelOrderByRelationAggregateInput
   channelKeys?: Prisma.ChannelKeyOrderByRelationAggregateInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogOrderByRelationAggregateInput
 }
 
 export type ChannelWhereUniqueInput = Prisma.AtLeast<{
@@ -301,6 +303,7 @@ export type ChannelWhereUniqueInput = Prisma.AtLeast<{
   updatedAt?: Prisma.DateTimeFilter<"Channel"> | Date | string
   models?: Prisma.ModelListRelationFilter
   channelKeys?: Prisma.ChannelKeyListRelationFilter
+  proxyRequestLogs?: Prisma.ProxyRequestLogListRelationFilter
 }, "id" | "name">
 
 export type ChannelOrderByWithAggregationInput = {
@@ -353,6 +356,7 @@ export type ChannelCreateInput = {
   updatedAt?: Date | string
   models?: Prisma.ModelCreateNestedManyWithoutChannelInput
   channelKeys?: Prisma.ChannelKeyCreateNestedManyWithoutChannelInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogCreateNestedManyWithoutChannelInput
 }
 
 export type ChannelUncheckedCreateInput = {
@@ -369,6 +373,7 @@ export type ChannelUncheckedCreateInput = {
   updatedAt?: Date | string
   models?: Prisma.ModelUncheckedCreateNestedManyWithoutChannelInput
   channelKeys?: Prisma.ChannelKeyUncheckedCreateNestedManyWithoutChannelInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogUncheckedCreateNestedManyWithoutChannelInput
 }
 
 export type ChannelUpdateInput = {
@@ -385,6 +390,7 @@ export type ChannelUpdateInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   models?: Prisma.ModelUpdateManyWithoutChannelNestedInput
   channelKeys?: Prisma.ChannelKeyUpdateManyWithoutChannelNestedInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogUpdateManyWithoutChannelNestedInput
 }
 
 export type ChannelUncheckedUpdateInput = {
@@ -401,6 +407,7 @@ export type ChannelUncheckedUpdateInput = {
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   models?: Prisma.ModelUncheckedUpdateManyWithoutChannelNestedInput
   channelKeys?: Prisma.ChannelKeyUncheckedUpdateManyWithoutChannelNestedInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogUncheckedUpdateManyWithoutChannelNestedInput
 }
 
 export type ChannelCreateManyInput = {
@@ -500,6 +507,11 @@ export type ChannelScalarRelationFilter = {
   isNot?: Prisma.ChannelWhereInput
 }
 
+export type ChannelNullableScalarRelationFilter = {
+  is?: Prisma.ChannelWhereInput | null
+  isNot?: Prisma.ChannelWhereInput | null
+}
+
 export type StringFieldUpdateOperationsInput = {
   set?: string
 }
@@ -538,6 +550,22 @@ export type ChannelUpdateOneRequiredWithoutModelsNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.ChannelUpdateToOneWithWhereWithoutModelsInput, Prisma.ChannelUpdateWithoutModelsInput>, Prisma.ChannelUncheckedUpdateWithoutModelsInput>
 }
 
+export type ChannelCreateNestedOneWithoutProxyRequestLogsInput = {
+  create?: Prisma.XOR<Prisma.ChannelCreateWithoutProxyRequestLogsInput, Prisma.ChannelUncheckedCreateWithoutProxyRequestLogsInput>
+  connectOrCreate?: Prisma.ChannelCreateOrConnectWithoutProxyRequestLogsInput
+  connect?: Prisma.ChannelWhereUniqueInput
+}
+
+export type ChannelUpdateOneWithoutProxyRequestLogsNestedInput = {
+  create?: Prisma.XOR<Prisma.ChannelCreateWithoutProxyRequestLogsInput, Prisma.ChannelUncheckedCreateWithoutProxyRequestLogsInput>
+  connectOrCreate?: Prisma.ChannelCreateOrConnectWithoutProxyRequestLogsInput
+  upsert?: Prisma.ChannelUpsertWithoutProxyRequestLogsInput
+  disconnect?: Prisma.ChannelWhereInput | boolean
+  delete?: Prisma.ChannelWhereInput | boolean
+  connect?: Prisma.ChannelWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.ChannelUpdateToOneWithWhereWithoutProxyRequestLogsInput, Prisma.ChannelUpdateWithoutProxyRequestLogsInput>, Prisma.ChannelUncheckedUpdateWithoutProxyRequestLogsInput>
+}
+
 export type ChannelCreateNestedOneWithoutChannelKeysInput = {
   create?: Prisma.XOR<Prisma.ChannelCreateWithoutChannelKeysInput, Prisma.ChannelUncheckedCreateWithoutChannelKeysInput>
   connectOrCreate?: Prisma.ChannelCreateOrConnectWithoutChannelKeysInput
@@ -565,6 +593,7 @@ export type ChannelCreateWithoutModelsInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   channelKeys?: Prisma.ChannelKeyCreateNestedManyWithoutChannelInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogCreateNestedManyWithoutChannelInput
 }
 
 export type ChannelUncheckedCreateWithoutModelsInput = {
@@ -580,6 +609,7 @@ export type ChannelUncheckedCreateWithoutModelsInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   channelKeys?: Prisma.ChannelKeyUncheckedCreateNestedManyWithoutChannelInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogUncheckedCreateNestedManyWithoutChannelInput
 }
 
 export type ChannelCreateOrConnectWithoutModelsInput = {
@@ -611,6 +641,7 @@ export type ChannelUpdateWithoutModelsInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   channelKeys?: Prisma.ChannelKeyUpdateManyWithoutChannelNestedInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogUpdateManyWithoutChannelNestedInput
 }
 
 export type ChannelUncheckedUpdateWithoutModelsInput = {
@@ -625,6 +656,87 @@ export type ChannelUncheckedUpdateWithoutModelsInput = {
   routeStrategy?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  channelKeys?: Prisma.ChannelKeyUncheckedUpdateManyWithoutChannelNestedInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogUncheckedUpdateManyWithoutChannelNestedInput
+}
+
+export type ChannelCreateWithoutProxyRequestLogsInput = {
+  id?: string
+  name: string
+  baseUrl: string
+  apiKey: string
+  proxy?: string | null
+  enabled?: boolean
+  sortOrder?: number
+  keyMode?: string
+  routeStrategy?: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  models?: Prisma.ModelCreateNestedManyWithoutChannelInput
+  channelKeys?: Prisma.ChannelKeyCreateNestedManyWithoutChannelInput
+}
+
+export type ChannelUncheckedCreateWithoutProxyRequestLogsInput = {
+  id?: string
+  name: string
+  baseUrl: string
+  apiKey: string
+  proxy?: string | null
+  enabled?: boolean
+  sortOrder?: number
+  keyMode?: string
+  routeStrategy?: string
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  models?: Prisma.ModelUncheckedCreateNestedManyWithoutChannelInput
+  channelKeys?: Prisma.ChannelKeyUncheckedCreateNestedManyWithoutChannelInput
+}
+
+export type ChannelCreateOrConnectWithoutProxyRequestLogsInput = {
+  where: Prisma.ChannelWhereUniqueInput
+  create: Prisma.XOR<Prisma.ChannelCreateWithoutProxyRequestLogsInput, Prisma.ChannelUncheckedCreateWithoutProxyRequestLogsInput>
+}
+
+export type ChannelUpsertWithoutProxyRequestLogsInput = {
+  update: Prisma.XOR<Prisma.ChannelUpdateWithoutProxyRequestLogsInput, Prisma.ChannelUncheckedUpdateWithoutProxyRequestLogsInput>
+  create: Prisma.XOR<Prisma.ChannelCreateWithoutProxyRequestLogsInput, Prisma.ChannelUncheckedCreateWithoutProxyRequestLogsInput>
+  where?: Prisma.ChannelWhereInput
+}
+
+export type ChannelUpdateToOneWithWhereWithoutProxyRequestLogsInput = {
+  where?: Prisma.ChannelWhereInput
+  data: Prisma.XOR<Prisma.ChannelUpdateWithoutProxyRequestLogsInput, Prisma.ChannelUncheckedUpdateWithoutProxyRequestLogsInput>
+}
+
+export type ChannelUpdateWithoutProxyRequestLogsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
+  apiKey?: Prisma.StringFieldUpdateOperationsInput | string
+  proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
+  keyMode?: Prisma.StringFieldUpdateOperationsInput | string
+  routeStrategy?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  models?: Prisma.ModelUpdateManyWithoutChannelNestedInput
+  channelKeys?: Prisma.ChannelKeyUpdateManyWithoutChannelNestedInput
+}
+
+export type ChannelUncheckedUpdateWithoutProxyRequestLogsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
+  apiKey?: Prisma.StringFieldUpdateOperationsInput | string
+  proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
+  keyMode?: Prisma.StringFieldUpdateOperationsInput | string
+  routeStrategy?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  models?: Prisma.ModelUncheckedUpdateManyWithoutChannelNestedInput
   channelKeys?: Prisma.ChannelKeyUncheckedUpdateManyWithoutChannelNestedInput
 }
 
@@ -641,6 +753,7 @@ export type ChannelCreateWithoutChannelKeysInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   models?: Prisma.ModelCreateNestedManyWithoutChannelInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogCreateNestedManyWithoutChannelInput
 }
 
 export type ChannelUncheckedCreateWithoutChannelKeysInput = {
@@ -656,6 +769,7 @@ export type ChannelUncheckedCreateWithoutChannelKeysInput = {
   createdAt?: Date | string
   updatedAt?: Date | string
   models?: Prisma.ModelUncheckedCreateNestedManyWithoutChannelInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogUncheckedCreateNestedManyWithoutChannelInput
 }
 
 export type ChannelCreateOrConnectWithoutChannelKeysInput = {
@@ -687,6 +801,7 @@ export type ChannelUpdateWithoutChannelKeysInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   models?: Prisma.ModelUpdateManyWithoutChannelNestedInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogUpdateManyWithoutChannelNestedInput
 }
 
 export type ChannelUncheckedUpdateWithoutChannelKeysInput = {
@@ -702,6 +817,7 @@ export type ChannelUncheckedUpdateWithoutChannelKeysInput = {
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   models?: Prisma.ModelUncheckedUpdateManyWithoutChannelNestedInput
+  proxyRequestLogs?: Prisma.ProxyRequestLogUncheckedUpdateManyWithoutChannelNestedInput
 }
 
 
@@ -712,11 +828,13 @@ export type ChannelUncheckedUpdateWithoutChannelKeysInput = {
 export type ChannelCountOutputType = {
   models: number
   channelKeys: number
+  proxyRequestLogs: number
 }
 
 export type ChannelCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   models?: boolean | ChannelCountOutputTypeCountModelsArgs
   channelKeys?: boolean | ChannelCountOutputTypeCountChannelKeysArgs
+  proxyRequestLogs?: boolean | ChannelCountOutputTypeCountProxyRequestLogsArgs
 }
 
 /**
@@ -743,6 +861,13 @@ export type ChannelCountOutputTypeCountChannelKeysArgs<ExtArgs extends runtime.T
   where?: Prisma.ChannelKeyWhereInput
 }
 
+/**
+ * ChannelCountOutputType without action
+ */
+export type ChannelCountOutputTypeCountProxyRequestLogsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.ProxyRequestLogWhereInput
+}
+
 
 export type ChannelSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -758,6 +883,7 @@ export type ChannelSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   updatedAt?: boolean
   models?: boolean | Prisma.Channel$modelsArgs<ExtArgs>
   channelKeys?: boolean | Prisma.Channel$channelKeysArgs<ExtArgs>
+  proxyRequestLogs?: boolean | Prisma.Channel$proxyRequestLogsArgs<ExtArgs>
   _count?: boolean | Prisma.ChannelCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["channel"]>
 
@@ -807,6 +933,7 @@ export type ChannelOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = 
 export type ChannelInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   models?: boolean | Prisma.Channel$modelsArgs<ExtArgs>
   channelKeys?: boolean | Prisma.Channel$channelKeysArgs<ExtArgs>
+  proxyRequestLogs?: boolean | Prisma.Channel$proxyRequestLogsArgs<ExtArgs>
   _count?: boolean | Prisma.ChannelCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type ChannelIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
@@ -817,6 +944,7 @@ export type $ChannelPayload<ExtArgs extends runtime.Types.Extensions.InternalArg
   objects: {
     models: Prisma.$ModelPayload<ExtArgs>[]
     channelKeys: Prisma.$ChannelKeyPayload<ExtArgs>[]
+    proxyRequestLogs: Prisma.$ProxyRequestLogPayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -1226,6 +1354,7 @@ export interface Prisma__ChannelClient<T, Null = never, ExtArgs extends runtime.
   readonly [Symbol.toStringTag]: "PrismaPromise"
   models<T extends Prisma.Channel$modelsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Channel$modelsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ModelPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   channelKeys<T extends Prisma.Channel$channelKeysArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Channel$channelKeysArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ChannelKeyPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  proxyRequestLogs<T extends Prisma.Channel$proxyRequestLogsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Channel$proxyRequestLogsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ProxyRequestLogPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -1699,6 +1828,30 @@ export type Channel$channelKeysArgs<ExtArgs extends runtime.Types.Extensions.Int
   take?: number
   skip?: number
   distinct?: Prisma.ChannelKeyScalarFieldEnum | Prisma.ChannelKeyScalarFieldEnum[]
+}
+
+/**
+ * Channel.proxyRequestLogs
+ */
+export type Channel$proxyRequestLogsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the ProxyRequestLog
+   */
+  select?: Prisma.ProxyRequestLogSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the ProxyRequestLog
+   */
+  omit?: Prisma.ProxyRequestLogOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ProxyRequestLogInclude<ExtArgs> | null
+  where?: Prisma.ProxyRequestLogWhereInput
+  orderBy?: Prisma.ProxyRequestLogOrderByWithRelationInput | Prisma.ProxyRequestLogOrderByWithRelationInput[]
+  cursor?: Prisma.ProxyRequestLogWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.ProxyRequestLogScalarFieldEnum | Prisma.ProxyRequestLogScalarFieldEnum[]
 }
 
 /**

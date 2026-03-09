@@ -10,6 +10,7 @@ import {
   buildUpstreamHeaders,
   proxyRequest,
   recordProxyModelResult,
+  recordProxyRequestLog,
   streamResponse,
   errorResponse,
   normalizeBaseUrl,
@@ -37,6 +38,27 @@ export async function POST(
   if (authError) return authError;
 
   try {
+    const requestPath = request.nextUrl?.pathname ?? new URL(request.url).pathname;
+    const requestMethod = request.method;
+    const writeRequestLog = (options: {
+      requestedModel?: string | null;
+      actualModelName?: string | null;
+      channelId?: string | null;
+      channelName?: string | null;
+      modelId?: string | null;
+      isStream?: boolean;
+      success: boolean;
+      statusCode?: number;
+      latency?: number;
+      errorMsg?: string | null;
+    }) => recordProxyRequestLog({
+      keyResult,
+      requestPath,
+      requestMethod,
+      endpointType: "GEMINI",
+      ...options,
+    }).catch(() => {});
+
     // Reconstruct the path from catch-all segments
     const { path } = await params;
     const pathStr = path.join("/");
@@ -44,6 +66,12 @@ export async function POST(
     // Extract model name from path (e.g., "gemini-1.5-flash:generateContent" -> "gemini-1.5-flash")
     const colonIndex = pathStr.indexOf(":");
     if (colonIndex === -1) {
+      await writeRequestLog({
+        requestedModel: null,
+        success: false,
+        statusCode: 400,
+        errorMsg: "Invalid path format. Expected: /v1beta/models/{model}:{method}",
+      });
       return errorResponse(
         "Invalid path format. Expected: /v1beta/models/{model}:{method}",
         400
@@ -56,16 +84,34 @@ export async function POST(
     const isUnifiedMode = keyResult?.keyRecord?.unifiedMode === true;
     if (!isUnifiedMode) {
       if (!isPrefixedModelName(modelName)) {
+        await writeRequestLog({
+          requestedModel: modelName,
+          success: false,
+          statusCode: 400,
+          errorMsg: "Model must use channel prefix format: channelName/modelName",
+        });
         return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
       }
     } else {
       if (!modelName || modelName.trim().length === 0) {
+        await writeRequestLog({
+          requestedModel: modelName,
+          success: false,
+          statusCode: 400,
+          errorMsg: "Missing or invalid model name in path",
+        });
         return errorResponse("Missing or invalid model name in path", 400);
       }
     }
 
     const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "GEMINI");
     if (candidates.length === 0) {
+      await writeRequestLog({
+        requestedModel: modelName,
+        success: false,
+        statusCode: 404,
+        errorMsg: `Model not found or access denied: ${modelName}`,
+      });
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);
     }
 
@@ -75,6 +121,15 @@ export async function POST(
     const isStream = method === "streamGenerateContent";
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
+    let finalFailureLog: {
+      actualModelName?: string | null;
+      channelId?: string | null;
+      channelName?: string | null;
+      modelId?: string | null;
+      statusCode?: number;
+      latency?: number;
+      errorMsg?: string | null;
+    } | null = null;
     const pendingFailures: ProxyAttemptFailure[] = [];
 
     for (const channel of candidates) {
@@ -96,6 +151,15 @@ export async function POST(
           const errorText = await response.text().catch(() => "Unknown error");
           lastErrorMessage = `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`;
           lastStatus = response.status;
+          finalFailureLog = {
+            actualModelName: channel.actualModelName,
+            channelId: channel.channelId,
+            channelName: channel.channelName,
+            modelId: channel.modelId,
+            statusCode: response.status,
+            latency,
+            errorMsg: lastErrorMessage,
+          };
 
           if (isUnifiedRouting && channel.modelId) {
             pendingFailures.push({
@@ -113,20 +177,71 @@ export async function POST(
         if (isStream) {
           if (isUnifiedRouting && channel.modelId) {
             return streamResponse(response, {
-              onComplete: () => recordProxyModelResult(channel.modelId!, "GEMINI", true, {
-                latency,
-                statusCode: response.status,
-                responseContent: "代理流式请求成功",
-              }).catch(() => {}),
-              onError: () => recordProxyModelResult(channel.modelId!, "GEMINI", false, {
-                latency,
-                statusCode: 502,
-                errorMsg: "流式传输中断",
-              }).catch(() => {}),
+              onComplete: () => Promise.all([
+                recordProxyModelResult(channel.modelId!, "GEMINI", true, {
+                  latency,
+                  statusCode: response.status,
+                  responseContent: "代理流式请求成功",
+                }).catch(() => {}),
+                writeRequestLog({
+                  requestedModel: modelName,
+                  actualModelName: channel.actualModelName,
+                  channelId: channel.channelId,
+                  channelName: channel.channelName,
+                  modelId: channel.modelId,
+                  isStream: true,
+                  success: true,
+                  statusCode: response.status,
+                  latency,
+                }),
+              ]).then(() => {}),
+              onError: () => Promise.all([
+                recordProxyModelResult(channel.modelId!, "GEMINI", false, {
+                  latency,
+                  statusCode: 502,
+                  errorMsg: "流式传输中断",
+                }).catch(() => {}),
+                writeRequestLog({
+                  requestedModel: modelName,
+                  actualModelName: channel.actualModelName,
+                  channelId: channel.channelId,
+                  channelName: channel.channelName,
+                  modelId: channel.modelId,
+                  isStream: true,
+                  success: false,
+                  statusCode: 502,
+                  latency,
+                  errorMsg: "流式传输中断",
+                }),
+              ]).then(() => {}),
             });
           }
 
-          return streamResponse(response);
+          return streamResponse(response, {
+            onComplete: () => writeRequestLog({
+              requestedModel: modelName,
+              actualModelName: channel.actualModelName,
+              channelId: channel.channelId,
+              channelName: channel.channelName,
+              modelId: channel.modelId,
+              isStream: true,
+              success: true,
+              statusCode: response.status,
+              latency,
+            }),
+            onError: () => writeRequestLog({
+              requestedModel: modelName,
+              actualModelName: channel.actualModelName,
+              channelId: channel.channelId,
+              channelName: channel.channelName,
+              modelId: channel.modelId,
+              isStream: true,
+              success: false,
+              statusCode: 502,
+              latency,
+              errorMsg: "流式传输中断",
+            }),
+          });
         }
 
         const data = await response.json();
@@ -139,11 +254,32 @@ export async function POST(
           }).catch(() => {});
         }
 
+        await writeRequestLog({
+          requestedModel: modelName,
+          actualModelName: channel.actualModelName,
+          channelId: channel.channelId,
+          channelName: channel.channelName,
+          modelId: channel.modelId,
+          isStream: false,
+          success: true,
+          statusCode: response.status,
+          latency,
+        });
+
         return NextResponse.json(data);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error";
         lastErrorMessage = `Proxy error: ${message}`;
         lastStatus = 502;
+        finalFailureLog = {
+          actualModelName: channel.actualModelName,
+          channelId: channel.channelId,
+          channelName: channel.channelName,
+          modelId: channel.modelId,
+          statusCode: 502,
+          latency: Date.now() - startedAt,
+          errorMsg: lastErrorMessage,
+        };
 
         if (isUnifiedRouting && channel.modelId) {
           pendingFailures.push({
@@ -171,6 +307,19 @@ export async function POST(
       );
     }
 
+    await writeRequestLog({
+      requestedModel: modelName,
+      actualModelName: finalFailureLog?.actualModelName ?? null,
+      channelId: finalFailureLog?.channelId ?? null,
+      channelName: finalFailureLog?.channelName ?? null,
+      modelId: finalFailureLog?.modelId ?? null,
+      isStream,
+      success: false,
+      statusCode: finalFailureLog?.statusCode ?? lastStatus,
+      latency: finalFailureLog?.latency,
+      errorMsg: finalFailureLog?.errorMsg ?? lastErrorMessage,
+    });
+
     return errorResponse(lastErrorMessage, lastStatus);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -188,27 +337,74 @@ export async function GET(
   if (authError) return authError;
 
   try {
+    const requestPath = request.nextUrl?.pathname ?? new URL(request.url).pathname;
+    const requestMethod = request.method;
+    const writeRequestLog = (options: {
+      requestedModel?: string | null;
+      actualModelName?: string | null;
+      channelId?: string | null;
+      channelName?: string | null;
+      modelId?: string | null;
+      success: boolean;
+      statusCode?: number;
+      latency?: number;
+      errorMsg?: string | null;
+    }) => recordProxyRequestLog({
+      keyResult,
+      requestPath,
+      requestMethod,
+      endpointType: "GEMINI",
+      ...options,
+    }).catch(() => {});
+
     const { path } = await params;
     const modelName = path.join("/");
 
     const isUnifiedMode = keyResult?.keyRecord?.unifiedMode === true;
     if (!isUnifiedMode) {
       if (!isPrefixedModelName(modelName)) {
+        await writeRequestLog({
+          requestedModel: modelName,
+          success: false,
+          statusCode: 400,
+          errorMsg: "Model must use channel prefix format: channelName/modelName",
+        });
         return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
       }
     } else {
       if (!modelName || modelName.trim().length === 0) {
+        await writeRequestLog({
+          requestedModel: modelName,
+          success: false,
+          statusCode: 400,
+          errorMsg: "Missing or invalid model name in path",
+        });
         return errorResponse("Missing or invalid model name in path", 400);
       }
     }
 
     const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "GEMINI");
     if (candidates.length === 0) {
+      await writeRequestLog({
+        requestedModel: modelName,
+        success: false,
+        statusCode: 404,
+        errorMsg: `Model not found or access denied: ${modelName}`,
+      });
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);
     }
 
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
+    let finalFailureLog: {
+      actualModelName?: string | null;
+      channelId?: string | null;
+      channelName?: string | null;
+      modelId?: string | null;
+      statusCode?: number;
+      latency?: number;
+      errorMsg?: string | null;
+    } | null = null;
     const pendingFailures: ProxyAttemptFailure[] = [];
 
     for (const channel of candidates) {
@@ -229,6 +425,15 @@ export async function GET(
           const errorText = await response.text().catch(() => "Unknown error");
           lastErrorMessage = `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`;
           lastStatus = response.status;
+          finalFailureLog = {
+            actualModelName: channel.actualModelName,
+            channelId: channel.channelId,
+            channelName: channel.channelName,
+            modelId: channel.modelId,
+            statusCode: response.status,
+            latency,
+            errorMsg: lastErrorMessage,
+          };
 
           if (isUnifiedRouting && channel.modelId) {
             pendingFailures.push({
@@ -253,11 +458,31 @@ export async function GET(
           }).catch(() => {});
         }
 
+        await writeRequestLog({
+          requestedModel: modelName,
+          actualModelName: channel.actualModelName,
+          channelId: channel.channelId,
+          channelName: channel.channelName,
+          modelId: channel.modelId,
+          success: true,
+          statusCode: response.status,
+          latency,
+        });
+
         return NextResponse.json(data);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error";
         lastErrorMessage = `Proxy error: ${message}`;
         lastStatus = 502;
+        finalFailureLog = {
+          actualModelName: channel.actualModelName,
+          channelId: channel.channelId,
+          channelName: channel.channelName,
+          modelId: channel.modelId,
+          statusCode: 502,
+          latency: Date.now() - startedAt,
+          errorMsg: lastErrorMessage,
+        };
 
         if (isUnifiedRouting && channel.modelId) {
           pendingFailures.push({
@@ -284,6 +509,18 @@ export async function GET(
         )
       );
     }
+
+    await writeRequestLog({
+      requestedModel: modelName,
+      actualModelName: finalFailureLog?.actualModelName ?? null,
+      channelId: finalFailureLog?.channelId ?? null,
+      channelName: finalFailureLog?.channelName ?? null,
+      modelId: finalFailureLog?.modelId ?? null,
+      success: false,
+      statusCode: finalFailureLog?.statusCode ?? lastStatus,
+      latency: finalFailureLog?.latency,
+      errorMsg: finalFailureLog?.errorMsg ?? lastErrorMessage,
+    });
 
     return errorResponse(lastErrorMessage, lastStatus);
   } catch (error) {

@@ -4,7 +4,7 @@
 
 import { useState, useEffect, useRef, useCallback, FormEvent } from "react";
 import Link from "next/link";
-import { Sun, Moon, LogIn, LogOut, Activity, Play, Square, Loader2, Wifi, WifiOff, Clock, Zap, Timer, Search, Filter, X, Github, FileText, Settings, Upload, ArrowUpCircle } from "lucide-react";
+import { Sun, Moon, LogIn, LogOut, Activity, Play, Square, Loader2, Wifi, WifiOff, Clock, Zap, Timer, Search, Filter, X, Github, Settings, Upload, ArrowUpCircle, ScrollText } from "lucide-react";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/ui/toast";
@@ -320,13 +320,15 @@ export function Header({
         <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           <Activity className="h-5 w-5 text-primary" />
           <span className="font-semibold hidden sm:inline">模型检测</span>
-          <Link
-            href="/docs/proxy"
-            className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors hidden sm:block"
-            title="API 代理文档"
-          >
-            <FileText className="h-4 w-4" />
-          </Link>
+          {isAuthenticated && (
+            <Link
+              href="/proxy-logs"
+              className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              title="代理请求日志"
+            >
+              <ScrollText className="h-4 w-4" />
+            </Link>
+          )}
           {isAuthenticated && hasUpdate && latestVersion ? (
             <a
               href="https://github.com/chxcodepro/model-check"

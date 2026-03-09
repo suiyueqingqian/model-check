@@ -21,6 +21,7 @@ model Channel {
   updatedAt     DateTime     @default(now()) @updatedAt @map("updated_at")
   models        Model[]
   channelKeys   ChannelKey[]
+  proxyRequestLogs ProxyRequestLog[]
 
   @@unique([name])
   @@map("channels")
@@ -39,6 +40,7 @@ model Model {
   createdAt         DateTime    @default(now()) @map("created_at")
   updatedAt         DateTime    @default(now()) @updatedAt @map("updated_at")
   checkLogs         CheckLog[]
+  proxyRequestLogs  ProxyRequestLog[]
   channel           Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
   channelKey        ChannelKey? @relation(fields: [channelKeyId], references: [id], onDelete: SetNull)
 
@@ -97,8 +99,39 @@ model ProxyKey {
   usageCount        Int       @default(0) @map("usage_count")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at")
+  proxyRequestLogs  ProxyRequestLog[]
 
   @@map("proxy_keys")
+}
+
+model ProxyRequestLog {
+  id              String       @id @default(cuid())
+  proxyKeyId      String?      @map("proxy_key_id")
+  channelId       String?      @map("channel_id")
+  modelId         String?      @map("model_id")
+  requestPath     String       @map("request_path") @db.VarChar(200)
+  requestMethod   String       @map("request_method") @db.VarChar(10)
+  endpointType    EndpointType? @map("endpoint_type")
+  requestedModel  String?      @map("requested_model") @db.VarChar(200)
+  actualModelName String?      @map("actual_model_name") @db.VarChar(200)
+  channelName     String?      @map("channel_name") @db.VarChar(100)
+  proxyKeyName    String?      @map("proxy_key_name") @db.VarChar(100)
+  isStream        Boolean      @default(false) @map("is_stream")
+  success         Boolean
+  statusCode      Int?         @map("status_code")
+  latency         Int?
+  errorMsg        String?      @map("error_msg")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  proxyKey        ProxyKey?    @relation(fields: [proxyKeyId], references: [id], onDelete: SetNull)
+  channel         Channel?     @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  model           Model?       @relation(fields: [modelId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([success, createdAt])
+  @@index([endpointType, createdAt])
+  @@index([requestedModel, createdAt])
+  @@index([channelId, createdAt])
+  @@map("proxy_request_logs")
 }
 
 model ChannelKey {

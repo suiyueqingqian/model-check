@@ -9,6 +9,7 @@ import {
   buildUpstreamHeaders,
   proxyRequest,
   recordProxyModelResult,
+  recordProxyRequestLog,
   rememberPreferredProxyEndpoint,
   streamResponse,
   withStreamTracking,
@@ -512,26 +513,79 @@ export async function POST(request: NextRequest) {
   if (authError) return authError;
 
   try {
+    const requestPath = request.nextUrl?.pathname ?? new URL(request.url).pathname;
+    const requestMethod = request.method;
+    const writeRequestLog = (options: {
+      endpointType?: "CHAT" | "CODEX";
+      requestedModel?: string | null;
+      actualModelName?: string | null;
+      channelId?: string | null;
+      channelName?: string | null;
+      modelId?: string | null;
+      isStream?: boolean;
+      success: boolean;
+      statusCode?: number;
+      latency?: number;
+      errorMsg?: string | null;
+    }) => recordProxyRequestLog({
+      keyResult,
+      requestPath,
+      requestMethod,
+      ...options,
+    }).catch(() => {});
+
     const body = await request.json();
     const modelName = body.model;
 
     if (!modelName) {
+      await writeRequestLog({
+        endpointType: "CODEX",
+        requestedModel: null,
+        isStream: body.stream !== false,
+        success: false,
+        statusCode: 400,
+        errorMsg: "Missing 'model' field in request body",
+      });
       return errorResponse("Missing 'model' field in request body", 400);
     }
 
     const isUnifiedMode = keyResult?.keyRecord?.unifiedMode === true;
     if (!isUnifiedMode) {
       if (typeof modelName !== "string" || modelName.indexOf("/") <= 0 || modelName.endsWith("/")) {
+        await writeRequestLog({
+          endpointType: "CODEX",
+          requestedModel: typeof modelName === "string" ? modelName : null,
+          isStream: body.stream !== false,
+          success: false,
+          statusCode: 400,
+          errorMsg: "Model must use channel prefix format: channelName/modelName",
+        });
         return errorResponse("Model must use channel prefix format: channelName/modelName", 400);
       }
     } else {
       if (typeof modelName !== "string" || modelName.trim().length === 0) {
+        await writeRequestLog({
+          endpointType: "CODEX",
+          requestedModel: typeof modelName === "string" ? modelName : null,
+          isStream: body.stream !== false,
+          success: false,
+          statusCode: 400,
+          errorMsg: "Missing or invalid 'model' field",
+        });
         return errorResponse("Missing or invalid 'model' field", 400);
       }
     }
 
     const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "CODEX");
     if (candidates.length === 0) {
+      await writeRequestLog({
+        endpointType: "CODEX",
+        requestedModel: modelName,
+        isStream: body.stream !== false,
+        success: false,
+        statusCode: 404,
+        errorMsg: `Model not found or access denied: ${modelName}`,
+      });
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);
     }
 
@@ -541,6 +595,16 @@ export async function POST(request: NextRequest) {
       !modelName.toLowerCase().includes("codex");
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
+    let finalFailureLog: {
+      endpointType?: "CHAT" | "CODEX";
+      actualModelName?: string | null;
+      channelId?: string | null;
+      channelName?: string | null;
+      modelId?: string | null;
+      statusCode?: number;
+      latency?: number;
+      errorMsg?: string | null;
+    } | null = null;
     const pendingFailures: ProxyAttemptFailure[] = [];
 
     for (const channel of candidates) {
@@ -558,6 +622,16 @@ export async function POST(request: NextRequest) {
         if (!result.ok) {
           lastErrorMessage = result.data.errorMsg;
           lastStatus = result.data.statusCode;
+          finalFailureLog = {
+            endpointType: attempt.endpointType,
+            actualModelName: channel.actualModelName,
+            channelId: channel.channelId,
+            channelName: channel.channelName,
+            modelId: channel.modelId,
+            statusCode: result.data.statusCode,
+            latency: result.data.latency,
+            errorMsg: result.data.errorMsg,
+          };
 
           if (channel.modelId) {
             pendingFailures.push({
@@ -579,38 +653,122 @@ export async function POST(request: NextRequest) {
             if (isStream) {
               if (isUnifiedRouting && channel.modelId) {
                 return streamResponse(response, {
-                  onComplete: () => recordProxyModelResult(channel.modelId!, attempt.endpointType, true, {
-                    channelId: channel.channelId,
-                    modelName: channel.actualModelName,
-                    latency,
-                    statusCode: response.status,
-                    responseContent: "代理流式请求成功",
-                  }).catch(() => {}),
-                  onError: () => recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
-                    channelId: channel.channelId,
-                    modelName: channel.actualModelName,
-                    latency,
-                    statusCode: 502,
-                    errorMsg: "流式传输中断",
-                  }).catch(() => {}),
+                  onComplete: () => Promise.all([
+                    recordProxyModelResult(channel.modelId!, attempt.endpointType, true, {
+                      channelId: channel.channelId,
+                      modelName: channel.actualModelName,
+                      latency,
+                      statusCode: response.status,
+                      responseContent: "代理流式请求成功",
+                    }).catch(() => {}),
+                    writeRequestLog({
+                      endpointType: attempt.endpointType,
+                      requestedModel: modelName,
+                      actualModelName: channel.actualModelName,
+                      channelId: channel.channelId,
+                      channelName: channel.channelName,
+                      modelId: channel.modelId,
+                      isStream: true,
+                      success: true,
+                      statusCode: response.status,
+                      latency,
+                    }),
+                  ]).then(() => {}),
+                  onError: () => Promise.all([
+                    recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                      channelId: channel.channelId,
+                      modelName: channel.actualModelName,
+                      latency,
+                      statusCode: 502,
+                      errorMsg: "流式传输中断",
+                    }).catch(() => {}),
+                    writeRequestLog({
+                      endpointType: attempt.endpointType,
+                      requestedModel: modelName,
+                      actualModelName: channel.actualModelName,
+                      channelId: channel.channelId,
+                      channelName: channel.channelName,
+                      modelId: channel.modelId,
+                      isStream: true,
+                      success: false,
+                      statusCode: 502,
+                      latency,
+                      errorMsg: "流式传输中断",
+                    }),
+                  ]).then(() => {}),
                 });
               }
 
               if (channel.modelId) {
                 return streamResponse(response, {
-                  onComplete: () => rememberPreferredProxyEndpoint(
-                    channel.modelId!,
-                    attempt.endpointType
-                  ).catch(() => {}),
-                  onError: () => recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
-                    latency,
-                    statusCode: 502,
-                    errorMsg: "流式传输中断",
-                  }).catch(() => {}),
+                  onComplete: () => Promise.all([
+                    rememberPreferredProxyEndpoint(
+                      channel.modelId!,
+                      attempt.endpointType
+                    ).catch(() => {}),
+                    writeRequestLog({
+                      endpointType: attempt.endpointType,
+                      requestedModel: modelName,
+                      actualModelName: channel.actualModelName,
+                      channelId: channel.channelId,
+                      channelName: channel.channelName,
+                      modelId: channel.modelId,
+                      isStream: true,
+                      success: true,
+                      statusCode: response.status,
+                      latency,
+                    }),
+                  ]).then(() => {}),
+                  onError: () => Promise.all([
+                    recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                      latency,
+                      statusCode: 502,
+                      errorMsg: "流式传输中断",
+                    }).catch(() => {}),
+                    writeRequestLog({
+                      endpointType: attempt.endpointType,
+                      requestedModel: modelName,
+                      actualModelName: channel.actualModelName,
+                      channelId: channel.channelId,
+                      channelName: channel.channelName,
+                      modelId: channel.modelId,
+                      isStream: true,
+                      success: false,
+                      statusCode: 502,
+                      latency,
+                      errorMsg: "流式传输中断",
+                    }),
+                  ]).then(() => {}),
                 });
               }
 
-              return streamResponse(response);
+              return streamResponse(response, {
+                onComplete: () => writeRequestLog({
+                  endpointType: attempt.endpointType,
+                  requestedModel: modelName,
+                  actualModelName: channel.actualModelName,
+                  channelId: channel.channelId,
+                  channelName: channel.channelName,
+                  modelId: channel.modelId,
+                  isStream: true,
+                  success: true,
+                  statusCode: response.status,
+                  latency,
+                }),
+                onError: () => writeRequestLog({
+                  endpointType: attempt.endpointType,
+                  requestedModel: modelName,
+                  actualModelName: channel.actualModelName,
+                  channelId: channel.channelId,
+                  channelName: channel.channelName,
+                  modelId: channel.modelId,
+                  isStream: true,
+                  success: false,
+                  statusCode: 502,
+                  latency,
+                  errorMsg: "流式传输中断",
+                }),
+              });
             }
 
             const data = await response.json();
@@ -632,6 +790,19 @@ export async function POST(request: NextRequest) {
               }).catch(() => {});
             }
 
+            await writeRequestLog({
+              endpointType: attempt.endpointType,
+              requestedModel: modelName,
+              actualModelName: channel.actualModelName,
+              channelId: channel.channelId,
+              channelName: channel.channelName,
+              modelId: channel.modelId,
+              isStream: false,
+              success: true,
+              statusCode: response.status,
+              latency,
+            });
+
             return NextResponse.json(data);
           }
 
@@ -640,39 +811,124 @@ export async function POST(request: NextRequest) {
 
             if (isUnifiedRouting && channel.modelId) {
               return withStreamTracking(convertedResponse,
-                () => recordProxyModelResult(channel.modelId!, attempt.endpointType, true, {
-                  channelId: channel.channelId,
-                  modelName: channel.actualModelName,
-                  latency,
-                  statusCode: response.status,
-                  responseContent: "代理流式请求成功",
-                }).catch(() => {}),
-                () => recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
-                  channelId: channel.channelId,
-                  modelName: channel.actualModelName,
-                  latency,
-                  statusCode: 502,
-                  errorMsg: "流式传输中断",
-                }).catch(() => {}),
+                () => Promise.all([
+                  recordProxyModelResult(channel.modelId!, attempt.endpointType, true, {
+                    channelId: channel.channelId,
+                    modelName: channel.actualModelName,
+                    latency,
+                    statusCode: response.status,
+                    responseContent: "代理流式请求成功",
+                  }).catch(() => {}),
+                  writeRequestLog({
+                    endpointType: attempt.endpointType,
+                    requestedModel: modelName,
+                    actualModelName: channel.actualModelName,
+                    channelId: channel.channelId,
+                    channelName: channel.channelName,
+                    modelId: channel.modelId,
+                    isStream: true,
+                    success: true,
+                    statusCode: response.status,
+                    latency,
+                  }),
+                ]).then(() => {}),
+                () => Promise.all([
+                  recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                    channelId: channel.channelId,
+                    modelName: channel.actualModelName,
+                    latency,
+                    statusCode: 502,
+                    errorMsg: "流式传输中断",
+                  }).catch(() => {}),
+                  writeRequestLog({
+                    endpointType: attempt.endpointType,
+                    requestedModel: modelName,
+                    actualModelName: channel.actualModelName,
+                    channelId: channel.channelId,
+                    channelName: channel.channelName,
+                    modelId: channel.modelId,
+                    isStream: true,
+                    success: false,
+                    statusCode: 502,
+                    latency,
+                    errorMsg: "流式传输中断",
+                  }),
+                ]).then(() => {}),
               );
             }
 
             if (channel.modelId) {
               return withStreamTracking(
                 convertedResponse,
-                () => rememberPreferredProxyEndpoint(
-                  channel.modelId!,
-                  attempt.endpointType
-                ).catch(() => {}),
-                () => recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
-                  latency,
-                  statusCode: 502,
-                  errorMsg: "流式传输中断",
-                }).catch(() => {})
+                () => Promise.all([
+                  rememberPreferredProxyEndpoint(
+                    channel.modelId!,
+                    attempt.endpointType
+                  ).catch(() => {}),
+                  writeRequestLog({
+                    endpointType: attempt.endpointType,
+                    requestedModel: modelName,
+                    actualModelName: channel.actualModelName,
+                    channelId: channel.channelId,
+                    channelName: channel.channelName,
+                    modelId: channel.modelId,
+                    isStream: true,
+                    success: true,
+                    statusCode: response.status,
+                    latency,
+                  }),
+                ]).then(() => {}),
+                () => Promise.all([
+                  recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                    latency,
+                    statusCode: 502,
+                    errorMsg: "流式传输中断",
+                  }).catch(() => {}),
+                  writeRequestLog({
+                    endpointType: attempt.endpointType,
+                    requestedModel: modelName,
+                    actualModelName: channel.actualModelName,
+                    channelId: channel.channelId,
+                    channelName: channel.channelName,
+                    modelId: channel.modelId,
+                    isStream: true,
+                    success: false,
+                    statusCode: 502,
+                    latency,
+                    errorMsg: "流式传输中断",
+                  }),
+                ]).then(() => {})
               );
             }
 
-            return convertedResponse;
+            return withStreamTracking(
+              convertedResponse,
+              () => writeRequestLog({
+                endpointType: attempt.endpointType,
+                requestedModel: modelName,
+                actualModelName: channel.actualModelName,
+                channelId: channel.channelId,
+                channelName: channel.channelName,
+                modelId: channel.modelId,
+                isStream: true,
+                success: true,
+                statusCode: response.status,
+                latency,
+              }),
+              () => writeRequestLog({
+                endpointType: attempt.endpointType,
+                requestedModel: modelName,
+                actualModelName: channel.actualModelName,
+                channelId: channel.channelId,
+                channelName: channel.channelName,
+                modelId: channel.modelId,
+                isStream: true,
+                success: false,
+                statusCode: 502,
+                latency,
+                errorMsg: "流式传输中断",
+              })
+            );
           }
 
           const data = await response.json();
@@ -695,10 +951,33 @@ export async function POST(request: NextRequest) {
             }).catch(() => {});
           }
 
+          await writeRequestLog({
+            endpointType: attempt.endpointType,
+            requestedModel: modelName,
+            actualModelName: channel.actualModelName,
+            channelId: channel.channelId,
+            channelName: channel.channelName,
+            modelId: channel.modelId,
+            isStream: false,
+            success: true,
+            statusCode: response.status,
+            latency,
+          });
+
           return NextResponse.json(convertedPayload);
         } catch (error) {
           lastErrorMessage = `Proxy error: ${error instanceof Error ? error.message : "Unknown error"}`;
           lastStatus = 502;
+          finalFailureLog = {
+            endpointType: attempt.endpointType,
+            actualModelName: channel.actualModelName,
+            channelId: channel.channelId,
+            channelName: channel.channelName,
+            modelId: channel.modelId,
+            statusCode: 502,
+            latency,
+            errorMsg: lastErrorMessage,
+          };
 
           if (channel.modelId) {
             pendingFailures.push({
@@ -724,6 +1003,20 @@ export async function POST(request: NextRequest) {
         )
       );
     }
+
+    await writeRequestLog({
+      endpointType: finalFailureLog?.endpointType ?? "CODEX",
+      requestedModel: modelName,
+      actualModelName: finalFailureLog?.actualModelName ?? null,
+      channelId: finalFailureLog?.channelId ?? null,
+      channelName: finalFailureLog?.channelName ?? null,
+      modelId: finalFailureLog?.modelId ?? null,
+      isStream,
+      success: false,
+      statusCode: finalFailureLog?.statusCode ?? lastStatus,
+      latency: finalFailureLog?.latency,
+      errorMsg: finalFailureLog?.errorMsg ?? lastErrorMessage,
+    });
 
     return errorResponse(lastErrorMessage, lastStatus);
   } catch (error) {

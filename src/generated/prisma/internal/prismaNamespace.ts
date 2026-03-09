@@ -389,6 +389,7 @@ export const ModelName = {
   CheckLog: 'CheckLog',
   SchedulerConfig: 'SchedulerConfig',
   ProxyKey: 'ProxyKey',
+  ProxyRequestLog: 'ProxyRequestLog',
   ChannelKey: 'ChannelKey',
   ModelKeyword: 'ModelKeyword'
 } as const
@@ -406,7 +407,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "channel" | "model" | "checkLog" | "schedulerConfig" | "proxyKey" | "channelKey" | "modelKeyword"
+    modelProps: "channel" | "model" | "checkLog" | "schedulerConfig" | "proxyKey" | "proxyRequestLog" | "channelKey" | "modelKeyword"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -780,6 +781,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    ProxyRequestLog: {
+      payload: Prisma.$ProxyRequestLogPayload<ExtArgs>
+      fields: Prisma.ProxyRequestLogFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.ProxyRequestLogFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProxyRequestLogPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.ProxyRequestLogFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProxyRequestLogPayload>
+        }
+        findFirst: {
+          args: Prisma.ProxyRequestLogFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProxyRequestLogPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.ProxyRequestLogFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProxyRequestLogPayload>
+        }
+        findMany: {
+          args: Prisma.ProxyRequestLogFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProxyRequestLogPayload>[]
+        }
+        create: {
+          args: Prisma.ProxyRequestLogCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProxyRequestLogPayload>
+        }
+        createMany: {
+          args: Prisma.ProxyRequestLogCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.ProxyRequestLogCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProxyRequestLogPayload>[]
+        }
+        delete: {
+          args: Prisma.ProxyRequestLogDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProxyRequestLogPayload>
+        }
+        update: {
+          args: Prisma.ProxyRequestLogUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProxyRequestLogPayload>
+        }
+        deleteMany: {
+          args: Prisma.ProxyRequestLogDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.ProxyRequestLogUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.ProxyRequestLogUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProxyRequestLogPayload>[]
+        }
+        upsert: {
+          args: Prisma.ProxyRequestLogUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$ProxyRequestLogPayload>
+        }
+        aggregate: {
+          args: Prisma.ProxyRequestLogAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateProxyRequestLog>
+        }
+        groupBy: {
+          args: Prisma.ProxyRequestLogGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.ProxyRequestLogGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.ProxyRequestLogCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.ProxyRequestLogCountAggregateOutputType> | number
+        }
+      }
+    }
     ChannelKey: {
       payload: Prisma.$ChannelKeyPayload<ExtArgs>
       fields: Prisma.ChannelKeyFieldRefs
@@ -1051,6 +1126,29 @@ export const ProxyKeyScalarFieldEnum = {
 } as const
 
 export type ProxyKeyScalarFieldEnum = (typeof ProxyKeyScalarFieldEnum)[keyof typeof ProxyKeyScalarFieldEnum]
+
+
+export const ProxyRequestLogScalarFieldEnum = {
+  id: 'id',
+  proxyKeyId: 'proxyKeyId',
+  channelId: 'channelId',
+  modelId: 'modelId',
+  requestPath: 'requestPath',
+  requestMethod: 'requestMethod',
+  endpointType: 'endpointType',
+  requestedModel: 'requestedModel',
+  actualModelName: 'actualModelName',
+  channelName: 'channelName',
+  proxyKeyName: 'proxyKeyName',
+  isStream: 'isStream',
+  success: 'success',
+  statusCode: 'statusCode',
+  latency: 'latency',
+  errorMsg: 'errorMsg',
+  createdAt: 'createdAt'
+} as const
+
+export type ProxyRequestLogScalarFieldEnum = (typeof ProxyRequestLogScalarFieldEnum)[keyof typeof ProxyRequestLogScalarFieldEnum]
 
 
 export const ChannelKeyScalarFieldEnum = {
@@ -1329,6 +1427,7 @@ export type GlobalOmitConfig = {
   checkLog?: Prisma.CheckLogOmit
   schedulerConfig?: Prisma.SchedulerConfigOmit
   proxyKey?: Prisma.ProxyKeyOmit
+  proxyRequestLog?: Prisma.ProxyRequestLogOmit
   channelKey?: Prisma.ChannelKeyOmit
   modelKeyword?: Prisma.ModelKeywordOmit
 }
