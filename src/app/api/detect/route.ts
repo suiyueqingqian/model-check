@@ -8,7 +8,7 @@ import {
   triggerModelDetection,
   getDetectionProgress,
 } from "@/lib/queue/service";
-import { getQueueStats, getTestingChannelIds, isQueueRunning, pauseAndDrainQueue } from "@/lib/queue/queue";
+import { getQueueStats, getTestingChannelIds, isQueueRunning, pauseAndDrainQueue, removeJobsByModelIds } from "@/lib/queue/queue";
 
 // POST /api/detect - Trigger detection
 export async function POST(request: NextRequest) {
@@ -99,12 +99,26 @@ export async function GET() {
   }
 }
 
-// DELETE /api/detect - Stop all detection tasks
+// DELETE /api/detect - Stop detection tasks (selective or all)
 export async function DELETE(request: NextRequest) {
   const authError = requireAuth(request);
   if (authError) return authError;
 
   try {
+    const body = await request.json().catch(() => ({}));
+    const { modelIds } = body;
+
+    if (Array.isArray(modelIds) && modelIds.length > 0) {
+      // 选择性停止 - 只移除指定模型的任务
+      const removed = await removeJobsByModelIds(modelIds);
+      return NextResponse.json({
+        success: true,
+        message: `已停止 ${removed} 个检测任务`,
+        cleared: removed,
+      });
+    }
+
+    // 全量停止
     const { cleared } = await pauseAndDrainQueue();
     return NextResponse.json({
       success: true,

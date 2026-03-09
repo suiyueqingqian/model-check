@@ -23,11 +23,7 @@ function createRedisClient() {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
     retryStrategy(times) {
-      if (times > 10) {
-        return null;
-      }
-      const delay = Math.min(times * 500, 5000);
-      return delay;
+      return Math.min(times * 500, 30000);
     },
   });
 
@@ -105,6 +101,12 @@ function createPubSubManager(): PubSubManager {
         isSubscriberConnected = false;
         globalForRedis.pubsubConnected = false;
         subscriberPromise = null; // Allow reconnection
+        // 延迟触发重连
+        setTimeout(() => {
+          if (!isSubscriberConnected && !subscriberPromise) {
+            ensureSubscriber().catch(() => {});
+          }
+        }, 3000);
       });
 
       newSubscriber.on("error", () => {
@@ -152,6 +154,13 @@ function createPubSubManager(): PubSubManager {
       // Return unsubscribe function
       return () => {
         emitter.off(eventName, callback);
+        // 无监听器时取消 Redis 订阅，防止频道泄露
+        if (emitter.listenerCount(eventName) === 0) {
+          subscribedChannels.delete(channel);
+          if (subscriber && isSubscriberConnected) {
+            subscriber.unsubscribe(channel).catch(() => {});
+          }
+        }
       };
     },
 

@@ -8,8 +8,20 @@ import { getProxyApiKey, validateProxyKey, canAccessModel, type ValidateKeyResul
 import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 
 // Round-robin counter per channel (auto-clears when too many stale keys accumulate)
+// TODO: 轮询计数器存储在进程内 Map 中，多实例部署时需迁移到 Redis
 const roundRobinCounters = new Map<string, number>();
 const ROUND_ROBIN_MAX_KEYS = 10000;
+
+function evictRoundRobinCounters(): void {
+  if (roundRobinCounters.size < ROUND_ROBIN_MAX_KEYS) return;
+  // Map 按插入顺序迭代，淘汰前半部分（最旧的）
+  const evictCount = Math.floor(roundRobinCounters.size / 2);
+  let i = 0;
+  for (const key of roundRobinCounters.keys()) {
+    if (i++ >= evictCount) break;
+    roundRobinCounters.delete(key);
+  }
+}
 
 /**
  * Safely parse JSON field as string array
@@ -71,7 +83,7 @@ export interface ProxyRequestContext {
   keyResult: ValidateKeyResult;
 }
 
-export type ProxyEndpointType = "CHAT" | "CLAUDE" | "GEMINI" | "CODEX";
+export type ProxyEndpointType = "CHAT" | "CLAUDE" | "GEMINI" | "CODEX" | "IMAGE";
 
 export interface ProxyChannelCandidate {
   channelId: string;
@@ -82,6 +94,7 @@ export interface ProxyChannelCandidate {
   actualModelName: string;
   modelId: string;
   modelStatus: boolean | null;
+  preferredProxyEndpoint: "CHAT" | "CODEX" | null;
 }
 
 export interface ProxyChannelCandidateResult {
@@ -186,7 +199,12 @@ export async function findChannelByModel(modelName: string, preferredEndpoint?: 
       modelName,
       channel: { enabled: true },
     },
-    include: {
+    select: {
+      id: true,
+      modelName: true,
+      detectedEndpoints: true,
+      lastStatus: true,
+      preferredProxyEndpoint: true,
       channel: {
         select: {
           id: true,
@@ -229,7 +247,12 @@ export async function findChannelByModel(modelName: string, preferredEndpoint?: 
             name: modelName.slice(0, slashIndex),
           },
         },
-        include: {
+        select: {
+          id: true,
+          modelName: true,
+          detectedEndpoints: true,
+          lastStatus: true,
+          preferredProxyEndpoint: true,
           channel: {
             select: {
               id: true,
@@ -305,7 +328,7 @@ export async function findChannelByModel(modelName: string, preferredEndpoint?: 
       // round_robin
       const counterKey = `${channel.id}:${actualModelName}`;
       if (roundRobinCounters.size >= ROUND_ROBIN_MAX_KEYS) {
-        roundRobinCounters.clear();
+        evictRoundRobinCounters();
       }
       const current = roundRobinCounters.get(counterKey) || 0;
       selected = sameChannelModels[current % sameChannelModels.length];
@@ -327,6 +350,10 @@ export async function findChannelByModel(modelName: string, preferredEndpoint?: 
     actualModelName,
     modelId: selected.id,
     modelStatus: selected.lastStatus,
+    preferredProxyEndpoint:
+      selected.preferredProxyEndpoint === "CHAT" || selected.preferredProxyEndpoint === "CODEX"
+        ? selected.preferredProxyEndpoint
+        : null,
   };
 }
 
@@ -345,7 +372,12 @@ async function getUnifiedModelCandidates(
       channel: { enabled: true },
       lastStatus: true,
     },
-    include: {
+    select: {
+      id: true,
+      modelName: true,
+      detectedEndpoints: true,
+      lastStatus: true,
+      preferredProxyEndpoint: true,
       channel: {
         select: {
           id: true,
@@ -381,12 +413,15 @@ async function getUnifiedModelCandidates(
     return true;
   });
 
-  // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型
+  // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型（有回退）
   let endpointFiltered = validModels;
   if (preferredEndpoint && validModels.length > 0) {
-    endpointFiltered = validModels.filter((m) =>
+    const filtered = validModels.filter((m) =>
       supportsPreferredEndpoint(m.modelName, m.detectedEndpoints, preferredEndpoint)
     );
+    if (filtered.length > 0) {
+      endpointFiltered = filtered;
+    }
   }
 
   if (endpointFiltered.length === 0) {
@@ -419,7 +454,38 @@ async function getUnifiedModelCandidates(
     }
   }
 
-  return permittedModels.map((selected) => ({
+  // 同渠道多 key 按 routeStrategy 做组内负载均衡，每个渠道只出一个候选
+  const channelGroups = new Map<string, typeof permittedModels>();
+  for (const m of permittedModels) {
+    const group = channelGroups.get(m.channel.id);
+    if (group) {
+      group.push(m);
+    } else {
+      channelGroups.set(m.channel.id, [m]);
+    }
+  }
+
+  const balancedModels: typeof permittedModels = [];
+  for (const [channelId, group] of channelGroups) {
+    if (group.length <= 1) {
+      balancedModels.push(...group);
+    } else {
+      const strategy = group[0].channel.routeStrategy;
+      if (strategy === "random") {
+        balancedModels.push(group[Math.floor(Math.random() * group.length)]);
+      } else {
+        const rrKey = `unified:${channelId}:${modelName}`;
+        if (roundRobinCounters.size >= ROUND_ROBIN_MAX_KEYS) {
+          evictRoundRobinCounters();
+        }
+        const idx = (roundRobinCounters.get(rrKey) || 0) % group.length;
+        roundRobinCounters.set(rrKey, idx + 1);
+        balancedModels.push(group[idx]);
+      }
+    }
+  }
+
+  return balancedModels.map((selected) => ({
     channelId: selected.channel.id,
     channelName: selected.channel.name,
     baseUrl: selected.channel.baseUrl.replace(/\/$/, ""),
@@ -428,6 +494,10 @@ async function getUnifiedModelCandidates(
     actualModelName: modelName,
     modelId: selected.id,
     modelStatus: selected.lastStatus,
+    preferredProxyEndpoint:
+      selected.preferredProxyEndpoint === "CHAT" || selected.preferredProxyEndpoint === "CODEX"
+        ? selected.preferredProxyEndpoint
+        : null,
   }));
 }
 
@@ -442,7 +512,7 @@ function orderUnifiedCandidatesRoundRobin(
 
   const counterKey = `unified:${preferredEndpoint || "ANY"}:${modelName}`;
   if (roundRobinCounters.size >= ROUND_ROBIN_MAX_KEYS) {
-    roundRobinCounters.clear();
+    evictRoundRobinCounters();
   }
 
   const current = roundRobinCounters.get(counterKey) || 0;
@@ -532,6 +602,8 @@ export async function recordProxyModelResult(
   endpointType: ProxyEndpointType,
   success: boolean,
   options?: {
+    channelId?: string;
+    modelName?: string;
     latency?: number;
     statusCode?: number;
     errorMsg?: string;
@@ -540,16 +612,49 @@ export async function recordProxyModelResult(
 ): Promise<void> {
   const now = new Date();
 
-  await prisma.$transaction([
-    prisma.model.update({
+  // 按状态码分级决定是否更新 lastStatus：
+  // 成功 / 5xx / 401/403/404 → 更新（模型或渠道真有问题）
+  // 400/422/429 等其他 4xx → 可能是用户侧问题，不更新
+  const shouldUpdateStatus = success || !options?.statusCode ||
+    (options.statusCode >= 500) ||
+    [401, 403, 404].includes(options.statusCode);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.model.update({
       where: { id: modelId },
       data: {
-        lastStatus: success,
+        ...(shouldUpdateStatus ? { lastStatus: success } : {}),
         lastLatency: success ? (options?.latency ?? null) : null,
         lastCheckedAt: now,
       },
-    }),
-    prisma.checkLog.create({
+    });
+
+    if (success) {
+      await tx.$executeRaw`
+        UPDATE "models"
+        SET "detected_endpoints" =
+          CASE
+            WHEN ${endpointType} = ANY(COALESCE("detected_endpoints", ARRAY[]::text[])) THEN COALESCE("detected_endpoints", ARRAY[]::text[])
+            ELSE COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY[${endpointType}]
+          END
+        WHERE id = ${modelId}
+      `;
+
+      if (
+        options?.channelId &&
+        options?.modelName &&
+        (endpointType === "CHAT" || endpointType === "CODEX")
+      ) {
+        await tx.model.update({
+          where: { id: modelId },
+          data: {
+            preferredProxyEndpoint: endpointType,
+          },
+        });
+      }
+    }
+
+    await tx.checkLog.create({
       data: {
         modelId,
         endpointType,
@@ -559,8 +664,22 @@ export async function recordProxyModelResult(
         errorMsg: success ? null : (options?.errorMsg || "代理请求失败"),
         responseContent: success ? (options?.responseContent || null) : null,
       },
-    }),
-  ]);
+    });
+  });
+}
+
+export async function rememberPreferredProxyEndpoint(
+  modelId: string,
+  endpointType: "CHAT" | "CODEX"
+): Promise<void> {
+  await prisma.model.update({
+    where: {
+      id: modelId,
+    },
+    data: {
+      preferredProxyEndpoint: endpointType,
+    },
+  });
 }
 
 /**
@@ -650,6 +769,15 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
     return true;
   });
 
+  // allowedUnifiedModels 过滤：与统一模式路由保持一致
+  let filteredModels = availableModels;
+  if (keyResult?.keyRecord && !keyResult.keyRecord.allowAllModels) {
+    const allowedUnified = parseStringArray(keyResult.keyRecord.allowedUnifiedModels);
+    if (allowedUnified && allowedUnified.length > 0) {
+      filteredModels = availableModels.filter((m) => allowedUnified.includes(m.modelName));
+    }
+  }
+
   const uniqueModels = new Map<string, {
     id: string;
     modelName: string;
@@ -657,7 +785,7 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
     channelId: string;
   }>();
 
-  for (const m of availableModels) {
+  for (const m of filteredModels) {
     const dedupeKey = `${m.channel.id}\u0000${m.modelName}`;
     if (!uniqueModels.has(dedupeKey)) {
       uniqueModels.set(dedupeKey, {
@@ -778,30 +906,59 @@ export async function proxyRequest(
  * - Gemini JSON array streaming (application/json)
  * - OpenAI Responses API SSE format (event: + data:)
  */
-export function streamResponse(upstream: Response): Response {
+export function streamResponse(
+  upstream: Response,
+  callbacks?: {
+    onComplete?: () => void;
+    onError?: (err: Error) => void;
+  }
+): Response {
   const reader = upstream.body?.getReader();
 
   if (!reader) {
     return new Response("Upstream response has no body", { status: 502 });
   }
 
+  const IDLE_TIMEOUT_MS = 60000; // 60s idle timeout
   const stream = new ReadableStream({
     async start(controller) {
+      let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const clearIdle = () => {
+        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      };
+
+      const resetIdleTimer = () => {
+        clearIdle();
+        idleTimer = setTimeout(() => {
+          const err = new Error("Stream idle timeout (60s no data)");
+          callbacks?.onError?.(err);
+          try { controller.error(err); } catch { /* already closed */ }
+          reader.cancel().catch(() => {});
+        }, IDLE_TIMEOUT_MS);
+      };
+
+      resetIdleTimer();
+
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
+            clearIdle();
+            callbacks?.onComplete?.();
             controller.close();
             break;
           }
+          resetIdleTimer();
           controller.enqueue(value);
         }
-      } catch {
-        // Upstream closed mid-stream — close gracefully so partial data still reaches the client
+      } catch (err) {
+        clearIdle();
+        callbacks?.onError?.(err instanceof Error ? err : new Error("Upstream stream interrupted"));
         try {
-          controller.close();
+          controller.error(err instanceof Error ? err : new Error("Upstream stream interrupted"));
         } catch {
-          // controller already closed or errored, nothing to do
+          // controller already closed or errored
         }
       }
     },
@@ -826,6 +983,49 @@ export function streamResponse(upstream: Response): Response {
         "Transfer-Encoding": upstream.headers.get("Transfer-Encoding")!,
       }),
     },
+  });
+}
+
+/**
+ * Wrap a Response body with stream completion/error tracking.
+ * Used for converted/transformed streams where streamResponse callbacks can't be used.
+ */
+export function withStreamTracking(
+  response: Response,
+  onComplete: () => void,
+  onError: (err: Error) => void
+): Response {
+  const body = response.body;
+  if (!body) return response;
+
+  const reader = body.getReader();
+  const stream = new ReadableStream({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          onComplete();
+          controller.close();
+        } else {
+          controller.enqueue(value);
+        }
+      } catch (err) {
+        onError(err instanceof Error ? err : new Error("Stream tracking error"));
+        try {
+          controller.error(err instanceof Error ? err : new Error("Stream tracking error"));
+        } catch {
+          // controller already closed
+        }
+      }
+    },
+    cancel() {
+      reader.cancel();
+    },
+  });
+
+  return new Response(stream, {
+    status: response.status,
+    headers: response.headers,
   });
 }
 

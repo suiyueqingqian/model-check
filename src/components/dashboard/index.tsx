@@ -12,6 +12,8 @@ import { useToast } from "@/components/ui/toast";
 import { Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const EMPTY_SET = new Set<string>();
+
 interface CheckLog {
   id: string;
   status: "SUCCESS" | "FAIL";
@@ -82,7 +84,7 @@ export function Dashboard({
   search = "",
   endpointFilter = "all",
   statusFilter = "all",
-  testingModelIds = new Set(),
+  testingModelIds = EMPTY_SET,
   onTestModels,
   onStopModels,
 }: DashboardProps) {

@@ -989,6 +989,7 @@ export const ModelScalarFieldEnum = {
   channelId: 'channelId',
   modelName: 'modelName',
   detectedEndpoints: 'detectedEndpoints',
+  preferredProxyEndpoint: 'preferredProxyEndpoint',
   lastStatus: 'lastStatus',
   lastLatency: 'lastLatency',
   lastCheckedAt: 'lastCheckedAt',

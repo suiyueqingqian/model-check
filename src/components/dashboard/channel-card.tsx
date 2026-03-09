@@ -9,7 +9,7 @@ import { StatusIndicator } from "@/components/ui/status-indicator";
 import { Heatmap } from "@/components/ui/heatmap";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/ui/toast";
-import { getDisplayEndpoints } from "@/lib/utils/model-name";
+import { getDisplayEndpoints, isResponsesCompatibleChatModel, supportsDisplayEndpoint } from "@/lib/utils/model-name";
 
 interface CheckLog {
   id: string;
@@ -87,44 +87,59 @@ function formatEndpointType(ep: string): { label: string; type: "chat" | "cli" }
     case "GEMINI":
       return { label: "Gemini CLI", type: "cli" };
     case "CODEX":
-      return { label: "Codex CLI", type: "cli" };
+      return { label: "Responses", type: "cli" };
     default:
       return { label: ep, type: "chat" };
   }
 }
 
-// Helper function to check if a model is healthy based on checkLogs
-// Model is healthy only if ALL tested endpoints are successful
-function isModelHealthy(model: Model): boolean {
-  if (model.checkLogs.length === 0) return false;
+function pickPreferredLog(logs: CheckLog[]): CheckLog | undefined {
+  if (logs.length === 0) {
+    return undefined;
+  }
 
-  // Get latest status for each endpoint type
+  const sortedLogs = [...logs].sort((a, b) => {
+    if (a.status !== b.status) {
+      return a.status === "SUCCESS" ? -1 : 1;
+    }
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+  });
+
+  return sortedLogs[0];
+}
+
+function getSemanticEndpointStatuses(modelName: string, checkLogs: CheckLog[]): Record<string, string> {
   const endpointStatuses: Record<string, string> = {};
-  for (const log of model.checkLogs) {
+  const chatLikeLogs: CheckLog[] = [];
+
+  for (const log of checkLogs) {
+    if (isResponsesCompatibleChatModel(modelName) && (log.endpointType === "CHAT" || log.endpointType === "CODEX")) {
+      chatLikeLogs.push(log);
+      continue;
+    }
+
     if (!endpointStatuses[log.endpointType]) {
       endpointStatuses[log.endpointType] = log.status;
     }
   }
 
-  // Model is healthy only if all tested endpoints are successful
+  if (chatLikeLogs.length > 0) {
+    endpointStatuses.CHAT = chatLikeLogs.some((log) => log.status === "SUCCESS") ? "SUCCESS" : "FAIL";
+  }
+
+  return endpointStatuses;
+}
+
+function isModelHealthy(model: Model): boolean {
+  if (model.checkLogs.length === 0) return false;
+  const endpointStatuses = getSemanticEndpointStatuses(model.modelName, model.checkLogs);
   const statuses = Object.values(endpointStatuses);
   return statuses.length > 0 && statuses.every((s) => s === "SUCCESS");
 }
 
-// Helper function to check if a model has at least one available endpoint
-// Model is available if ANY endpoint (chat OR cli) is successful
 function isModelAvailable(model: Model): boolean {
   if (model.checkLogs.length === 0) return false;
-
-  // Get latest status for each endpoint type
-  const endpointStatuses: Record<string, string> = {};
-  for (const log of model.checkLogs) {
-    if (!endpointStatuses[log.endpointType]) {
-      endpointStatuses[log.endpointType] = log.status;
-    }
-  }
-
-  // Model is available if at least one endpoint is successful
+  const endpointStatuses = getSemanticEndpointStatuses(model.modelName, model.checkLogs);
   const statuses = Object.values(endpointStatuses);
   return statuses.length > 0 && statuses.some((s) => s === "SUCCESS");
 }
@@ -177,13 +192,15 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
 
   // Filter models by endpoint if local filter is active
   const displayedModels = currentFilter
-    ? channel.models.filter((m) => m.detectedEndpoints?.includes(currentFilter))
+    ? channel.models.filter((m) =>
+        supportsDisplayEndpoint(m.modelName, m.detectedEndpoints || [], currentFilter)
+      )
     : channel.models;
 
   // Group models by endpoint type
   const endpointCounts = channel.models.reduce(
     (acc, model) => {
-      const endpoints = model.detectedEndpoints || [];
+      const endpoints = getDisplayEndpoints(model.modelName, model.detectedEndpoints || []);
       endpoints.forEach((ep) => {
         acc[ep] = (acc[ep] || 0) + 1;
       });
@@ -210,8 +227,10 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
         const response = await fetch("/api/detect", {
           method: "DELETE",
           headers: {
+            "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
+          body: JSON.stringify({ modelIds }),
         });
         if (response.ok) {
           update(toastId, `渠道 ${channel.name} 测试已停止`, "success");
@@ -258,7 +277,11 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
       try {
         const response = await fetch("/api/detect", {
           method: "DELETE",
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ modelIds: [modelId] }),
         });
         if (response.ok) {
           update(toastId, `模型 ${modelName} 测试已停止`, "success");
@@ -492,6 +515,35 @@ function getEndpointStatuses(checkLogs: CheckLog[]): Record<string, CheckLog> {
   return statuses;
 }
 
+function getDisplayEndpointLog(
+  modelName: string,
+  endpointStatuses: Record<string, CheckLog>,
+  endpointType: string
+): CheckLog | undefined {
+  const directLog = endpointStatuses[endpointType];
+  if (directLog) {
+    return directLog;
+  }
+
+  if (!isResponsesCompatibleChatModel(modelName)) {
+    return undefined;
+  }
+
+  const chatLikeLog = pickPreferredLog(
+    [endpointStatuses.CHAT, endpointStatuses.CODEX].filter((log): log is CheckLog => !!log)
+  );
+
+  if (endpointType === "CHAT") {
+    return chatLikeLog;
+  }
+
+  if (endpointType === "CODEX") {
+    return chatLikeLog;
+  }
+
+  return undefined;
+}
+
 // Endpoint badge component with status
 function EndpointBadge({
   type,
@@ -561,24 +613,27 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
   const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const text = `${channelName}/${model.modelName}`;
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      console.warn("复制失败");
+    }
   };
 
   // gpt-5+ 模型固定展示 Chat 和 Codex 两个端点状态
   const endpoints = getDisplayEndpoints(model.modelName, (model.detectedEndpoints || []) as string[]);
   const endpointStatuses = getEndpointStatuses(model.checkLogs);
+  const semanticStatuses = getSemanticEndpointStatuses(model.modelName, model.checkLogs);
 
-  // Calculate overall status based on all endpoints
-  const testedEndpoints = Object.keys(endpointStatuses);
+  const testedEndpoints = Object.keys(semanticStatuses);
   const hasBeenTested = testedEndpoints.length > 0;
   const allSuccess = hasBeenTested && testedEndpoints.every(
-    (ep) => endpointStatuses[ep]?.status === "SUCCESS"
+    (ep) => semanticStatuses[ep] === "SUCCESS"
   );
-  // Overall status: all success = healthy, partial = partial, all fail = unhealthy, no tests = unknown
   const allFail = hasBeenTested && testedEndpoints.every(
-    (ep) => endpointStatuses[ep]?.status === "FAIL"
+    (ep) => semanticStatuses[ep] === "FAIL"
   );
   const isHealthy = hasBeenTested && allSuccess;
   const isUnknown = !hasBeenTested;
@@ -662,7 +717,7 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
             <EndpointBadge
               key={ep}
               type={ep}
-              log={endpointStatuses[ep]}
+              log={getDisplayEndpointLog(model.modelName, endpointStatuses, ep)}
             />
           ))}
         </div>
@@ -689,7 +744,8 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
       {testedEndpoints.length > 0 && (
         <div className="mt-2 pt-2 border-t border-border/50 text-xs space-y-1.5">
           {testedEndpoints.map((ep) => {
-            const log = endpointStatuses[ep];
+            const log = getDisplayEndpointLog(model.modelName, endpointStatuses, ep);
+            if (!log) return null;
             const isSuccess = log?.status === "SUCCESS";
             const { label } = formatEndpointType(ep);
             const content = isSuccess ? log.responseContent : log.errorMsg;
@@ -735,6 +791,7 @@ function formatRelativeTime(dateStr: string): string {
   const date = new Date(dateStr);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
+  if (diffMs < 0) return "刚刚";
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMins / 60);
   const diffDays = Math.floor(diffHours / 24);

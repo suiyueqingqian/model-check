@@ -86,7 +86,7 @@ export function ModelFilterModal({
   }, [token]);
 
   // Auto-fetch models on mount
-  const fetchModels = useCallback(async () => {
+  const fetchModels = useCallback(async (signal?: AbortSignal) => {
     if (targetChannels.length === 0) return;
     setFetching(true);
     setFetchDone(false);
@@ -96,12 +96,14 @@ export function ModelFilterModal({
     try {
       const batchSize = 10;
       for (let i = 0; i < targetChannels.length; i += batchSize) {
+        if (signal?.aborted) return;
         const batch = targetChannels.slice(i, i + batchSize);
         const results = await Promise.allSettled(
           batch.map(async (ch) => {
             const res = await fetch(`/api/channel/${ch.id}/validate-keys`, {
               method: "POST",
               headers,
+              signal,
             });
             if (!res.ok) throw new Error("获取失败");
             const data = await res.json();
@@ -163,6 +165,7 @@ export function ModelFilterModal({
         toast("未获取到任何模型", "error");
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       toast(err instanceof Error ? err.message : "获取失败", "error");
     } finally {
       setFetching(false);
@@ -170,7 +173,10 @@ export function ModelFilterModal({
   }, [targetChannels, headers, toast]);
 
   useEffect(() => {
-    if (token && targetChannels.length > 0) fetchModels();
+    if (!token || targetChannels.length === 0) return;
+    const controller = new AbortController();
+    fetchModels(controller.signal);
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 

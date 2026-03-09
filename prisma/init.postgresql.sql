@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS "models" (
   "channel_id" TEXT NOT NULL,
   "model_name" VARCHAR(200) NOT NULL,
   "detected_endpoints" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  "preferred_proxy_endpoint" VARCHAR(20),
   "last_status" BOOLEAN,
   "last_latency" INTEGER,
   "last_checked_at" TIMESTAMP(3),
@@ -72,7 +73,7 @@ CREATE TABLE IF NOT EXISTS "models" (
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY ("id"),
-  CONSTRAINT "models_channel_id_model_name_channel_key_id_key" UNIQUE ("channel_id", "model_name", "channel_key_id"),
+  CONSTRAINT "models_channel_id_model_name_channel_key_id_key" UNIQUE NULLS NOT DISTINCT ("channel_id", "model_name", "channel_key_id"),
   CONSTRAINT "models_channel_id_fkey" FOREIGN KEY ("channel_id") REFERENCES "channels"("id") ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT "models_channel_key_id_fkey" FOREIGN KEY ("channel_key_id") REFERENCES "channel_keys"("id") ON DELETE SET NULL ON UPDATE CASCADE
 );
@@ -153,6 +154,7 @@ ALTER TABLE "channel_keys" ADD COLUMN IF NOT EXISTS "updated_at" TIMESTAMP(3) NO
 
 -- models: 后加的检测端点、状态字段
 ALTER TABLE "models" ADD COLUMN IF NOT EXISTS "detected_endpoints" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+ALTER TABLE "models" ADD COLUMN IF NOT EXISTS "preferred_proxy_endpoint" VARCHAR(20);
 ALTER TABLE "models" ADD COLUMN IF NOT EXISTS "last_status" BOOLEAN;
 ALTER TABLE "models" ADD COLUMN IF NOT EXISTS "last_latency" INTEGER;
 ALTER TABLE "models" ADD COLUMN IF NOT EXISTS "last_checked_at" TIMESTAMP(3);
@@ -274,13 +276,14 @@ DO $$ BEGIN
 END $$;
 
 DO $$ BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'models_channel_id_model_name_channel_key_id_key'
   ) THEN
-    ALTER TABLE "models"
-      ADD CONSTRAINT "models_channel_id_model_name_channel_key_id_key"
-      UNIQUE ("channel_id", "model_name", "channel_key_id");
+    ALTER TABLE "models" DROP CONSTRAINT "models_channel_id_model_name_channel_key_id_key";
   END IF;
+  ALTER TABLE "models"
+    ADD CONSTRAINT "models_channel_id_model_name_channel_key_id_key"
+    UNIQUE NULLS NOT DISTINCT ("channel_id", "model_name", "channel_key_id");
 END $$;
 
 -- ==========================================
@@ -291,3 +294,4 @@ CREATE INDEX IF NOT EXISTS "check_logs_model_id_created_at_idx" ON "check_logs"(
 CREATE INDEX IF NOT EXISTS "check_logs_created_at_idx" ON "check_logs"("created_at");
 CREATE INDEX IF NOT EXISTS "channel_keys_channel_id_idx" ON "channel_keys"("channel_id");
 CREATE INDEX IF NOT EXISTS "models_channel_key_id_idx" ON "models"("channel_key_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "channels_name_key" ON "channels"("name");

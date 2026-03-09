@@ -38,6 +38,7 @@ export type ModelMinAggregateOutputType = {
   id: string | null
   channelId: string | null
   modelName: string | null
+  preferredProxyEndpoint: string | null
   lastStatus: boolean | null
   lastLatency: number | null
   lastCheckedAt: Date | null
@@ -50,6 +51,7 @@ export type ModelMaxAggregateOutputType = {
   id: string | null
   channelId: string | null
   modelName: string | null
+  preferredProxyEndpoint: string | null
   lastStatus: boolean | null
   lastLatency: number | null
   lastCheckedAt: Date | null
@@ -63,6 +65,7 @@ export type ModelCountAggregateOutputType = {
   channelId: number
   modelName: number
   detectedEndpoints: number
+  preferredProxyEndpoint: number
   lastStatus: number
   lastLatency: number
   lastCheckedAt: number
@@ -85,6 +88,7 @@ export type ModelMinAggregateInputType = {
   id?: true
   channelId?: true
   modelName?: true
+  preferredProxyEndpoint?: true
   lastStatus?: true
   lastLatency?: true
   lastCheckedAt?: true
@@ -97,6 +101,7 @@ export type ModelMaxAggregateInputType = {
   id?: true
   channelId?: true
   modelName?: true
+  preferredProxyEndpoint?: true
   lastStatus?: true
   lastLatency?: true
   lastCheckedAt?: true
@@ -110,6 +115,7 @@ export type ModelCountAggregateInputType = {
   channelId?: true
   modelName?: true
   detectedEndpoints?: true
+  preferredProxyEndpoint?: true
   lastStatus?: true
   lastLatency?: true
   lastCheckedAt?: true
@@ -210,6 +216,7 @@ export type ModelGroupByOutputType = {
   channelId: string
   modelName: string
   detectedEndpoints: string[]
+  preferredProxyEndpoint: string | null
   lastStatus: boolean | null
   lastLatency: number | null
   lastCheckedAt: Date | null
@@ -246,6 +253,7 @@ export type ModelWhereInput = {
   channelId?: Prisma.StringFilter<"Model"> | string
   modelName?: Prisma.StringFilter<"Model"> | string
   detectedEndpoints?: Prisma.StringNullableListFilter<"Model">
+  preferredProxyEndpoint?: Prisma.StringNullableFilter<"Model"> | string | null
   lastStatus?: Prisma.BoolNullableFilter<"Model"> | boolean | null
   lastLatency?: Prisma.IntNullableFilter<"Model"> | number | null
   lastCheckedAt?: Prisma.DateTimeNullableFilter<"Model"> | Date | string | null
@@ -262,6 +270,7 @@ export type ModelOrderByWithRelationInput = {
   channelId?: Prisma.SortOrder
   modelName?: Prisma.SortOrder
   detectedEndpoints?: Prisma.SortOrder
+  preferredProxyEndpoint?: Prisma.SortOrderInput | Prisma.SortOrder
   lastStatus?: Prisma.SortOrderInput | Prisma.SortOrder
   lastLatency?: Prisma.SortOrderInput | Prisma.SortOrder
   lastCheckedAt?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -282,6 +291,7 @@ export type ModelWhereUniqueInput = Prisma.AtLeast<{
   channelId?: Prisma.StringFilter<"Model"> | string
   modelName?: Prisma.StringFilter<"Model"> | string
   detectedEndpoints?: Prisma.StringNullableListFilter<"Model">
+  preferredProxyEndpoint?: Prisma.StringNullableFilter<"Model"> | string | null
   lastStatus?: Prisma.BoolNullableFilter<"Model"> | boolean | null
   lastLatency?: Prisma.IntNullableFilter<"Model"> | number | null
   lastCheckedAt?: Prisma.DateTimeNullableFilter<"Model"> | Date | string | null
@@ -298,6 +308,7 @@ export type ModelOrderByWithAggregationInput = {
   channelId?: Prisma.SortOrder
   modelName?: Prisma.SortOrder
   detectedEndpoints?: Prisma.SortOrder
+  preferredProxyEndpoint?: Prisma.SortOrderInput | Prisma.SortOrder
   lastStatus?: Prisma.SortOrderInput | Prisma.SortOrder
   lastLatency?: Prisma.SortOrderInput | Prisma.SortOrder
   lastCheckedAt?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -319,6 +330,7 @@ export type ModelScalarWhereWithAggregatesInput = {
   channelId?: Prisma.StringWithAggregatesFilter<"Model"> | string
   modelName?: Prisma.StringWithAggregatesFilter<"Model"> | string
   detectedEndpoints?: Prisma.StringNullableListFilter<"Model">
+  preferredProxyEndpoint?: Prisma.StringNullableWithAggregatesFilter<"Model"> | string | null
   lastStatus?: Prisma.BoolNullableWithAggregatesFilter<"Model"> | boolean | null
   lastLatency?: Prisma.IntNullableWithAggregatesFilter<"Model"> | number | null
   lastCheckedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"Model"> | Date | string | null
@@ -331,6 +343,7 @@ export type ModelCreateInput = {
   id?: string
   modelName: string
   detectedEndpoints?: Prisma.ModelCreatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: string | null
   lastStatus?: boolean | null
   lastLatency?: number | null
   lastCheckedAt?: Date | string | null
@@ -346,6 +359,7 @@ export type ModelUncheckedCreateInput = {
   channelId: string
   modelName: string
   detectedEndpoints?: Prisma.ModelCreatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: string | null
   lastStatus?: boolean | null
   lastLatency?: number | null
   lastCheckedAt?: Date | string | null
@@ -359,6 +373,7 @@ export type ModelUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -374,6 +389,7 @@ export type ModelUncheckedUpdateInput = {
   channelId?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -388,6 +404,7 @@ export type ModelCreateManyInput = {
   channelId: string
   modelName: string
   detectedEndpoints?: Prisma.ModelCreatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: string | null
   lastStatus?: boolean | null
   lastLatency?: number | null
   lastCheckedAt?: Date | string | null
@@ -400,6 +417,7 @@ export type ModelUpdateManyMutationInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -412,6 +430,7 @@ export type ModelUncheckedUpdateManyInput = {
   channelId?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -449,6 +468,7 @@ export type ModelCountOrderByAggregateInput = {
   channelId?: Prisma.SortOrder
   modelName?: Prisma.SortOrder
   detectedEndpoints?: Prisma.SortOrder
+  preferredProxyEndpoint?: Prisma.SortOrder
   lastStatus?: Prisma.SortOrder
   lastLatency?: Prisma.SortOrder
   lastCheckedAt?: Prisma.SortOrder
@@ -465,6 +485,7 @@ export type ModelMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
   channelId?: Prisma.SortOrder
   modelName?: Prisma.SortOrder
+  preferredProxyEndpoint?: Prisma.SortOrder
   lastStatus?: Prisma.SortOrder
   lastLatency?: Prisma.SortOrder
   lastCheckedAt?: Prisma.SortOrder
@@ -477,6 +498,7 @@ export type ModelMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
   channelId?: Prisma.SortOrder
   modelName?: Prisma.SortOrder
+  preferredProxyEndpoint?: Prisma.SortOrder
   lastStatus?: Prisma.SortOrder
   lastLatency?: Prisma.SortOrder
   lastCheckedAt?: Prisma.SortOrder
@@ -621,6 +643,7 @@ export type ModelCreateWithoutChannelInput = {
   id?: string
   modelName: string
   detectedEndpoints?: Prisma.ModelCreatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: string | null
   lastStatus?: boolean | null
   lastLatency?: number | null
   lastCheckedAt?: Date | string | null
@@ -634,6 +657,7 @@ export type ModelUncheckedCreateWithoutChannelInput = {
   id?: string
   modelName: string
   detectedEndpoints?: Prisma.ModelCreatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: string | null
   lastStatus?: boolean | null
   lastLatency?: number | null
   lastCheckedAt?: Date | string | null
@@ -677,6 +701,7 @@ export type ModelScalarWhereInput = {
   channelId?: Prisma.StringFilter<"Model"> | string
   modelName?: Prisma.StringFilter<"Model"> | string
   detectedEndpoints?: Prisma.StringNullableListFilter<"Model">
+  preferredProxyEndpoint?: Prisma.StringNullableFilter<"Model"> | string | null
   lastStatus?: Prisma.BoolNullableFilter<"Model"> | boolean | null
   lastLatency?: Prisma.IntNullableFilter<"Model"> | number | null
   lastCheckedAt?: Prisma.DateTimeNullableFilter<"Model"> | Date | string | null
@@ -689,6 +714,7 @@ export type ModelCreateWithoutCheckLogsInput = {
   id?: string
   modelName: string
   detectedEndpoints?: Prisma.ModelCreatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: string | null
   lastStatus?: boolean | null
   lastLatency?: number | null
   lastCheckedAt?: Date | string | null
@@ -703,6 +729,7 @@ export type ModelUncheckedCreateWithoutCheckLogsInput = {
   channelId: string
   modelName: string
   detectedEndpoints?: Prisma.ModelCreatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: string | null
   lastStatus?: boolean | null
   lastLatency?: number | null
   lastCheckedAt?: Date | string | null
@@ -731,6 +758,7 @@ export type ModelUpdateWithoutCheckLogsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -745,6 +773,7 @@ export type ModelUncheckedUpdateWithoutCheckLogsInput = {
   channelId?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -757,6 +786,7 @@ export type ModelCreateWithoutChannelKeyInput = {
   id?: string
   modelName: string
   detectedEndpoints?: Prisma.ModelCreatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: string | null
   lastStatus?: boolean | null
   lastLatency?: number | null
   lastCheckedAt?: Date | string | null
@@ -771,6 +801,7 @@ export type ModelUncheckedCreateWithoutChannelKeyInput = {
   channelId: string
   modelName: string
   detectedEndpoints?: Prisma.ModelCreatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: string | null
   lastStatus?: boolean | null
   lastLatency?: number | null
   lastCheckedAt?: Date | string | null
@@ -809,6 +840,7 @@ export type ModelCreateManyChannelInput = {
   id?: string
   modelName: string
   detectedEndpoints?: Prisma.ModelCreatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: string | null
   lastStatus?: boolean | null
   lastLatency?: number | null
   lastCheckedAt?: Date | string | null
@@ -821,6 +853,7 @@ export type ModelUpdateWithoutChannelInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -834,6 +867,7 @@ export type ModelUncheckedUpdateWithoutChannelInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -847,6 +881,7 @@ export type ModelUncheckedUpdateManyWithoutChannelInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -860,6 +895,7 @@ export type ModelCreateManyChannelKeyInput = {
   channelId: string
   modelName: string
   detectedEndpoints?: Prisma.ModelCreatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: string | null
   lastStatus?: boolean | null
   lastLatency?: number | null
   lastCheckedAt?: Date | string | null
@@ -871,6 +907,7 @@ export type ModelUpdateWithoutChannelKeyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -885,6 +922,7 @@ export type ModelUncheckedUpdateWithoutChannelKeyInput = {
   channelId?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -898,6 +936,7 @@ export type ModelUncheckedUpdateManyWithoutChannelKeyInput = {
   channelId?: Prisma.StringFieldUpdateOperationsInput | string
   modelName?: Prisma.StringFieldUpdateOperationsInput | string
   detectedEndpoints?: Prisma.ModelUpdatedetectedEndpointsInput | string[]
+  preferredProxyEndpoint?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   lastStatus?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
   lastLatency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   lastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
@@ -941,6 +980,7 @@ export type ModelSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = 
   channelId?: boolean
   modelName?: boolean
   detectedEndpoints?: boolean
+  preferredProxyEndpoint?: boolean
   lastStatus?: boolean
   lastLatency?: boolean
   lastCheckedAt?: boolean
@@ -958,6 +998,7 @@ export type ModelSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensi
   channelId?: boolean
   modelName?: boolean
   detectedEndpoints?: boolean
+  preferredProxyEndpoint?: boolean
   lastStatus?: boolean
   lastLatency?: boolean
   lastCheckedAt?: boolean
@@ -973,6 +1014,7 @@ export type ModelSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensi
   channelId?: boolean
   modelName?: boolean
   detectedEndpoints?: boolean
+  preferredProxyEndpoint?: boolean
   lastStatus?: boolean
   lastLatency?: boolean
   lastCheckedAt?: boolean
@@ -988,6 +1030,7 @@ export type ModelSelectScalar = {
   channelId?: boolean
   modelName?: boolean
   detectedEndpoints?: boolean
+  preferredProxyEndpoint?: boolean
   lastStatus?: boolean
   lastLatency?: boolean
   lastCheckedAt?: boolean
@@ -996,7 +1039,7 @@ export type ModelSelectScalar = {
   updatedAt?: boolean
 }
 
-export type ModelOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "channelId" | "modelName" | "detectedEndpoints" | "lastStatus" | "lastLatency" | "lastCheckedAt" | "channelKeyId" | "createdAt" | "updatedAt", ExtArgs["result"]["model"]>
+export type ModelOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "channelId" | "modelName" | "detectedEndpoints" | "preferredProxyEndpoint" | "lastStatus" | "lastLatency" | "lastCheckedAt" | "channelKeyId" | "createdAt" | "updatedAt", ExtArgs["result"]["model"]>
 export type ModelInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   checkLogs?: boolean | Prisma.Model$checkLogsArgs<ExtArgs>
   channel?: boolean | Prisma.ChannelDefaultArgs<ExtArgs>
@@ -1024,6 +1067,7 @@ export type $ModelPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs 
     channelId: string
     modelName: string
     detectedEndpoints: string[]
+    preferredProxyEndpoint: string | null
     lastStatus: boolean | null
     lastLatency: number | null
     lastCheckedAt: Date | null
@@ -1460,6 +1504,7 @@ export interface ModelFieldRefs {
   readonly channelId: Prisma.FieldRef<"Model", 'String'>
   readonly modelName: Prisma.FieldRef<"Model", 'String'>
   readonly detectedEndpoints: Prisma.FieldRef<"Model", 'String[]'>
+  readonly preferredProxyEndpoint: Prisma.FieldRef<"Model", 'String'>
   readonly lastStatus: Prisma.FieldRef<"Model", 'Boolean'>
   readonly lastLatency: Prisma.FieldRef<"Model", 'Int'>
   readonly lastCheckedAt: Prisma.FieldRef<"Model", 'DateTime'>

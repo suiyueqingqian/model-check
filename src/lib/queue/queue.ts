@@ -3,7 +3,7 @@
 import { Queue } from "bullmq";
 import redis from "@/lib/redis";
 import type { DetectionJobData } from "@/lib/detection/types";
-import { DETECTION_QUEUE_NAME, DETECTION_STOPPED_KEY, DETECTION_STOPPED_TTL } from "./constants";
+import { DETECTION_QUEUE_NAME, DETECTION_STOPPED_KEY, DETECTION_STOPPED_TTL, CANCELLED_MODELS_KEY, CANCELLED_MODELS_TTL, PROGRESS_BASELINE_KEY } from "./constants";
 
 const MODEL_REMAINING_PREFIX = "detection:model_remaining:";
 
@@ -177,6 +177,20 @@ export async function clearQueue(): Promise<void> {
 }
 
 /**
+ * Scan Redis keys by pattern (替代 KEYS 命令，避免阻塞)
+ */
+async function scanKeys(pattern: string): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor = "0";
+  do {
+    const [nextCursor, batch] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 100);
+    cursor = nextCursor;
+    keys.push(...batch);
+  } while (cursor !== "0");
+  return keys;
+}
+
+/**
  * Pause queue and drain all waiting jobs (for stopping detection)
  * Also cancels active jobs by moving them to failed state
  * Returns the number of jobs that were cleared
@@ -223,13 +237,13 @@ export async function pauseAndDrainQueue(): Promise<{ cleared: number }> {
     await queue.drain(true);
 
     // Clear Redis semaphore counters to reset concurrency tracking
-    const semaphoreKeys = await redis.keys("detection:semaphore:*");
+    const semaphoreKeys = await scanKeys("detection:semaphore:*");
     if (semaphoreKeys.length > 0) {
       await redis.del(...semaphoreKeys);
     }
 
     // Clear model remaining counters
-    const modelRemainingKeys = await redis.keys(`${MODEL_REMAINING_PREFIX}*`);
+    const modelRemainingKeys = await scanKeys(`${MODEL_REMAINING_PREFIX}*`);
     if (modelRemainingKeys.length > 0) {
       await redis.del(...modelRemainingKeys);
     }
@@ -259,6 +273,49 @@ export async function clearStoppedFlag(): Promise<void> {
 }
 
 /**
+ * Mark models as cancelled (for selective stop of active jobs)
+ */
+export async function markModelsCancelled(modelIds: string[]): Promise<void> {
+  if (modelIds.length === 0) return;
+  const pipeline = redis.pipeline();
+  for (const modelId of modelIds) {
+    pipeline.sadd(CANCELLED_MODELS_KEY, modelId);
+  }
+  pipeline.expire(CANCELLED_MODELS_KEY, CANCELLED_MODELS_TTL);
+  await pipeline.exec();
+}
+
+export async function isModelCancelled(modelId: string): Promise<boolean> {
+  return (await redis.sismember(CANCELLED_MODELS_KEY, modelId)) === 1;
+}
+
+export async function clearModelCancelled(modelId: string): Promise<void> {
+  await redis.srem(CANCELLED_MODELS_KEY, modelId);
+}
+
+/**
+ * Save current completed/failed counts as baseline for progress calculation
+ */
+export async function saveProgressBaseline(): Promise<void> {
+  const queue = getDetectionQueue();
+  const [completed, failed] = await Promise.all([
+    queue.getCompletedCount(),
+    queue.getFailedCount(),
+  ]);
+  await redis.set(PROGRESS_BASELINE_KEY, JSON.stringify({ completed, failed }), "EX", 7200);
+}
+
+export async function getProgressBaseline(): Promise<{ completed: number; failed: number }> {
+  const data = await redis.get(PROGRESS_BASELINE_KEY);
+  if (!data) return { completed: 0, failed: 0 };
+  try {
+    return JSON.parse(data);
+  } catch {
+    return { completed: 0, failed: 0 };
+  }
+}
+
+/**
  * Decrement remaining job count for a model, return true if model detection is complete
  */
 export async function decrementModelRemaining(modelId: string): Promise<boolean> {
@@ -269,4 +326,36 @@ export async function decrementModelRemaining(modelId: string): Promise<boolean>
     return true;
   }
   return false;
+}
+
+/**
+ * Remove waiting/delayed jobs for specific model IDs (选择性停止)
+ */
+export async function removeJobsByModelIds(modelIds: string[]): Promise<number> {
+  const queue = getDetectionQueue();
+  const modelIdSet = new Set(modelIds);
+
+  const [waitingJobs, delayedJobs] = await Promise.all([
+    queue.getJobs(["waiting"], 0, 5000),
+    queue.getJobs(["delayed"], 0, 5000),
+  ]);
+
+  let removed = 0;
+  const removePromises = [...waitingJobs, ...delayedJobs]
+    .filter(job => job.data?.modelId && modelIdSet.has(job.data.modelId))
+    .map(async (job) => {
+      try {
+        await job.remove();
+        removed++;
+      } catch {
+        // Job may have been processed already
+      }
+    });
+
+  await Promise.allSettled(removePromises);
+
+  // Mark models as cancelled so active jobs skip DB writes
+  await markModelsCancelled(modelIds);
+
+  return removed;
 }

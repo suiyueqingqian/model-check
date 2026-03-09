@@ -22,6 +22,7 @@ model Channel {
   models        Model[]
   channelKeys   ChannelKey[]
 
+  @@unique([name])
   @@map("channels")
 }
 
@@ -30,6 +31,7 @@ model Model {
   channelId         String      @map("channel_id")
   modelName         String      @map("model_name") @db.VarChar(200)
   detectedEndpoints String[]    @default([]) @map("detected_endpoints")
+  preferredProxyEndpoint String? @map("preferred_proxy_endpoint") @db.VarChar(20)
   lastStatus        Boolean?    @map("last_status")
   lastLatency       Int?        @map("last_latency")
   lastCheckedAt     DateTime?   @map("last_checked_at")

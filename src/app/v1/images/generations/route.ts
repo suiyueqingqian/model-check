@@ -1,6 +1,4 @@
-// POST /v1/messages - Proxy Anthropic Claude Messages API
-// Supports both streaming and non-streaming responses
-// Streaming uses SSE with event types: message_start, content_block_delta, message_stop
+// POST /v1/images/generations - Proxy OpenAI Images API
 // Automatically routes to the correct channel based on model name
 
 import { NextRequest, NextResponse } from "next/server";
@@ -9,7 +7,6 @@ import {
   buildUpstreamHeaders,
   proxyRequest,
   recordProxyModelResult,
-  streamResponse,
   errorResponse,
   normalizeBaseUrl,
   verifyProxyKeyAsync,
@@ -23,12 +20,10 @@ type ProxyAttemptFailure = {
 };
 
 export async function POST(request: NextRequest) {
-  // Verify proxy API key (async for multi-key support)
   const { error: authError, keyResult } = await verifyProxyKeyAsync(request);
   if (authError) return authError;
 
   try {
-    // Parse request body
     const body = await request.json();
     const modelName = body.model;
 
@@ -47,14 +42,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "CLAUDE");
+    const { candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "IMAGE");
     if (candidates.length === 0) {
       return errorResponse(`Model not found or access denied: ${modelName}`, 404);
     }
 
-    const isStream = body.stream === true;
-    const anthropicVersion = request.headers.get("anthropic-version") || "2023-06-01";
-    const anthropicBeta = request.headers.get("anthropic-beta");
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
     const pendingFailures: ProxyAttemptFailure[] = [];
@@ -65,15 +57,8 @@ export async function POST(request: NextRequest) {
       try {
         const upstreamBody = { ...body, model: channel.actualModelName };
         const baseUrl = normalizeBaseUrl(channel.baseUrl);
-        const url = `${baseUrl}/v1/messages`;
-        const extraHeaders: Record<string, string> = {
-          "anthropic-version": anthropicVersion,
-        };
-        if (anthropicBeta) {
-          extraHeaders["anthropic-beta"] = anthropicBeta;
-        }
-
-        const headers = buildUpstreamHeaders(channel.apiKey, "anthropic", extraHeaders);
+        const url = `${baseUrl}/v1/images/generations`;
+        const headers = buildUpstreamHeaders(channel.apiKey, "openai");
         const response = await proxyRequest(url, "POST", headers, upstreamBody, channel.proxy);
         const latency = Date.now() - startedAt;
 
@@ -82,42 +67,24 @@ export async function POST(request: NextRequest) {
           lastErrorMessage = `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`;
           lastStatus = response.status;
 
-          if (isUnifiedRouting && channel.modelId) {
+          if (channel.modelId) {
             pendingFailures.push({
               modelId: channel.modelId,
               latency,
               statusCode: response.status,
               errorMsg: lastErrorMessage,
             });
-            continue;
           }
 
-          return errorResponse(lastErrorMessage, lastStatus);
-        }
-
-        if (isStream) {
-          if (isUnifiedRouting && channel.modelId) {
-            return streamResponse(response, {
-              onComplete: () => recordProxyModelResult(channel.modelId!, "CLAUDE", true, {
-                latency,
-                statusCode: response.status,
-                responseContent: "代理流式请求成功",
-              }).catch(() => {}),
-              onError: () => recordProxyModelResult(channel.modelId!, "CLAUDE", false, {
-                latency,
-                statusCode: 502,
-                errorMsg: "流式传输中断",
-              }).catch(() => {}),
-            });
-          }
-
-          return streamResponse(response);
+          continue;
         }
 
         const data = await response.json();
 
-        if (isUnifiedRouting && channel.modelId) {
-          await recordProxyModelResult(channel.modelId, "CLAUDE", true, {
+        if (channel.modelId) {
+          await recordProxyModelResult(channel.modelId, "IMAGE", true, {
+            channelId: channel.channelId,
+            modelName: channel.actualModelName,
             latency,
             statusCode: response.status,
             responseContent: "代理请求成功",
@@ -130,24 +97,21 @@ export async function POST(request: NextRequest) {
         lastErrorMessage = `Proxy error: ${message}`;
         lastStatus = 502;
 
-        if (isUnifiedRouting && channel.modelId) {
+        if (channel.modelId) {
           pendingFailures.push({
             modelId: channel.modelId,
             latency: Date.now() - startedAt,
             statusCode: 502,
             errorMsg: lastErrorMessage,
           });
-          continue;
         }
-
-        return errorResponse(lastErrorMessage, lastStatus);
       }
     }
 
-    if (isUnifiedRouting && pendingFailures.length > 0) {
+    if (pendingFailures.length > 0) {
       await Promise.all(
         pendingFailures.map((failure) =>
-          recordProxyModelResult(failure.modelId, "CLAUDE", false, {
+          recordProxyModelResult(failure.modelId, "IMAGE", false, {
             latency: failure.latency,
             statusCode: failure.statusCode,
             errorMsg: failure.errorMsg,

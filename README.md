@@ -45,6 +45,10 @@
 git clone https://github.com/chxcodepro/model-check.git
 cd model-check
 bash deploy.sh
+
+# 更新
+git pull
+bash deploy.sh
 ```
 
 脚本会自动引导你完成配置，包括设置密码、数据库等。
@@ -189,6 +193,7 @@ npm test             # 运行测试
 | `GET` | `/v1/models` | 获取当前可用模型列表 |
 | `POST` | `/v1/chat/completions` | OpenAI Chat Completions 代理 |
 | `POST` | `/v1/responses` | OpenAI Responses / Codex 代理 |
+| `POST` | `/v1/images/generations` | OpenAI Images 代理 |
 | `POST` | `/v1/messages` | Claude Messages 代理 |
 | `POST` | `/v1beta/models/{model}:generateContent` | Gemini 代理 |
 | `POST` | `/v1beta/models/{model}:streamGenerateContent` | Gemini 流式代理 |

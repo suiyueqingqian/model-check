@@ -286,10 +286,10 @@ export type ChannelOrderByWithRelationInput = {
 
 export type ChannelWhereUniqueInput = Prisma.AtLeast<{
   id?: string
+  name?: string
   AND?: Prisma.ChannelWhereInput | Prisma.ChannelWhereInput[]
   OR?: Prisma.ChannelWhereInput[]
   NOT?: Prisma.ChannelWhereInput | Prisma.ChannelWhereInput[]
-  name?: Prisma.StringFilter<"Channel"> | string
   baseUrl?: Prisma.StringFilter<"Channel"> | string
   apiKey?: Prisma.StringFilter<"Channel"> | string
   proxy?: Prisma.StringNullableFilter<"Channel"> | string | null
@@ -301,7 +301,7 @@ export type ChannelWhereUniqueInput = Prisma.AtLeast<{
   updatedAt?: Prisma.DateTimeFilter<"Channel"> | Date | string
   models?: Prisma.ModelListRelationFilter
   channelKeys?: Prisma.ChannelKeyListRelationFilter
-}, "id">
+}, "id" | "name">
 
 export type ChannelOrderByWithAggregationInput = {
   id?: Prisma.SortOrder

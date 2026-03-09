@@ -355,6 +355,12 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   // Submit form (create or update)
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+
+    if (!formData.name.trim() || !formData.baseUrl.trim()) {
+      toast("渠道名称和地址不能为空", "error");
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
 

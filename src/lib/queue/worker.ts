@@ -6,7 +6,6 @@ import prisma from "@/lib/prisma";
 import { executeDetection, sleep, randomDelay } from "@/lib/detection/detector";
 import type { DetectionJobData, DetectionResult } from "@/lib/detection/types";
 import { DETECTION_QUEUE_NAME, PROGRESS_CHANNEL } from "./constants";
-import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 
 // Worker configuration (from environment variables)
 const WORKER_CONCURRENCY = 50; // BullMQ worker pool size (should be >= MAX_GLOBAL_CONCURRENCY)
@@ -119,22 +118,35 @@ function channelSemaphoreKey(channelId: string): string {
   return `detection:semaphore:channel:${channelId}`;
 }
 
+// Lua 脚本：原子 incr + expire（仅首次创建时设置 TTL，防止反复刷新）
+const ACQUIRE_SLOT_LUA = `
+local current = redis.call('incr', KEYS[1])
+if current == 1 then
+  redis.call('expire', KEYS[1], ARGV[1])
+end
+return current
+`;
+
 async function acquireSlots(channelId: string, config: WorkerRuntimeConfig): Promise<void> {
   const channelKey = channelSemaphoreKey(channelId);
+  const MAX_WAIT_ATTEMPTS = 240; // 240 × 500ms = 120s
+  let attempts = 0;
 
   // Must acquire both global and channel slots
   while (true) {
-    // Try global slot first
-    const globalCount = await redis.incr(GLOBAL_SEMAPHORE_KEY);
+    if (++attempts > MAX_WAIT_ATTEMPTS) {
+      throw new Error(`acquireSlots timeout after ${MAX_WAIT_ATTEMPTS * SEMAPHORE_POLL_MS}ms`);
+    }
+    // Atomic incr + expire for global slot
+    const globalCount = await redis.eval(ACQUIRE_SLOT_LUA, 1, GLOBAL_SEMAPHORE_KEY, SEMAPHORE_TTL) as number;
     if (globalCount > config.maxGlobalConcurrency) {
       await redis.decr(GLOBAL_SEMAPHORE_KEY);
       await sleep(SEMAPHORE_POLL_MS);
       continue;
     }
-    await redis.expire(GLOBAL_SEMAPHORE_KEY, SEMAPHORE_TTL);
 
-    // Try channel slot
-    const channelCount = await redis.incr(channelKey);
+    // Atomic incr + expire for channel slot
+    const channelCount = await redis.eval(ACQUIRE_SLOT_LUA, 1, channelKey, SEMAPHORE_TTL) as number;
     if (channelCount > config.channelConcurrency) {
       // Release channel slot and global slot, then wait
       await redis.decr(channelKey);
@@ -142,7 +154,6 @@ async function acquireSlots(channelId: string, config: WorkerRuntimeConfig): Pro
       await sleep(SEMAPHORE_POLL_MS);
       continue;
     }
-    await redis.expire(channelKey, SEMAPHORE_TTL);
 
     // Got both slots
     return;
@@ -183,8 +194,9 @@ async function processDetectionJob(
   const runtimeConfig = await loadWorkerConfig();
 
   // Check if detection has been stopped before processing
-  const { isDetectionStopped } = await import("./queue");
+  const { isDetectionStopped, decrementModelRemaining: decrementRemaining } = await import("./queue");
   if (await isDetectionStopped()) {
+    await decrementRemaining(data.modelId);
     return {
       status: "FAIL",
       latency: 0,
@@ -199,6 +211,7 @@ async function processDetectionJob(
   try {
     // Check again after acquiring slot (in case stop was triggered during wait)
     if (await isDetectionStopped()) {
+      await decrementRemaining(data.modelId);
       return {
         status: "FAIL",
         latency: 0,
@@ -214,6 +227,19 @@ async function processDetectionJob(
     // Execute the actual detection
     const result = await executeDetection(data);
 
+    // Check if this model was selectively cancelled while job was active
+    const { isModelCancelled, clearModelCancelled, decrementModelRemaining } = await import("./queue");
+    if (await isModelCancelled(data.modelId)) {
+      const isComplete = await decrementModelRemaining(data.modelId);
+      if (isComplete) await clearModelCancelled(data.modelId);
+      return {
+        status: "FAIL",
+        latency: 0,
+        endpointType: data.endpointType,
+        errorMsg: "Model detection cancelled by user",
+      };
+    }
+
     // Use atomic operations to avoid race conditions when updating detectedEndpoints
     // Multiple detection jobs for the same model can run in parallel
     await prisma.$transaction(async (tx) => {
@@ -227,11 +253,7 @@ async function processDetectionJob(
               WHEN ${result.endpointType} = ANY("detected_endpoints") THEN "detected_endpoints"
               ELSE COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY[${result.endpointType}]
             END,
-            "last_status" =
-              CASE
-                WHEN ${result.endpointType} = ANY("detected_endpoints") THEN array_length(COALESCE("detected_endpoints", ARRAY[]::text[]), 1) > 0
-                ELSE array_length(COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY[${result.endpointType}], 1) > 0
-              END,
+            "last_status" = true,
             "last_latency" = ${result.latency},
             "last_checked_at" = ${new Date()}
           WHERE id = ${data.modelId}
@@ -242,7 +264,6 @@ async function processDetectionJob(
           UPDATE "models"
           SET "detected_endpoints" = array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}),
             "last_status" = COALESCE(array_length(array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}), 1), 0) > 0,
-            "last_latency" = ${result.latency},
             "last_checked_at" = ${new Date()}
           WHERE id = ${data.modelId}
         `;
@@ -261,35 +282,9 @@ async function processDetectionJob(
         },
       });
 
-      // gpt-5+ (non-codex): /v1/responses 通过意味着 CHAT 也可用，同时记录两个端点
-      if (result.status === "SUCCESS" && result.endpointType === "CODEX") {
-        const name = (data.modelName || "").toLowerCase();
-        if (isGptFiveOrNewerModel(name) && !name.includes("codex")) {
-          await tx.$executeRaw`
-            UPDATE "models"
-            SET "detected_endpoints" =
-              CASE
-                WHEN 'CHAT' = ANY("detected_endpoints") THEN "detected_endpoints"
-                ELSE COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY['CHAT']
-              END
-            WHERE id = ${data.modelId}
-          `;
-          await tx.checkLog.create({
-            data: {
-              modelId: data.modelId,
-              endpointType: "CHAT",
-              status: result.status,
-              latency: result.latency,
-              statusCode: result.statusCode,
-              responseContent: result.responseContent,
-            },
-          });
-        }
-      }
     });
 
     // Check if this model has completed all detection jobs (O(1) Redis counter)
-    const { decrementModelRemaining } = await import("./queue");
     const isModelComplete = await decrementModelRemaining(data.modelId);
 
     // Publish progress update for SSE (with error handling to not affect detection result)
@@ -338,13 +333,16 @@ export function startWorker(): Worker<DetectionJobData, DetectionResult> {
   worker.on("completed", () => {
   });
 
-  worker.on("failed", () => {
+  worker.on("failed", (_job, err) => {
+    console.error("[Worker] Job failed:", err.message);
   });
 
-  worker.on("error", () => {
+  worker.on("error", (err) => {
+    console.error("[Worker] Error:", err.message);
   });
 
-  worker.on("stalled", () => {
+  worker.on("stalled", (jobId) => {
+    console.error(`[Worker] Job ${jobId} stalled`);
   });
 
   return worker;

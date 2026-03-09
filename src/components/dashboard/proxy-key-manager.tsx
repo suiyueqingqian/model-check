@@ -187,11 +187,8 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
   // Regenerate key
   const handleRegenerate = async (id: string) => {
     try {
-      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      let newKey = "sk-";
-      for (let i = 0; i < 48; i++) {
-        newKey += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
+      const bytes = crypto.getRandomValues(new Uint8Array(48));
+      const newKey = "sk-" + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 
       const response = await fetch(`/api/proxy-keys/${id}`, {
         method: "PUT",

@@ -10,6 +10,8 @@ import {
   getTestingModelIds,
   clearStoppedFlag,
   isQueueRunning,
+  saveProgressBaseline,
+  getProgressBaseline,
 } from "./queue";
 import type { DetectionJobData } from "@/lib/detection/types";
 
@@ -80,9 +82,12 @@ async function buildJobsForModels(
     const detectedEndpoints = getValidDetectedEndpoints(model.detectedEndpoints);
     const defaultEndpointsToTest = getEndpointsToTest(model.modelName);
     const shouldIgnoreDetectedEndpoints =
-      defaultEndpointsToTest.length === 1 &&
-      defaultEndpointsToTest[0] === EndpointType.CODEX &&
-      (isGptFiveOrNewerModel(model.modelName) || model.modelName.toLowerCase().includes("codex"));
+      (isGptFiveOrNewerModel(model.modelName) && !model.modelName.toLowerCase().includes("codex")) ||
+      (
+        defaultEndpointsToTest.length === 1 &&
+        defaultEndpointsToTest[0] === EndpointType.CODEX &&
+        model.modelName.toLowerCase().includes("codex")
+      );
     const endpointsToTest =
       detectedEndpoints.length > 0 && !shouldIgnoreDetectedEndpoints
         ? detectedEndpoints
@@ -129,27 +134,9 @@ export async function triggerFullDetection(): Promise<{
 
   // Clear stopped flag from previous detection stop
   await clearStoppedFlag();
+  await saveProgressBaseline();
 
-  // Fetch all enabled channels
-  const channels = await prisma.channel.findMany({
-    where: { enabled: true },
-  });
-
-  // Reset all models status to "untested" state before detection
-  // This clears the UI display while preserving checkLogs history
-  const channelIds = channels.map((c) => c.id);
-  if (channelIds.length > 0) {
-    await prisma.model.updateMany({
-      where: { channelId: { in: channelIds } },
-      data: {
-        lastStatus: null,
-        lastLatency: null,
-        lastCheckedAt: null,
-      },
-    });
-  }
-
-  // Read models from database directly (no remote model sync in detection flow)
+  // Fetch all enabled channels with models in one query (avoid time window between reset and read)
   const channelsWithModels = await prisma.channel.findMany({
     where: { enabled: true },
     include: {
@@ -163,6 +150,19 @@ export async function triggerFullDetection(): Promise<{
       },
     },
   });
+
+  // Reset all models status to "untested" state before detection
+  const channelIds = channelsWithModels.map((c) => c.id);
+  if (channelIds.length > 0) {
+    await prisma.model.updateMany({
+      where: { channelId: { in: channelIds } },
+      data: {
+        lastStatus: null,
+        lastLatency: null,
+        lastCheckedAt: null,
+      },
+    });
+  }
 
   const jobs: DetectionJobData[] = [];
 
@@ -203,6 +203,7 @@ export async function triggerChannelDetection(
 
   // Clear stopped flag from previous detection stop
   await clearStoppedFlag();
+  await saveProgressBaseline();
 
   const channel = await prisma.channel.findUnique({
     where: { id: channelId },
@@ -265,6 +266,7 @@ export async function triggerModelDetection(modelId: string): Promise<{
 
   // Clear stopped flag from previous detection stop
   await clearStoppedFlag();
+  await saveProgressBaseline();
 
   const model = await prisma.model.findUnique({
     where: { id: modelId },
@@ -625,17 +627,24 @@ export async function syncChannelModels(
  * Get detection progress
  */
 export async function getDetectionProgress() {
-  const [stats, testingModelIds] = await Promise.all([
+  const [stats, testingModelIds, baseline] = await Promise.all([
     getQueueStats(),
     getTestingModelIds(),
+    getProgressBaseline(),
   ]);
+
+  const completedThisRound = Math.max(0, stats.completed - baseline.completed);
+  const failedThisRound = Math.max(0, stats.failed - baseline.failed);
+  const totalThisRound = stats.total + completedThisRound + failedThisRound;
 
   return {
     ...stats,
+    completed: completedThisRound,
+    failed: failedThisRound,
     isRunning: isQueueRunning(stats),
     progress:
-      stats.total > 0 || stats.completed > 0 || stats.failed > 0
-        ? Math.round(((stats.completed + stats.failed) / (stats.total + stats.completed + stats.failed)) * 100)
+      totalThisRound > 0
+        ? Math.round(((completedThisRound + failedThisRound) / totalThisRound) * 100)
         : 0,
     testingModelIds,
   };
@@ -660,9 +669,12 @@ export async function triggerSelectiveDetection(
   await clearStoppedFlag();
 
   // If no specific channels selected, fall back to full detection
+  // (triggerFullDetection has its own saveProgressBaseline)
   if (!channelIds || channelIds.length === 0) {
     return triggerFullDetection();
   }
+
+  await saveProgressBaseline();
 
   // Fetch selected channels
   const channels = await prisma.channel.findMany({

@@ -19,11 +19,14 @@ export function isGptFiveOrNewerModel(modelName: string): boolean {
   return version !== null && version >= 5;
 }
 
+export function isResponsesCompatibleChatModel(modelName: string): boolean {
+  return isGptFiveOrNewerModel(modelName) && !modelName.toLowerCase().includes("codex");
+}
+
 export function getDisplayEndpoints(modelName: string, endpoints: string[] = []): string[] {
   const merged = new Set(endpoints);
-  const normalizedName = modelName.toLowerCase();
 
-  if (isGptFiveOrNewerModel(modelName) && !normalizedName.includes("codex")) {
+  if (isResponsesCompatibleChatModel(modelName) && (merged.has("CHAT") || merged.has("CODEX"))) {
     merged.add("CHAT");
     merged.add("CODEX");
   }
@@ -39,4 +42,12 @@ export function getDisplayEndpoints(modelName: string, endpoints: string[] = [])
     }
     return a.localeCompare(b);
   });
+}
+
+export function supportsDisplayEndpoint(
+  modelName: string,
+  endpoints: string[] = [],
+  endpoint: string
+): boolean {
+  return getDisplayEndpoints(modelName, endpoints).includes(endpoint);
 }

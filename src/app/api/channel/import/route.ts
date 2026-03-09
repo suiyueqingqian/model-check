@@ -57,10 +57,10 @@ export async function POST(request: NextRequest) {
       action: "create" | "update";
     }> = [];
 
-    // If replace mode, delete all existing channels first
-    if (mode === "replace") {
-      await prisma.channel.deleteMany({});
-    }
+    // If replace mode, collect old channel IDs for deferred cleanup (avoid data loss on failure)
+    const replaceOldIds = mode === "replace"
+      ? new Set((await prisma.channel.findMany({ select: { id: true } })).map(c => c.id))
+      : null;
 
     // Build set of existing channels by baseUrl+apiKey for duplicate detection
     const existingChannels = await prisma.channel.findMany({
@@ -73,6 +73,7 @@ export async function POST(request: NextRequest) {
     // Also track duplicates within the import data itself
     const importKeySet = new Set<string>();
 
+    await prisma.$transaction(async (tx) => {
     for (const ch of channelsToImport) {
       const normalizedBaseUrl = ch.baseUrl.replace(/\/$/, "");
       const channelKey = `${normalizedBaseUrl}|${ch.apiKey}`;
@@ -97,14 +98,14 @@ export async function POST(request: NextRequest) {
       }
 
       // Check if channel with same name exists
-      const existing = await prisma.channel.findFirst({
+      const existing = await tx.channel.findFirst({
         where: { name: ch.name },
       });
 
       if (existing) {
-        if (mode === "merge") {
+        if (mode === "merge" || mode === "replace") {
           // Update existing channel
-          await prisma.channel.update({
+          await tx.channel.update({
             where: { id: existing.id },
             data: {
               baseUrl: normalizedBaseUrl,
@@ -117,8 +118,8 @@ export async function POST(request: NextRequest) {
           });
           // Import channel keys if present
           if (ch.channelKeys && Array.isArray(ch.channelKeys) && ch.channelKeys.length > 0) {
-            await prisma.channelKey.deleteMany({ where: { channelId: existing.id } });
-            await prisma.channelKey.createMany({
+            await tx.channelKey.deleteMany({ where: { channelId: existing.id } });
+            await tx.channelKey.createMany({
               data: ch.channelKeys
                 .filter((k: { apiKey?: string }) => k.apiKey?.trim())
                 .map((k: { apiKey: string; name?: string | null }) => ({
@@ -147,7 +148,7 @@ export async function POST(request: NextRequest) {
         }
       } else {
         // Create new channel
-        const newChannel = await prisma.channel.create({
+        const newChannel = await tx.channel.create({
           data: {
             name: ch.name,
             baseUrl: normalizedBaseUrl,
@@ -160,7 +161,7 @@ export async function POST(request: NextRequest) {
         });
         // Import channel keys if present
         if (ch.channelKeys && Array.isArray(ch.channelKeys) && ch.channelKeys.length > 0) {
-          await prisma.channelKey.createMany({
+          await tx.channelKey.createMany({
             data: ch.channelKeys
               .filter((k: { apiKey?: string }) => k.apiKey?.trim())
               .map((k: { apiKey: string; name?: string | null }) => ({
@@ -186,6 +187,15 @@ export async function POST(request: NextRequest) {
         });
       }
     }
+
+    // Replace mode: delete old channels not touched by import
+    if (replaceOldIds && replaceOldIds.size > 0) {
+      const untouchedIds = [...replaceOldIds].filter(id => !importedChannelIds.includes(id));
+      if (untouchedIds.length > 0) {
+        await tx.channel.deleteMany({ where: { id: { in: untouchedIds } } });
+      }
+    }
+    });
 
     // Sync to WebDAV if configured
     const webdavStatus = { synced: false, error: null as string | null };

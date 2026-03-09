@@ -6,7 +6,7 @@
 import { useState, useMemo } from "react";
 import { ChevronDown, ChevronRight, Check, Square, CheckSquare, Minus, Search, X, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getDisplayEndpoints } from "@/lib/utils/model-name";
+import { getDisplayEndpoints, supportsDisplayEndpoint } from "@/lib/utils/model-name";
 
 export interface ModelInfo {
   id: string;
@@ -67,8 +67,8 @@ const ENDPOINT_CONFIG: Record<string, EndpointInfo> = {
     },
   },
   CODEX: {
-    label: "Codex",
-    shortLabel: "CX",
+    label: "Responses",
+    shortLabel: "R",
     category: "cli",
     color: {
       bg: "bg-violet-500/20",
@@ -93,7 +93,7 @@ function getAllEndpoints(channels: ChannelWithModels[]): string[] {
   const endpoints = new Set<string>();
   channels.forEach((channel) => {
     channel.models.forEach((model) => {
-      model.detectedEndpoints?.forEach((ep) => endpoints.add(ep));
+      getDisplayEndpoints(model.modelName, model.detectedEndpoints || []).forEach((ep) => endpoints.add(ep));
     });
   });
   return Array.from(endpoints).sort((a, b) => {
@@ -166,7 +166,7 @@ export function ChannelModelSelector({
 
   // Check if model supports endpoint and is available
   const isModelAvailableForEndpoint = (model: ModelInfo, endpoint: string): boolean => {
-    if (!model.detectedEndpoints?.includes(endpoint)) return false;
+    if (!supportsDisplayEndpoint(model.modelName, model.detectedEndpoints || [], endpoint)) return false;
     // Model must be available (lastStatus === true)
     return model.lastStatus === true;
   };
@@ -252,22 +252,29 @@ export function ChannelModelSelector({
     return hasAnySelection && !allFilteredSelected;
   }, [filteredModelInfo, selectedModelIds, allFilteredSelected]);
 
-  // Check if all models in a channel are selected
+  // Check if all models in a channel are selected (基于当前可见模型判定)
   const isChannelFullySelected = (channelId: string) => {
-    const channel = channels.find((c) => c.id === channelId);
+    const hasFilter = searchQuery.trim() !== "" || endpointFilter !== null;
+    const channel = hasFilter
+      ? filteredChannels.find((c) => c.id === channelId)
+      : channels.find((c) => c.id === channelId);
     if (!channel || channel.models.length === 0) return false;
 
     const selected = selectedModelIds[channelId] || [];
-    return selected.length === channel.models.length;
+    return channel.models.every(m => selected.includes(m.id));
   };
 
   // Check if some models in a channel are selected
   const isChannelPartiallySelected = (channelId: string) => {
-    const channel = channels.find((c) => c.id === channelId);
+    const hasFilter = searchQuery.trim() !== "" || endpointFilter !== null;
+    const channel = hasFilter
+      ? filteredChannels.find((c) => c.id === channelId)
+      : channels.find((c) => c.id === channelId);
     if (!channel || channel.models.length === 0) return false;
 
     const selected = selectedModelIds[channelId] || [];
-    return selected.length > 0 && selected.length < channel.models.length;
+    const visibleSelectedCount = channel.models.filter(m => selected.includes(m.id)).length;
+    return visibleSelectedCount > 0 && visibleSelectedCount < channel.models.length;
   };
 
   // Toggle channel expansion
@@ -608,7 +615,7 @@ export function ChannelModelSelector({
                               <EndpointBadge
                                 key={ep}
                                 endpoint={ep}
-                                available={model.detectedEndpoints?.includes(ep) === true}
+                                available={supportsDisplayEndpoint(model.modelName, model.detectedEndpoints || [], ep)}
                                 compact
                               />
                             ))}
@@ -620,7 +627,7 @@ export function ChannelModelSelector({
                               <EndpointBadge
                                 key={ep}
                                 endpoint={ep}
-                                available={model.detectedEndpoints?.includes(ep) === true}
+                                available={supportsDisplayEndpoint(model.modelName, model.detectedEndpoints || [], ep)}
                                 compact
                               />
                             ))}

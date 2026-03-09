@@ -486,18 +486,20 @@ export async function POST(request: NextRequest) {
               },
             });
 
-            await prisma.channelKey.deleteMany({ where: { channelId: existing.id } });
-            if (ch.channelKeys && ch.channelKeys.length > 0) {
-              await prisma.channelKey.createMany({
-                data: ch.channelKeys
-                  .filter((k) => k.apiKey?.trim())
-                  .map((k) => ({
-                    channelId: existing.id,
-                    apiKey: k.apiKey.trim(),
-                    name: k.name?.trim() || null,
-                  })),
-              });
-            }
+            await prisma.$transaction(async (tx) => {
+              await tx.channelKey.deleteMany({ where: { channelId: existing.id } });
+              if (ch.channelKeys && ch.channelKeys.length > 0) {
+                await tx.channelKey.createMany({
+                  data: ch.channelKeys
+                    .filter((k) => k.apiKey?.trim())
+                    .map((k) => ({
+                      channelId: existing.id,
+                      apiKey: k.apiKey.trim(),
+                      name: k.name?.trim() || null,
+                    })),
+                });
+              }
+            });
 
             importedChannelIds.push(existing.id);
             updated++;

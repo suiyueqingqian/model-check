@@ -473,7 +473,7 @@ export function Header({
                         <option value="CHAT">Chat</option>
                         <option value="CLAUDE">Claude CLI</option>
                         <option value="GEMINI">Gemini CLI</option>
-                        <option value="CODEX">Codex CLI</option>
+                        <option value="CODEX">Responses</option>
                       </select>
                     </div>
 

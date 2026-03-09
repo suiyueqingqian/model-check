@@ -191,7 +191,14 @@ function stopDetectionSchedulers(): void {
   }
 }
 
+let isDetectionRunning = false;
+
 async function runDetectionOnce(): Promise<void> {
+  if (isDetectionRunning) {
+    console.warn("[Scheduler] runDetectionOnce skipped: previous run still in progress");
+    return;
+  }
+  isDetectionRunning = true;
   try {
     // Guard: re-check enabled from DB before every run
     // (module-level state may be stale due to Next.js chunk isolation)
@@ -201,17 +208,20 @@ async function runDetectionOnce(): Promise<void> {
       return;
     }
 
-    if (currentConfig.detectAllChannels) {
+    if (freshConfig.detectAllChannels) {
       // Full detection - all channels
       await triggerFullDetection();
     } else {
       // Selective detection - only specified channels/models
       await triggerSelectiveDetection(
-        currentConfig.selectedChannelIds,
-        currentConfig.selectedModelIds
+        freshConfig.selectedChannelIds,
+        freshConfig.selectedModelIds
       );
     }
-  } catch {
+  } catch (e) {
+    console.error("[Scheduler] runDetectionOnce failed:", e);
+  } finally {
+    isDetectionRunning = false;
   }
 }
 

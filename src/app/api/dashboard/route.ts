@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { isAuthenticated } from "@/lib/middleware/auth";
 import { Prisma } from "@/generated/prisma";
+import { supportsDisplayEndpoint, isResponsesCompatibleChatModel } from "@/lib/utils/model-name";
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -31,13 +32,6 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Endpoint filter - filter by detected endpoints (PostgreSQL native array)
-    if (endpointFilter !== "all") {
-      modelWhereConditions.push({
-        detectedEndpoints: { has: endpointFilter },
-      });
-    }
-
     // Status filter - filter by lastStatus
     if (statusFilter === "healthy") {
       modelWhereConditions.push({ lastStatus: true });
@@ -50,34 +44,15 @@ export async function GET(request: NextRequest) {
     const modelWhere: Prisma.ModelWhereInput | undefined =
       modelWhereConditions.length > 0 ? { AND: modelWhereConditions } : undefined;
 
-    // Get channels that have at least one matching model
-    // Always filter to only show channels with models (even without filters)
-    const channelsWithMatchingModels = await prisma.channel.findMany({
+    const baseChannels = await prisma.channel.findMany({
       where: {
         enabled: true,
         models: { some: modelWhere ?? {} },
       },
-      select: { id: true },
-      orderBy: [
-        { sortOrder: "asc" },
-        { createdAt: "desc" },
-      ],
-    });
-    const channelIds = channelsWithMatchingModels.map((c) => c.id);
-
-    // Get total count for pagination (only channels with matching models)
-    const totalChannels = channelIds.length;
-
-    // Fetch paginated channels with filtered models
-    const channels = await prisma.channel.findMany({
-      where: {
-        enabled: true,
-        id: { in: channelIds },
-      },
       select: {
         id: true,
         name: true,
-        baseUrl: authenticated, // Only show baseUrl to authenticated users
+        baseUrl: authenticated,
         createdAt: true,
         models: {
           where: modelWhere,
@@ -95,13 +70,12 @@ export async function GET(request: NextRequest) {
                 latency: true,
                 statusCode: true,
                 endpointType: true,
-                // Detection messages should be visible even when not logged in
                 responseContent: true,
                 errorMsg: true,
                 createdAt: true,
               },
               orderBy: { createdAt: "desc" },
-              take: 7, // Last 7 checks for heatmap
+              take: 7,
             },
           },
         },
@@ -110,9 +84,21 @@ export async function GET(request: NextRequest) {
         { sortOrder: "asc" },
         { createdAt: "desc" },
       ],
-      skip: (page - 1) * pageSize,
-      take: pageSize,
     });
+
+    const filteredChannels = endpointFilter === "all"
+      ? baseChannels
+      : baseChannels
+          .map((channel) => ({
+            ...channel,
+            models: channel.models.filter((model) =>
+              supportsDisplayEndpoint(model.modelName, model.detectedEndpoints || [], endpointFilter)
+            ),
+          }))
+          .filter((channel) => channel.models.length > 0);
+
+    const totalFilteredChannels = filteredChannels.length;
+    const channels = filteredChannels.slice((page - 1) * pageSize, page * pageSize);
 
     // Calculate summary statistics for ALL channels (not just current page)
     const allChannelsForStats = await prisma.channel.findMany({
@@ -121,6 +107,7 @@ export async function GET(request: NextRequest) {
         models: {
           select: {
             id: true,
+            modelName: true,
             lastStatus: true,
             checkLogs: {
               select: {
@@ -142,12 +129,22 @@ export async function GET(request: NextRequest) {
       return sum + ch.models.filter((m) => {
         if (m.checkLogs.length === 0) return false;
 
-        // Get latest status for each endpoint type
+        // 使用与前端一致的语义端点逻辑（合并 CHAT/CODEX）
         const endpointStatuses: Record<string, string> = {};
+        const chatLikeLogs: typeof m.checkLogs = [];
+
         for (const log of m.checkLogs) {
+          if (isResponsesCompatibleChatModel(m.modelName) && (log.endpointType === "CHAT" || log.endpointType === "CODEX")) {
+            chatLikeLogs.push(log);
+            continue;
+          }
           if (!endpointStatuses[log.endpointType]) {
             endpointStatuses[log.endpointType] = log.status;
           }
+        }
+
+        if (chatLikeLogs.length > 0) {
+          endpointStatuses.CHAT = chatLikeLogs.some((log) => log.status === "SUCCESS") ? "SUCCESS" : "FAIL";
         }
 
         // Model is healthy only if all tested endpoints are successful
@@ -156,12 +153,12 @@ export async function GET(request: NextRequest) {
       }).length;
     }, 0);
 
-    const totalPages = Math.ceil(totalChannels / pageSize);
+    const totalPages = Math.ceil(totalFilteredChannels / pageSize);
 
     return NextResponse.json({
       authenticated,
       summary: {
-        totalChannels,
+        totalChannels: allChannelsForStats.length,
         totalModels,
         healthyModels,
         healthRate: totalModels > 0 ? Math.round((healthyModels / totalModels) * 100) : 0,
@@ -170,7 +167,7 @@ export async function GET(request: NextRequest) {
         page,
         pageSize,
         totalPages,
-        totalChannels,
+        totalChannels: totalFilteredChannels,
       },
       channels,
     });

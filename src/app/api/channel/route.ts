@@ -57,6 +57,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate enum values
+    if (keyMode && !["single", "multi"].includes(keyMode)) {
+      return NextResponse.json(
+        { error: "Invalid keyMode, must be 'single' or 'multi'", code: "INVALID_ENUM" },
+        { status: 400 }
+      );
+    }
+    if (routeStrategy && !["round_robin", "random"].includes(routeStrategy)) {
+      return NextResponse.json(
+        { error: "Invalid routeStrategy, must be 'round_robin' or 'random'", code: "INVALID_ENUM" },
+        { status: 400 }
+      );
+    }
+
     const normalizedBaseUrl = baseUrl.replace(/\/$/, "");
 
     // Check if a channel with the same baseUrl already exists → merge keys
@@ -136,7 +150,7 @@ export async function POST(request: NextRequest) {
 
       const nextSortOrder = (minSort._min.sortOrder ?? 0) - 1;
 
-      return tx.channel.create({
+      const created = await tx.channel.create({
         data: {
           name,
           baseUrl: normalizedBaseUrl,
@@ -148,40 +162,42 @@ export async function POST(request: NextRequest) {
           routeStrategy,
         },
       });
-    });
 
-    // Create channel keys for multi-key mode (skip first key, already saved as main apiKey)
-    if (keyMode === "multi" && keys && typeof keys === "string") {
-      const keyList = keys.split(/[,\n]/).map((k: string) => k.trim()).filter(Boolean);
-      const extraKeys = keyList.slice(1);
-      if (extraKeys.length > 0) {
-        await prisma.channelKey.createMany({
-          data: extraKeys.map((k: string) => ({
-            channelId: channel.id,
-            apiKey: k,
+      // Create channel keys for multi-key mode (exclude main apiKey by value, not position)
+      if (keyMode === "multi" && keys && typeof keys === "string") {
+        const keyList = keys.split(/[,\n]/).map((k: string) => k.trim()).filter(Boolean);
+        const extraKeys = keyList.filter((k: string) => k !== apiKey);
+        if (extraKeys.length > 0) {
+          await tx.channelKey.createMany({
+            data: extraKeys.map((k: string) => ({
+              channelId: created.id,
+              apiKey: k,
+            })),
+          });
+        }
+      }
+
+      // If models are provided, create them with empty detectedEndpoints (will be populated after testing)
+      if (models && Array.isArray(models) && models.length > 0) {
+        const uniqueModels = Array.from(
+          new Set(
+            models
+              .map((modelName: string) => modelName.trim())
+              .filter(Boolean)
+          )
+        );
+
+        await tx.model.createMany({
+          data: uniqueModels.map((modelName: string) => ({
+            channelId: created.id,
+            modelName,
           })),
+          skipDuplicates: true,
         });
       }
-    }
 
-    // If models are provided, create them with empty detectedEndpoints (will be populated after testing)
-    if (models && Array.isArray(models) && models.length > 0) {
-      const uniqueModels = Array.from(
-        new Set(
-          models
-            .map((modelName: string) => modelName.trim())
-            .filter(Boolean)
-        )
-      );
-
-      await prisma.model.createMany({
-        data: uniqueModels.map((modelName: string) => ({
-          channelId: channel.id,
-          modelName,
-        })),
-        skipDuplicates: true,
-      });
-    }
+      return created;
+    });
 
     return NextResponse.json({
       success: true,
@@ -230,6 +246,31 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    // Validate non-empty values for critical fields
+    if (name !== undefined && !name.trim()) {
+      return NextResponse.json({ error: "渠道名称不能为空" }, { status: 400 });
+    }
+    if (baseUrl !== undefined && !baseUrl.trim()) {
+      return NextResponse.json({ error: "Base URL 不能为空" }, { status: 400 });
+    }
+    if (apiKey !== undefined && !apiKey.trim()) {
+      return NextResponse.json({ error: "API Key 不能为空" }, { status: 400 });
+    }
+
+    // Validate enum values
+    if (keyMode !== undefined && !["single", "multi"].includes(keyMode)) {
+      return NextResponse.json(
+        { error: "Invalid keyMode, must be 'single' or 'multi'", code: "INVALID_ENUM" },
+        { status: 400 }
+      );
+    }
+    if (routeStrategy !== undefined && !["round_robin", "random"].includes(routeStrategy)) {
+      return NextResponse.json(
+        { error: "Invalid routeStrategy, must be 'round_robin' or 'random'", code: "INVALID_ENUM" },
+        { status: 400 }
+      );
+    }
+
     // Check for duplicate channel name when renaming
     if (name !== undefined) {
       const existingByName = await prisma.channel.findFirst({
@@ -263,9 +304,10 @@ export async function PUT(request: NextRequest) {
       // Update keys for multi-key mode
       if (keyMode === "multi" && keys !== undefined && typeof keys === "string") {
         await tx.channelKey.deleteMany({ where: { channelId: id } });
-        // Parse and create new keys, skip first key (already saved as main apiKey)
+        // Parse and create new keys, exclude main apiKey by value
+        const mainKey = updateData.apiKey as string | undefined;
         const keyList = keys.split(/[,\n]/).map((k: string) => k.trim()).filter(Boolean);
-        const extraKeys = keyList.slice(1);
+        const extraKeys = mainKey ? keyList.filter((k: string) => k !== mainKey) : keyList;
         if (extraKeys.length > 0) {
           await tx.channelKey.createMany({
             data: extraKeys.map((k: string) => ({
@@ -313,7 +355,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Get channel info before deletion (for WebDAV sync)
+    // Get channel info and model IDs before deletion
     const channel = await prisma.channel.findUnique({
       where: { id },
       select: { id: true },
@@ -326,9 +368,36 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
+    // Collect model IDs before cascade delete removes them
+    const channelModels = await prisma.model.findMany({
+      where: { channelId: id },
+      select: { id: true },
+    });
+    const deletedModelIds = channelModels.map(m => m.id);
+
     await prisma.channel.delete({
       where: { id },
     });
+
+    // Clean stale references from ProxyKey JSON permission fields
+    if (deletedModelIds.length > 0) {
+      const proxyKeys = await prisma.proxyKey.findMany({
+        select: { id: true, allowedChannelIds: true, allowedModelIds: true },
+      });
+      const deletedModelIdSet = new Set(deletedModelIds);
+      for (const pk of proxyKeys) {
+        const updates: Record<string, unknown> = {};
+        if (Array.isArray(pk.allowedChannelIds) && (pk.allowedChannelIds as string[]).includes(id)) {
+          updates.allowedChannelIds = (pk.allowedChannelIds as string[]).filter(cid => cid !== id);
+        }
+        if (Array.isArray(pk.allowedModelIds) && (pk.allowedModelIds as string[]).some(mid => deletedModelIdSet.has(mid))) {
+          updates.allowedModelIds = (pk.allowedModelIds as string[]).filter(mid => !deletedModelIdSet.has(mid));
+        }
+        if (Object.keys(updates).length > 0) {
+          await prisma.proxyKey.update({ where: { id: pk.id }, data: updates });
+        }
+      }
+    }
 
     return NextResponse.json({ success: true });
   } catch {

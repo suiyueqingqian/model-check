@@ -22,11 +22,13 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
+let toastCounter = 0;
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const toast = useCallback((message: string, type: ToastType = "success") => {
-    const id = Date.now().toString();
+    const id = String(++toastCounter);
     setToasts((prev) => [...prev, { id, message, type }]);
 
     // Auto dismiss non-loading toasts after 3s

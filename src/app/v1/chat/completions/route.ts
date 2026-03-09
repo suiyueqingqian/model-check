@@ -9,7 +9,9 @@ import {
   buildUpstreamHeaders,
   proxyRequest,
   recordProxyModelResult,
+  rememberPreferredProxyEndpoint,
   streamResponse,
+  withStreamTracking,
   errorResponse,
   normalizeBaseUrl,
   verifyProxyKeyAsync,
@@ -20,6 +22,19 @@ const CLI_DETECT_PROMPT = process.env.DETECT_PROMPT || "1+1=2? yes or no";
 const RESPONSES_FALLBACK_HEADERS = {
   "User-Agent": "codex_cli_rs/0.0.1",
   originator: "codex_cli_rs",
+};
+
+type ProxyAttemptFailure = {
+  modelId: string;
+  endpointType: "CHAT" | "CODEX";
+  latency?: number;
+  statusCode?: number;
+  errorMsg: string;
+};
+
+type ProxyAttemptSuccess = {
+  response: Response;
+  latency: number;
 };
 
 function normalizeMessagesForGeminiCli(messages: unknown): unknown {
@@ -323,7 +338,8 @@ function convertResponsesStreamToChatStream(
                 finish();
                 return;
               }
-            } catch {
+            } catch (e) {
+              console.warn("[Stream] SSE parse error:", e);
             }
           }
         }
@@ -342,15 +358,20 @@ function convertResponsesStreamToChatStream(
                   : event.text;
                 sendText(remaining);
               }
-            } catch {
+            } catch (e) {
+              console.warn("[Stream] SSE parse error:", e);
             }
           }
         }
 
         finish();
-      } catch {
+      } catch (e) {
         if (!completed) {
-          controller.close();
+          try {
+            controller.error(e instanceof Error ? e : new Error("Stream interrupted"));
+          } catch {
+            // controller already closed
+          }
         }
       } finally {
         await reader.cancel().catch(() => {});
@@ -369,6 +390,105 @@ function convertResponsesStreamToChatStream(
       Connection: "keep-alive",
     },
   });
+}
+
+function buildAttemptList(
+  requestedBody: Record<string, unknown>,
+  baseUrl: string,
+  actualModelName: string,
+  preferredProxyEndpoint: "CHAT" | "CODEX" | null,
+  shouldTryResponsesFallback: boolean
+): Array<{
+  endpointType: "CHAT" | "CODEX";
+  url: string;
+  body: Record<string, unknown>;
+}> {
+  const attempts = {
+    CHAT: {
+      endpointType: "CHAT" as const,
+      url: `${baseUrl}/v1/chat/completions`,
+      body: {
+        ...requestedBody,
+        model: actualModelName,
+        messages: normalizeMessagesForGeminiCli(requestedBody.messages),
+      },
+    },
+    CODEX: {
+      endpointType: "CODEX" as const,
+      url: `${baseUrl}/v1/responses`,
+      body: buildResponsesFallbackBody(requestedBody, actualModelName),
+    },
+  };
+
+  if (!shouldTryResponsesFallback) {
+    return [attempts.CHAT];
+  }
+
+  return preferredProxyEndpoint === "CODEX"
+    ? [attempts.CODEX, attempts.CHAT]
+    : [attempts.CHAT, attempts.CODEX];
+}
+
+async function requestUpstreamAttempt(
+  channel: {
+    apiKey: string;
+    proxy: string | null;
+  },
+  attempt: {
+    endpointType: "CHAT" | "CODEX";
+    url: string;
+    body: Record<string, unknown>;
+  }
+): Promise<
+  | { ok: true; data: ProxyAttemptSuccess }
+  | { ok: false; data: { latency: number; statusCode: number; errorMsg: string } }
+> {
+  const startedAt = Date.now();
+
+  try {
+    const headers = buildUpstreamHeaders(
+      channel.apiKey,
+      "openai",
+      attempt.endpointType === "CODEX" ? RESPONSES_FALLBACK_HEADERS : undefined
+    );
+    const response = await proxyRequest(
+      attempt.url,
+      "POST",
+      headers,
+      attempt.body,
+      channel.proxy
+    );
+    const latency = Date.now() - startedAt;
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "Unknown error");
+      return {
+        ok: false,
+        data: {
+          latency,
+          statusCode: response.status,
+          errorMsg: `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`,
+        },
+      };
+    }
+
+    return {
+      ok: true,
+      data: {
+        response,
+        latency,
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      data: {
+        latency: Date.now() - startedAt,
+        statusCode: 502,
+        errorMsg: `Proxy error: ${error instanceof Error ? error.message : "Unknown error"}`,
+      },
+    };
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -407,103 +527,188 @@ export async function POST(request: NextRequest) {
       !modelName.toLowerCase().includes("codex");
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
+    const pendingFailures: ProxyAttemptFailure[] = [];
 
     for (const channel of candidates) {
-      const attempts: Array<{
-        endpointType: "CHAT" | "CODEX";
-        url: string;
-        body: Record<string, unknown>;
-      }> = [
-        {
-          endpointType: "CHAT",
-          url: `${normalizeBaseUrl(channel.baseUrl)}/v1/chat/completions`,
-          body: {
-            ...body,
-            model: channel.actualModelName,
-            messages: normalizeMessagesForGeminiCli(body.messages),
-          },
-        },
-      ];
-
-      if (shouldTryResponsesFallback) {
-        attempts.push({
-          endpointType: "CODEX",
-          url: `${normalizeBaseUrl(channel.baseUrl)}/v1/responses`,
-          body: buildResponsesFallbackBody(body, channel.actualModelName),
-        });
-      }
+      const attempts = buildAttemptList(
+        body,
+        normalizeBaseUrl(channel.baseUrl),
+        channel.actualModelName,
+        channel.preferredProxyEndpoint,
+        shouldTryResponsesFallback
+      );
 
       for (const attempt of attempts) {
-        const startedAt = Date.now();
+        const result = await requestUpstreamAttempt(channel, attempt);
+
+        if (!result.ok) {
+          lastErrorMessage = result.data.errorMsg;
+          lastStatus = result.data.statusCode;
+
+          if (channel.modelId) {
+            pendingFailures.push({
+              modelId: channel.modelId,
+              endpointType: attempt.endpointType,
+              latency: result.data.latency,
+              statusCode: result.data.statusCode,
+              errorMsg: result.data.errorMsg,
+            });
+          }
+
+          continue;
+        }
+
+        const { response, latency } = result.data;
 
         try {
-          const headers = buildUpstreamHeaders(
-            channel.apiKey,
-            "openai",
-            attempt.endpointType === "CODEX" ? RESPONSES_FALLBACK_HEADERS : undefined
-          );
-          const response = await proxyRequest(
-            attempt.url,
-            "POST",
-            headers,
-            attempt.body,
-            channel.proxy
-          );
-          const latency = Date.now() - startedAt;
-
-          if (!response.ok) {
-            const errorText = await response.text().catch(() => "Unknown error");
-            lastErrorMessage = `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`;
-            lastStatus = response.status;
-
-            if (isUnifiedRouting && channel.modelId) {
-              await recordProxyModelResult(channel.modelId, attempt.endpointType, false, {
-                latency,
-                statusCode: response.status,
-                errorMsg: lastErrorMessage,
-              }).catch(() => {});
-            }
-
-            continue;
-          }
-
-          if (isUnifiedRouting && channel.modelId) {
-            await recordProxyModelResult(channel.modelId, attempt.endpointType, true, {
-              latency,
-              statusCode: response.status,
-              responseContent: isStream ? "代理流式请求成功" : "代理请求成功",
-            }).catch(() => {});
-          }
-
           if (attempt.endpointType === "CHAT") {
             if (isStream) {
+              if (isUnifiedRouting && channel.modelId) {
+                return streamResponse(response, {
+                  onComplete: () => recordProxyModelResult(channel.modelId!, attempt.endpointType, true, {
+                    channelId: channel.channelId,
+                    modelName: channel.actualModelName,
+                    latency,
+                    statusCode: response.status,
+                    responseContent: "代理流式请求成功",
+                  }).catch(() => {}),
+                  onError: () => recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                    channelId: channel.channelId,
+                    modelName: channel.actualModelName,
+                    latency,
+                    statusCode: 502,
+                    errorMsg: "流式传输中断",
+                  }).catch(() => {}),
+                });
+              }
+
+              if (channel.modelId) {
+                return streamResponse(response, {
+                  onComplete: () => rememberPreferredProxyEndpoint(
+                    channel.modelId!,
+                    attempt.endpointType
+                  ).catch(() => {}),
+                  onError: () => recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                    latency,
+                    statusCode: 502,
+                    errorMsg: "流式传输中断",
+                  }).catch(() => {}),
+                });
+              }
+
               return streamResponse(response);
             }
 
             const data = await response.json();
+
+            if (channel.modelId && !isUnifiedRouting) {
+              await rememberPreferredProxyEndpoint(
+                channel.modelId,
+                attempt.endpointType
+              ).catch(() => {});
+            }
+
+            if (isUnifiedRouting && channel.modelId) {
+              await recordProxyModelResult(channel.modelId, attempt.endpointType, true, {
+                channelId: channel.channelId,
+                modelName: channel.actualModelName,
+                latency,
+                statusCode: response.status,
+                responseContent: "代理请求成功",
+              }).catch(() => {});
+            }
+
             return NextResponse.json(data);
           }
 
           if (isStream) {
-            return convertResponsesStreamToChatStream(response, modelName);
+            const convertedResponse = convertResponsesStreamToChatStream(response, modelName);
+
+            if (isUnifiedRouting && channel.modelId) {
+              return withStreamTracking(convertedResponse,
+                () => recordProxyModelResult(channel.modelId!, attempt.endpointType, true, {
+                  channelId: channel.channelId,
+                  modelName: channel.actualModelName,
+                  latency,
+                  statusCode: response.status,
+                  responseContent: "代理流式请求成功",
+                }).catch(() => {}),
+                () => recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                  channelId: channel.channelId,
+                  modelName: channel.actualModelName,
+                  latency,
+                  statusCode: 502,
+                  errorMsg: "流式传输中断",
+                }).catch(() => {}),
+              );
+            }
+
+            if (channel.modelId) {
+              return withStreamTracking(
+                convertedResponse,
+                () => rememberPreferredProxyEndpoint(
+                  channel.modelId!,
+                  attempt.endpointType
+                ).catch(() => {}),
+                () => recordProxyModelResult(channel.modelId!, attempt.endpointType, false, {
+                  latency,
+                  statusCode: 502,
+                  errorMsg: "流式传输中断",
+                }).catch(() => {})
+              );
+            }
+
+            return convertedResponse;
           }
 
           const data = await response.json();
-          return NextResponse.json(
-            buildChatCompletionFromResponses(data, modelName)
-          );
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Unknown error";
-          lastErrorMessage = `Proxy error: ${message}`;
-          lastStatus = 502;
+          const convertedPayload = buildChatCompletionFromResponses(data, modelName);
+
+          if (channel.modelId && !isUnifiedRouting) {
+            await rememberPreferredProxyEndpoint(
+              channel.modelId,
+              attempt.endpointType
+            ).catch(() => {});
+          }
 
           if (isUnifiedRouting && channel.modelId) {
-            await recordProxyModelResult(channel.modelId, attempt.endpointType, false, {
-              errorMsg: lastErrorMessage,
+            await recordProxyModelResult(channel.modelId, attempt.endpointType, true, {
+              channelId: channel.channelId,
+              modelName: channel.actualModelName,
+              latency,
+              statusCode: response.status,
+              responseContent: "代理请求成功",
             }).catch(() => {});
+          }
+
+          return NextResponse.json(convertedPayload);
+        } catch (error) {
+          lastErrorMessage = `Proxy error: ${error instanceof Error ? error.message : "Unknown error"}`;
+          lastStatus = 502;
+
+          if (channel.modelId) {
+            pendingFailures.push({
+              modelId: channel.modelId,
+              endpointType: attempt.endpointType,
+              latency,
+              statusCode: 502,
+              errorMsg: lastErrorMessage,
+            });
           }
         }
       }
+    }
+
+    if (pendingFailures.length > 0) {
+      await Promise.all(
+        pendingFailures.map((failure) =>
+          recordProxyModelResult(failure.modelId, failure.endpointType, false, {
+            latency: failure.latency,
+            statusCode: failure.statusCode,
+            errorMsg: failure.errorMsg,
+          }).catch(() => {})
+        )
+      );
     }
 
     return errorResponse(lastErrorMessage, lastStatus);
