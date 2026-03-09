@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { proxyFetch } from "@/lib/utils/proxy-fetch";
 import { getProxyApiKey, validateProxyKey, canAccessModel, type ValidateKeyResult } from "@/lib/utils/proxy-key";
+import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 
 // Round-robin counter per channel (auto-clears when too many stale keys accumulate)
 const roundRobinCounters = new Map<string, number>();
@@ -22,6 +23,38 @@ function parseStringArray(value: unknown): string[] | null {
     return value as string[];
   }
   return null;
+}
+
+function supportsPreferredEndpoint(
+  modelName: string,
+  detectedEndpoints: string[],
+  preferredEndpoint?: string
+): boolean {
+  if (!preferredEndpoint) {
+    return true;
+  }
+
+  if (detectedEndpoints.includes(preferredEndpoint)) {
+    return true;
+  }
+
+  if (detectedEndpoints.length === 0) {
+    return true;
+  }
+
+  const normalizedName = modelName.toLowerCase();
+  if (
+    isGptFiveOrNewerModel(modelName) &&
+    !normalizedName.includes("codex") &&
+    (preferredEndpoint === "CHAT" || preferredEndpoint === "CODEX")
+  ) {
+    return (
+      detectedEndpoints.includes("CHAT") ||
+      detectedEndpoints.includes("CODEX")
+    );
+  }
+
+  return false;
 }
 
 // Proxy request timeout (10 minutes for long-running CLI requests)
@@ -247,7 +280,7 @@ export async function findChannelByModel(modelName: string, preferredEndpoint?: 
   // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型
   if (preferredEndpoint && validModels.length > 0) {
     const matched = validModels.filter((m) =>
-      m.detectedEndpoints.includes(preferredEndpoint)
+      supportsPreferredEndpoint(m.modelName, m.detectedEndpoints, preferredEndpoint)
     );
     if (matched.length > 0) {
       validModels = matched;
@@ -352,7 +385,7 @@ async function getUnifiedModelCandidates(
   let endpointFiltered = validModels;
   if (preferredEndpoint && validModels.length > 0) {
     endpointFiltered = validModels.filter((m) =>
-      m.detectedEndpoints.includes(preferredEndpoint)
+      supportsPreferredEndpoint(m.modelName, m.detectedEndpoints, preferredEndpoint)
     );
   }
 

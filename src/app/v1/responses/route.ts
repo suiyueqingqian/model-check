@@ -15,6 +15,11 @@ import {
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
 
+const RESPONSES_HEADERS = {
+  "User-Agent": "codex_cli_rs/0.0.1",
+  originator: "codex_cli_rs",
+};
+
 export async function POST(request: NextRequest) {
   // Verify proxy API key (async for multi-key support)
   const { error: authError, keyResult } = await verifyProxyKeyAsync(request);
@@ -56,7 +61,7 @@ export async function POST(request: NextRequest) {
         const upstreamBody = { ...body, model: channel.actualModelName, stream: isStream };
         const baseUrl = normalizeBaseUrl(channel.baseUrl);
         const url = `${baseUrl}/v1/responses`;
-        const headers = buildUpstreamHeaders(channel.apiKey, "openai");
+        const headers = buildUpstreamHeaders(channel.apiKey, "openai", RESPONSES_HEADERS);
         const response = await proxyRequest(url, "POST", headers, upstreamBody, channel.proxy);
         const latency = Date.now() - startedAt;
 

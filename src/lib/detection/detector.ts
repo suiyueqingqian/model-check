@@ -423,11 +423,11 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
       if (retryResult) return retryResult;
     }
 
-    // CODEX endpoint failed for gpt-5+ (non-codex) — fall back to Chat Completions
-    if (job.endpointType === EndpointType.CODEX) {
+    // gpt-5+ 先尝试 Chat，失败再降级到 Responses
+    if (job.endpointType === EndpointType.CHAT) {
       const name = job.modelName.toLowerCase();
       if (isGptFiveOrNewerModel(name) && !name.includes("codex")) {
-        const retryResult = await retryWithChatEndpoint(job, startTime);
+        const retryResult = await retryWithResponsesEndpoint(job, startTime);
         if (retryResult) return retryResult;
       }
     }
@@ -457,11 +457,11 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
       if (retryResult) return retryResult;
     }
 
-    // CODEX endpoint error for gpt-5+ (non-codex) — fall back to Chat Completions (skip on timeout)
-    if (!(error instanceof Error && error.name === "AbortError") && job.endpointType === EndpointType.CODEX) {
+    // gpt-5+ 先尝试 Chat，失败再降级到 Responses（超时不降级）
+    if (!(error instanceof Error && error.name === "AbortError") && job.endpointType === EndpointType.CHAT) {
       const name = job.modelName.toLowerCase();
       if (isGptFiveOrNewerModel(name) && !name.includes("codex")) {
-        const retryResult = await retryWithChatEndpoint(job, startTime);
+        const retryResult = await retryWithResponsesEndpoint(job, startTime);
         if (retryResult) return retryResult;
       }
     }
@@ -536,15 +536,14 @@ async function retryClaudeWithThinking(
 }
 
 /**
- * Retry with Chat Completions API (/v1/chat/completions) for gpt-5+ non-codex models
- * Called when CODEX (/v1/responses) fails, as fallback
+ * gpt-5+ 的 Chat 检测失败后，降级尝试 Responses API
  */
-async function retryWithChatEndpoint(
+async function retryWithResponsesEndpoint(
   job: DetectionJobData,
   originalStartTime: number
 ): Promise<DetectionResult | null> {
   const proxy = job.proxy || GLOBAL_PROXY;
-  const endpoint = buildEndpointDetection(job.baseUrl, job.apiKey, job.modelName, EndpointType.CHAT);
+  const endpoint = buildEndpointDetection(job.baseUrl, job.apiKey, job.modelName, EndpointType.CODEX);
 
   try {
     const controller = new AbortController();
@@ -567,11 +566,11 @@ async function retryWithChatEndpoint(
         const contentType = response.headers.get("content-type") || "";
         if (contentType.includes("text/event-stream")) {
           const sseText = await response.text();
-          responseContent = extractStreamContent(sseText, EndpointType.CHAT);
+          responseContent = extractStreamContent(sseText, EndpointType.CODEX);
           responseBody = parseLastSSEEvent(sseText);
         } else {
           responseBody = await response.json();
-          responseContent = extractResponseContent(responseBody, EndpointType.CHAT);
+          responseContent = extractResponseContent(responseBody, EndpointType.CODEX);
         }
       } catch {
         // Ignore parsing errors
@@ -584,7 +583,7 @@ async function retryWithChatEndpoint(
         status: CheckStatus.SUCCESS,
         latency,
         statusCode: response.status,
-        endpointType: EndpointType.CHAT,
+        endpointType: EndpointType.CODEX,
         responseContent,
       };
     }

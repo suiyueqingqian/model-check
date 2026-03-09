@@ -393,16 +393,85 @@ get_env_value() {
     printf '%s' "$value"
 }
 
-# 执行数据库初始化 SQL，并把默认代理 key 传给 psql 会话
+# 执行数据库初始化 SQL
+# 优先使用本地 PostgreSQL 容器；单容器/云数据库模式下回退到 app 容器内用 Node 直连 DATABASE_URL
 run_init_sql() {
     local compose_cmd=$1
     local proxy_api_key
     proxy_api_key=$(get_env_value "PROXY_API_KEY")
 
+    if docker ps --format '{{.Names}}' | grep -q "^model-check-postgres$"; then
+        if [ "$compose_cmd" = "docker compose" ]; then
+            env PGOPTIONS="-c app.proxy_api_key=$proxy_api_key" docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U modelcheck -d model_check < prisma/init.postgresql.sql
+        else
+            env PGOPTIONS="-c app.proxy_api_key=$proxy_api_key" docker-compose exec -T postgres psql -v ON_ERROR_STOP=1 -U modelcheck -d model_check < prisma/init.postgresql.sql
+        fi
+        return $?
+    fi
+
+    if ! docker ps --format '{{.Names}}' | grep -q "^model-check$"; then
+        warn "未检测到 app 容器，无法执行数据库同步"
+        return 1
+    fi
+
     if [ "$compose_cmd" = "docker compose" ]; then
-        env PGOPTIONS="-c app.proxy_api_key=$proxy_api_key" docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U modelcheck -d model_check < prisma/init.postgresql.sql
+        docker compose exec -T app node <<'NODE'
+const fs = require("node:fs");
+const { Client } = require("pg");
+
+async function main() {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error("DATABASE_URL 未设置");
+  }
+
+  const sql = fs.readFileSync("/app/prisma/init.postgresql.sql", "utf8");
+  const client = new Client({ connectionString });
+  await client.connect();
+
+  const proxyApiKey = (process.env.PROXY_API_KEY || "").trim();
+  if (proxyApiKey) {
+    await client.query("SELECT set_config('app.proxy_api_key', $1, false)", [proxyApiKey]);
+  }
+
+  await client.query(sql);
+  await client.end();
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+NODE
     else
-        env PGOPTIONS="-c app.proxy_api_key=$proxy_api_key" docker-compose exec -T postgres psql -v ON_ERROR_STOP=1 -U modelcheck -d model_check < prisma/init.postgresql.sql
+        docker-compose exec -T app node <<'NODE'
+const fs = require("node:fs");
+const { Client } = require("pg");
+
+async function main() {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error("DATABASE_URL 未设置");
+  }
+
+  const sql = fs.readFileSync("/app/prisma/init.postgresql.sql", "utf8");
+  const client = new Client({ connectionString });
+  await client.connect();
+
+  const proxyApiKey = (process.env.PROXY_API_KEY || "").trim();
+  if (proxyApiKey) {
+    await client.query("SELECT set_config('app.proxy_api_key', $1, false)", [proxyApiKey]);
+  }
+
+  await client.query(sql);
+  await client.end();
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+NODE
     fi
 }
 
