@@ -37,6 +37,21 @@ const GLOBAL_SEMAPHORE_KEY = "detection:semaphore:global";
 // Worker instance
 let worker: Worker<DetectionJobData, DetectionResult> | null = null;
 
+function getEffectiveWorkerConcurrency(config: WorkerRuntimeConfig): number {
+  return Math.max(1, Math.min(WORKER_CONCURRENCY, config.maxGlobalConcurrency));
+}
+
+function applyWorkerConcurrency(config: WorkerRuntimeConfig): void {
+  if (!worker) {
+    return;
+  }
+
+  const nextConcurrency = getEffectiveWorkerConcurrency(config);
+  if (worker.concurrency !== nextConcurrency) {
+    worker.concurrency = nextConcurrency;
+  }
+}
+
 function parsePositiveInt(value: unknown, fallback: number): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return fallback;
@@ -91,11 +106,13 @@ async function loadWorkerConfig(): Promise<WorkerRuntimeConfig> {
 
         cachedConfig = resolvedConfig;
         cachedAt = Date.now();
+        applyWorkerConcurrency(resolvedConfig);
         return resolvedConfig;
       } catch {
         const fallbackConfig = cachedConfig ?? normalizeConfig(DEFAULT_WORKER_CONFIG);
         cachedConfig = fallbackConfig;
         cachedAt = Date.now();
+        applyWorkerConcurrency(fallbackConfig);
         return fallbackConfig;
       } finally {
         loadingConfigPromise = null;
@@ -181,6 +198,21 @@ async function releaseSlots(channelId: string): Promise<void> {
   }
   if (globalVal <= 0) {
     await redis.del(GLOBAL_SEMAPHORE_KEY);
+  }
+}
+
+async function clearSemaphoreKeys(): Promise<void> {
+  const keys: string[] = [];
+  let cursor = "0";
+
+  do {
+    const [nextCursor, batch] = await redis.scan(cursor, "MATCH", "detection:semaphore:*", "COUNT", 100);
+    cursor = nextCursor;
+    keys.push(...batch);
+  } while (cursor !== "0");
+
+  if (keys.length > 0) {
+    await redis.del(...keys);
   }
 }
 
@@ -331,21 +363,32 @@ export function startWorker(): Worker<DetectionJobData, DetectionResult> {
     return worker;
   }
 
+  void clearSemaphoreKeys().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[Worker] 清理旧信号量失败:", message);
+  });
+
   worker = new Worker<DetectionJobData, DetectionResult>(
     DETECTION_QUEUE_NAME,
     processDetectionJob,
     {
       connection: redis.duplicate(),
-      concurrency: WORKER_CONCURRENCY,
+      concurrency: getEffectiveWorkerConcurrency(DEFAULT_WORKER_CONFIG),
     }
   );
+
+  void loadWorkerConfig().catch(() => {
+  });
 
   // Event handlers
   worker.on("completed", () => {
   });
 
-  worker.on("failed", (_job, err) => {
-    console.error("[Worker] Job failed:", err.message);
+  worker.on("failed", (job, err) => {
+    const jobInfo = job?.data
+      ? `channel=${job.data.channelId} model=${job.data.modelName} endpoint=${job.data.endpointType}`
+      : "job=unknown";
+    console.error("[Worker] Job failed:", jobInfo, err.message);
   });
 
   worker.on("error", (err) => {

@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronUp, Loader2, Search } from "lucide-react";
+import { ChevronDown, ChevronUp, Loader2, Search, Trash2 } from "lucide-react";
 import { useAuth } from "@/components/providers/auth-provider";
+import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
 interface ProxyRequestLogItem {
@@ -69,6 +70,23 @@ function formatEndpointLabel(value: string | null): string {
   }
 }
 
+function getUpstreamPath(value: string | null): string {
+  switch (value) {
+    case "CHAT":
+      return "/v1/chat/completions";
+    case "CLAUDE":
+      return "/v1/messages";
+    case "GEMINI":
+      return "/v1beta/models/...";
+    case "CODEX":
+      return "/v1/responses";
+    case "IMAGE":
+      return "/v1/images/generations";
+    default:
+      return "-";
+  }
+}
+
 function DetailItem({
   label,
   value,
@@ -90,7 +108,8 @@ export function ProxyRequestLog({
   refreshKey = 0,
   standalone = false,
 }: ProxyRequestLogProps) {
-  const { isAuthenticated, token } = useAuth();
+  const { isAuthenticated, token, authFetch } = useAuth();
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [endpointType, setEndpointType] = useState("all");
@@ -101,6 +120,7 @@ export function ProxyRequestLog({
   const [data, setData] = useState<ProxyRequestLogResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingTarget, setDeletingTarget] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
 
   // 搜索防抖
@@ -144,11 +164,7 @@ export function ProxyRequestLog({
         params.set("status", nextStatus);
       }
 
-      const response = await fetch(`/api/proxy-request-logs?${params}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await authFetch(`/api/proxy-request-logs?${params}`);
 
       if (!response.ok) {
         throw new Error("获取代理请求日志失败");
@@ -164,7 +180,80 @@ export function ProxyRequestLog({
         setLoading(false);
       }
     }
-  }, [token]);
+  }, [token, authFetch]);
+
+  const refreshCurrentPage = useCallback(async (nextPage?: number) => {
+    const targetPage = nextPage ?? page;
+    await fetchLogs(targetPage, pageSize, debouncedSearch, endpointType, status);
+  }, [page, pageSize, debouncedSearch, endpointType, status, fetchLogs]);
+
+  const handleDeleteLogs = useCallback(async (
+    mode: "single" | "filtered" | "all",
+    logId?: string
+  ) => {
+    const confirmMessage = mode === "single"
+      ? "确定删除这条日志吗？"
+      : mode === "filtered"
+        ? "确定清空当前筛选结果吗？"
+        : "确定清空全部日志吗？";
+
+    if (!window.confirm(confirmMessage)) {
+      return;
+    }
+
+    setDeletingTarget(mode === "single" ? logId || "single" : mode);
+
+    try {
+      const response = await authFetch("/api/proxy-request-logs", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(
+          mode === "single"
+            ? { mode, id: logId }
+            : mode === "filtered"
+              ? { mode, search: debouncedSearch, endpointType, status }
+              : { mode }
+        ),
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(result.error || "删除日志失败");
+      }
+
+      const deletedCount = typeof result.deletedCount === "number" ? result.deletedCount : 0;
+      toast(
+        mode === "single"
+          ? "日志已删除"
+          : `已删除 ${deletedCount} 条日志`,
+        "success"
+      );
+
+      if (mode === "single" && expandedId === logId) {
+        setExpandedId(null);
+      }
+
+      const shouldFallbackPage =
+        mode === "single" &&
+        data &&
+        data.logs.length === 1 &&
+        page > 1;
+
+      const nextPage = shouldFallbackPage ? page - 1 : 1;
+
+      if (nextPage !== page) {
+        setPage(nextPage);
+      }
+
+      await refreshCurrentPage(nextPage);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "删除日志失败", "error");
+    } finally {
+      setDeletingTarget(null);
+    }
+  }, [authFetch, data, debouncedSearch, endpointType, expandedId, page, refreshCurrentPage, status, toast]);
 
   // 自动刷新（首次加载 + 定时刷新合并）
   useEffect(() => {
@@ -255,6 +344,27 @@ export function ProxyRequestLog({
             <option value="fail">失败</option>
           </select>
         </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleDeleteLogs("filtered")}
+            disabled={deletingTarget !== null || !data || data.pagination.total === 0}
+            className="inline-flex items-center gap-1 rounded-md border px-3 py-2 text-sm text-foreground hover:bg-accent disabled:opacity-50 disabled:text-muted-foreground"
+          >
+            {deletingTarget === "filtered" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            清空当前筛选
+          </button>
+          <button
+            type="button"
+            onClick={() => handleDeleteLogs("all")}
+            disabled={deletingTarget !== null || !data || data.pagination.total === 0}
+            className="inline-flex items-center gap-1 rounded-md border border-red-300 px-3 py-2 text-sm text-red-500 hover:bg-red-500/10 disabled:opacity-50 disabled:text-muted-foreground"
+          >
+            {deletingTarget === "all" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            清空全部
+          </button>
+        </div>
       </div>
 
       {loading && !data ? (
@@ -282,11 +392,12 @@ export function ProxyRequestLog({
 
               return (
                 <div key={log.id}>
-                  <button
-                    type="button"
-                    onClick={() => setExpandedId((prev) => prev === log.id ? null : log.id)}
-                    className="grid w-full gap-2 px-4 py-2.5 text-left transition-colors hover:bg-accent/40 lg:grid-cols-[190px_110px_minmax(0,1.4fr)_minmax(0,1fr)_110px_90px_32px] lg:items-center"
-                  >
+                  <div className="grid w-full gap-2 px-4 py-2.5 transition-colors hover:bg-accent/40 lg:grid-cols-[minmax(0,1fr)_40px] lg:items-center">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId((prev) => prev === log.id ? null : log.id)}
+                      className="grid w-full gap-2 text-left lg:grid-cols-[190px_110px_minmax(0,1.4fr)_minmax(0,1fr)_110px_90px_32px] lg:items-center"
+                    >
                     <div className="text-sm text-muted-foreground">
                       {formatTime(log.createdAt)}
                     </div>
@@ -305,7 +416,7 @@ export function ProxyRequestLog({
                         {log.requestedModel || "-"}
                       </div>
                       <div className="truncate text-xs text-muted-foreground" title={log.requestPath}>
-                        {log.requestPath}
+                        请求入口: {log.requestPath}
                       </div>
                     </div>
 
@@ -326,7 +437,7 @@ export function ProxyRequestLog({
                         {log.success ? "成功" : "失败"}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        {log.statusCode ?? "-"}{log.isStream ? " · 流式" : ""}
+                        {formatEndpointLabel(log.endpointType)} · {log.statusCode ?? "-"}{log.isStream ? " · 流式" : ""}
                       </div>
                     </div>
 
@@ -337,24 +448,42 @@ export function ProxyRequestLog({
                     <div className="flex justify-end text-muted-foreground">
                       {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                     </div>
-                  </button>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteLogs("single", log.id)}
+                      disabled={deletingTarget !== null}
+                      className="flex h-9 w-9 items-center justify-center rounded-md text-red-500 hover:bg-red-500/10 disabled:opacity-50 disabled:text-muted-foreground"
+                      title="删除这条日志"
+                    >
+                      {deletingTarget === log.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                    </button>
+                  </div>
 
                   {isExpanded && (
                     <div className="border-t bg-muted/20 px-4 py-2.5">
-                      <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-                        <DetailItem label="请求模型" value={log.requestedModel || "-"} mono />
-                        <DetailItem label="实际模型" value={log.actualModelName || "-"} mono />
-                        <DetailItem label="请求路径" value={log.requestPath} mono />
-                        <DetailItem label="请求方法" value={log.requestMethod} />
-                        <DetailItem label="端点类型" value={formatEndpointLabel(log.endpointType)} />
-                        <DetailItem label="请求时间" value={formatTime(log.createdAt)} />
-                        <DetailItem label="渠道名" value={log.channelName || "-"} />
-                        <DetailItem label="代理 Key" value={log.proxyKeyName || "-"} />
-                        <DetailItem label="传输方式" value={log.isStream ? "流式" : "普通"} />
-                        <DetailItem label="状态码" value={String(log.statusCode ?? "-")} />
-                        <DetailItem label="耗时" value={log.latency ? `${log.latency}ms` : "-"} />
-                        <DetailItem label="执行结果" value={log.success ? "成功" : "失败"} />
+                    <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+                      <DetailItem label="请求模型" value={log.requestedModel || "-"} mono />
+                      <DetailItem label="实际模型" value={log.actualModelName || "-"} mono />
+                      <DetailItem label="请求入口" value={log.requestPath} mono />
+                      <DetailItem label="实际上游端点" value={formatEndpointLabel(log.endpointType)} />
+                      <DetailItem label="实际上游 URL" value={getUpstreamPath(log.endpointType)} mono />
+                      <DetailItem label="请求方法" value={log.requestMethod} />
+                      <DetailItem label="请求时间" value={formatTime(log.createdAt)} />
+                      <DetailItem label="渠道名" value={log.channelName || "-"} />
+                      <DetailItem label="代理 Key" value={log.proxyKeyName || "-"} />
+                      <DetailItem label="传输方式" value={log.isStream ? "流式" : "普通"} />
+                      <DetailItem label="状态码" value={String(log.statusCode ?? "-")} />
+                      <DetailItem label="耗时" value={log.latency ? `${log.latency}ms` : "-"} />
+                      <DetailItem label="执行结果" value={log.success ? "成功" : "失败"} />
+                    </div>
+
+                    {log.requestPath !== getUpstreamPath(log.endpointType) && (
+                      <div className="mt-2 rounded-md border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-600 dark:text-blue-300">
+                        请求先进入 {log.requestPath}，项目实际尝试的是 {getUpstreamPath(log.endpointType)}
                       </div>
+                    )}
 
                       {log.errorMsg && (
                         <div className="mt-2.5 space-y-1.5">

@@ -262,7 +262,7 @@ function validateDayTimes(dayRunCount: number, dayTimes: string[]): string | nul
 }
 
 export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps) {
-  const { token } = useAuth();
+  const { token, authFetch } = useAuth();
   const { toast } = useToast();
 
   const [loading, setLoading] = useState(true);
@@ -299,8 +299,7 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
     const loadConfig = async () => {
       setLoading(true);
       try {
-        const response = await fetch("/api/scheduler/config", {
-          headers: { Authorization: `Bearer ${token}` },
+        const response = await authFetch("/api/scheduler/config", {
           signal: controller.signal,
         });
 
@@ -344,7 +343,7 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
 
     loadConfig();
     return () => controller.abort();
-  }, [isOpen, token, toast]);
+  }, [isOpen, token, authFetch, toast]);
 
   useEffect(() => {
     if (intervalUnit !== "day" || useCustomDayTimes) return;
@@ -392,11 +391,10 @@ export function SchedulerModal({ isOpen, onClose, onSave }: SchedulerModalProps)
       );
       const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
-      const response = await fetch("/api/scheduler/config", {
+      const response = await authFetch("/api/scheduler/config", {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           enabled,

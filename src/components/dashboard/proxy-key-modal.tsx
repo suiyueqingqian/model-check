@@ -30,7 +30,7 @@ interface ProxyKeyModalProps {
 }
 
 export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyKeyModalProps) {
-  const { token } = useAuth();
+  const { token, authFetch } = useAuth();
   const { toast } = useToast();
 
   const [saving, setSaving] = useState(false);
@@ -75,8 +75,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
       try {
         // 使用 /api/scheduler/config 获取渠道列表（包含 models 的 id 和 modelName）
         // /api/channel 只返回 lastStatus，不包含模型详情，无法满足 ChannelWithModels 接口
-        const response = await fetch("/api/scheduler/config", {
-          headers: { Authorization: `Bearer ${token}` },
+        const response = await authFetch("/api/scheduler/config", {
           signal: controller.signal,
         });
 
@@ -99,7 +98,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
 
     loadChannels();
     return () => controller.abort();
-  }, [isOpen, token]);
+  }, [isOpen, token, authFetch]);
 
   // 加载统一模式可用模型列表
   useEffect(() => {
@@ -110,8 +109,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
     const loadUnifiedModels = async () => {
       setLoadingUnifiedModels(true);
       try {
-        const response = await fetch("/api/proxy-keys/unified-models", {
-          headers: { Authorization: `Bearer ${token}` },
+        const response = await authFetch("/api/proxy-keys/unified-models", {
           signal: controller.signal,
         });
 
@@ -134,7 +132,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
 
     loadUnifiedModels();
     return () => controller.abort();
-  }, [isOpen, token, unifiedMode]);
+  }, [isOpen, token, unifiedMode, authFetch]);
 
   // 初始化基础表单字段（仅在 editingKey/isOpen 变化时触发）
   useEffect(() => {
@@ -232,11 +230,10 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
     setSaving(true);
     try {
       if (editingKey) {
-        const response = await fetch(`/api/proxy-keys/${editingKey.id}`, {
+        const response = await authFetch(`/api/proxy-keys/${editingKey.id}`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
             name: name.trim(),
@@ -269,11 +266,10 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
         toast("密钥已更新", "success");
       } else {
         // Create new key
-        const response = await fetch("/api/proxy-keys", {
+        const response = await authFetch("/api/proxy-keys", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
             name: name.trim(),

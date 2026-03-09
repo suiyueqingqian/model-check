@@ -8,7 +8,7 @@ import {
   triggerModelDetection,
   getDetectionProgress,
 } from "@/lib/queue/service";
-import { getQueueStats, getTestingChannelIds, isQueueRunning, pauseAndDrainQueue, removeJobsByModelIds } from "@/lib/queue/queue";
+import { getQueueStats, getTestingChannelIds, getTestingModelIds, isQueueRunning, pauseAndDrainQueue, removeJobsByModelIds } from "@/lib/queue/queue";
 
 // POST /api/detect - Trigger detection
 export async function POST(request: NextRequest) {
@@ -53,6 +53,18 @@ export async function POST(request: NextRequest) {
     let result;
 
     if (modelId) {
+      const testingModelIds = await getTestingModelIds();
+      if (testingModelIds.includes(modelId)) {
+        return NextResponse.json(
+          {
+            error: "该模型检测任务正在进行中",
+            code: "DETECTION_RUNNING",
+            progress: await getDetectionProgress(),
+          },
+          { status: 409 }
+        );
+      }
+
       // Trigger detection for specific model
       result = await triggerModelDetection(modelId);
       return NextResponse.json({

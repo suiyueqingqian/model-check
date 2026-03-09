@@ -75,6 +75,7 @@ async function buildJobsForModels(
   }
 
   for (const model of models) {
+    const normalizedModelName = model.modelName.toLowerCase();
     const apiKey = model.channelKeyId && keyMap.has(model.channelKeyId)
       ? keyMap.get(model.channelKeyId)!
       : channel.apiKey;
@@ -83,11 +84,13 @@ async function buildJobsForModels(
     const detectedEndpoints = getValidDetectedEndpoints(model.detectedEndpoints);
     const defaultEndpointsToTest = getEndpointsToTest(model.modelName);
     const shouldIgnoreDetectedEndpoints =
+      normalizedModelName.includes("claude") ||
+      normalizedModelName.includes("gemini") ||
       (isGptFiveOrNewerModel(model.modelName) && !model.modelName.toLowerCase().includes("codex")) ||
       (
         defaultEndpointsToTest.length === 1 &&
         defaultEndpointsToTest[0] === EndpointType.CODEX &&
-        model.modelName.toLowerCase().includes("codex")
+        normalizedModelName.includes("codex")
       );
     const endpointsToTest =
       detectedEndpoints.length > 0 && !shouldIgnoreDetectedEndpoints
@@ -122,6 +125,10 @@ function getDetectionCounts(jobs: DetectionJobData[]): { modelCount: number; job
   };
 }
 
+function getDetectionModelIds(jobs: DetectionJobData[]): string[] {
+  return [...new Set(jobs.map((job) => job.modelId))];
+}
+
 /**
  * Trigger detection for all enabled channels
  * Detect models already stored in database
@@ -131,6 +138,7 @@ export async function triggerFullDetection(): Promise<{
   modelCount: number;
   jobCount: number;
   jobIds: string[];
+  modelIds: string[];
 }> {
 
   // Clear stopped flag from previous detection stop
@@ -173,18 +181,20 @@ export async function triggerFullDetection(): Promise<{
   }
 
   if (jobs.length === 0) {
-    return { channelCount: 0, modelCount: 0, jobCount: 0, jobIds: [] };
+    return { channelCount: 0, modelCount: 0, jobCount: 0, jobIds: [], modelIds: [] };
   }
 
   // Add all jobs to queue
   const jobIds = await addDetectionJobsBulk(jobs);
   const { modelCount, jobCount } = getDetectionCounts(jobs);
+  const modelIds = getDetectionModelIds(jobs);
 
   return {
     channelCount: channelsWithModels.length,
     modelCount,
     jobCount,
     jobIds,
+    modelIds,
   };
 }
 
@@ -200,6 +210,7 @@ export async function triggerChannelDetection(
   modelCount: number;
   jobCount: number;
   jobIds: string[];
+  modelIds: string[];
 }> {
 
   // 清理上一次停止留下的全局标记，避免新任务被 worker 直接跳过
@@ -251,13 +262,14 @@ export async function triggerChannelDetection(
   const jobs = await buildJobsForModels(channel, modelsToTest);
 
   if (jobs.length === 0) {
-    return { modelCount: 0, jobCount: 0, jobIds: [] };
+    return { modelCount: 0, jobCount: 0, jobIds: [], modelIds: [] };
   }
 
   const jobIds = await addDetectionJobsBulk(jobs);
   const { modelCount, jobCount } = getDetectionCounts(jobs);
+  const modelIdsToTest = getDetectionModelIds(jobs);
 
-  return { modelCount, jobCount, jobIds };
+  return { modelCount, jobCount, jobIds, modelIds: modelIdsToTest };
 }
 
 /**
@@ -265,6 +277,7 @@ export async function triggerChannelDetection(
  */
 export async function triggerModelDetection(modelId: string): Promise<{
   jobIds: string[];
+  modelIds: string[];
 }> {
 
   // 清理上一次停止留下的全局标记，避免新任务被 worker 直接跳过
@@ -314,7 +327,7 @@ export async function triggerModelDetection(modelId: string): Promise<{
 
   const jobIds = await addDetectionJobsBulk(jobs);
 
-  return { jobIds };
+  return { jobIds, modelIds: [model.id] };
 }
 
 /**

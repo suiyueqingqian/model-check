@@ -142,7 +142,7 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
   const [hoveringChannelStop, setHoveringChannelStop] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
-  const { isAuthenticated, token } = useAuth();
+  const { isAuthenticated, authFetch } = useAuth();
   const { toast, update } = useToast();
 
   // Use local filter if no external filter provided
@@ -217,18 +217,17 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
     try {
       if (isChannelTesting) {
         // Stop testing
-        onStopModels?.(modelIds);
         const toastId = toast("正在停止渠道测试...", "loading");
         try {
-          const response = await fetch("/api/detect", {
+          const response = await authFetch("/api/detect", {
             method: "DELETE",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify({ modelIds }),
           });
           if (response.ok) {
+            onStopModels?.(modelIds);
             update(toastId, `渠道 ${channel.name} 测试已停止`, "success");
           } else {
             update(toastId, "停止失败", "error");
@@ -238,14 +237,12 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
         }
       } else {
         // Start testing
-        onTestModels?.(modelIds);
         const toastId = toast(`正在测试 ${modelIds.length} 个模型...`, "loading");
         try {
-          const response = await fetch("/api/detect", {
+          const response = await authFetch("/api/detect", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify({ channelId: channel.id, modelIds }),
           });
@@ -255,6 +252,7 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
             throw new Error(data.error || "检测失败");
           }
 
+          onTestModels?.(modelIds);
           update(toastId, `渠道 ${channel.name} 测试已启动`, "success");
         } catch {
           update(toastId, `渠道 ${channel.name} 测试失败`, "error");
@@ -273,18 +271,17 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
     try {
       if (testingModelIds.has(modelId)) {
         // Stop testing
-        onStopModels?.([modelId]);
         const toastId = toast(`正在停止模型 ${modelName}...`, "loading");
         try {
-          const response = await fetch("/api/detect", {
+          const response = await authFetch("/api/detect", {
             method: "DELETE",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
             },
             body: JSON.stringify({ modelIds: [modelId] }),
           });
           if (response.ok) {
+            onStopModels?.([modelId]);
             update(toastId, `模型 ${modelName} 测试已停止`, "success");
           } else {
             update(toastId, "停止失败", "error");
@@ -296,15 +293,13 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
       }
 
       // Start testing
-      onTestModels?.([modelId]);
       const toastId = toast(`正在测试模型 ${modelName}...`, "loading");
 
       try {
-        const response = await fetch("/api/detect", {
+        const response = await authFetch("/api/detect", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({ modelId }),
         });
@@ -314,6 +309,7 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
           throw new Error(data.error || "检测失败");
         }
 
+        onTestModels?.([modelId]);
         update(toastId, `模型 ${modelName} 测试已启动`, "success");
       } catch {
         update(toastId, `模型 ${modelName} 测试失败`, "error");

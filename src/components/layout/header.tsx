@@ -56,7 +56,7 @@ interface HeaderProps {
   statusFilter?: StatusFilter;
   onStatusFilterChange?: (value: StatusFilter) => void;
   // Detection callbacks
-  onDetectionStart?: () => void;
+  onDetectionStart?: (modelIds?: string[]) => void;
   onDetectionStop?: () => void;
 }
 
@@ -75,7 +75,7 @@ export function Header({
   onDetectionStop,
 }: HeaderProps) {
   const { resolvedTheme, setTheme } = useTheme();
-  const { isAuthenticated, token, logout } = useAuth();
+  const { isAuthenticated, token, logout, authFetch } = useAuth();
   const { toast, update } = useToast();
   const [isDetecting, setIsDetecting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
@@ -149,9 +149,7 @@ export function Header({
 
     const checkVersion = async () => {
       try {
-        const res = await fetch("/api/version", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await authFetch("/api/version");
         if (res.ok) {
           const data = await res.json();
           setHasUpdate(data.hasUpdate ?? false);
@@ -163,7 +161,18 @@ export function Header({
     };
 
     checkVersion();
-  }, [isAuthenticated, token]);
+  }, [authFetch, isAuthenticated, token]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || isAuthenticated) {
+      return;
+    }
+    if (sessionStorage.getItem("auth_expired_notice") !== "1") {
+      return;
+    }
+    sessionStorage.removeItem("auth_expired_notice");
+    toast("登录已过期，请重新登录", "error");
+  }, [isAuthenticated, toast]);
 
   // Real-time countdown timer
   useEffect(() => {
@@ -209,16 +218,13 @@ export function Header({
     if (isDetecting) return;
 
     setIsDetecting(true);
-    // Immediately notify parent that detection is starting
-    onDetectionStart?.();
     const toastId = toast("正在启动全量检测...", "loading");
 
     try {
-      const response = await fetch("/api/detect", {
+      const response = await authFetch("/api/detect", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({}),
       });
@@ -226,6 +232,7 @@ export function Header({
       const data = await response.json();
 
       if (response.ok) {
+        onDetectionStart?.(Array.isArray(data.modelIds) ? data.modelIds : []);
         update(toastId, data.message || "检测已启动", "success");
       } else {
         update(toastId, data.error || "启动检测失败", "error");
@@ -249,11 +256,8 @@ export function Header({
     const toastId = toast("正在停止检测...", "loading");
 
     try {
-      const response = await fetch("/api/detect", {
+      const response = await authFetch("/api/detect", {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
 
       const data = await response.json();

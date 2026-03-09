@@ -380,11 +380,11 @@ export async function findChannelByModel(modelName: string, preferredEndpoint?: 
 
   // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型
   if (preferredEndpoint && validModels.length > 0) {
-    const matched = validModels.filter((m) =>
+    validModels = validModels.filter((m) =>
       supportsPreferredEndpoint(m.modelName, m.detectedEndpoints, preferredEndpoint)
     );
-    if (matched.length > 0) {
-      validModels = matched;
+    if (validModels.length === 0) {
+      return null;
     }
   }
 
@@ -490,11 +490,11 @@ async function getUnifiedModelCandidates(
   // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型（有回退）
   let endpointFiltered = validModels;
   if (preferredEndpoint && validModels.length > 0) {
-    const filtered = validModels.filter((m) =>
+    endpointFiltered = validModels.filter((m) =>
       supportsPreferredEndpoint(m.modelName, m.detectedEndpoints, preferredEndpoint)
     );
-    if (filtered.length > 0) {
-      endpointFiltered = filtered;
+    if (endpointFiltered.length === 0) {
+      return [];
     }
   }
 

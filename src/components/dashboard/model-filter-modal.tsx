@@ -46,7 +46,7 @@ export function ModelFilterModal({
   onBack,
   onSyncComplete,
 }: ModelFilterModalProps) {
-  const { token } = useAuth();
+  const { token, authFetch } = useAuth();
   const { toast } = useToast();
   const syncAbortRef = useRef<AbortController | null>(null);
 
@@ -69,8 +69,8 @@ export function ModelFilterModal({
   const [togglingAll, setTogglingAll] = useState(false);
 
   const headers = useMemo(
-    () => ({ "Content-Type": "application/json", Authorization: `Bearer ${token}` }),
-    [token]
+    () => ({ "Content-Type": "application/json" }),
+    []
   );
 
   // Load keywords
@@ -79,7 +79,7 @@ export function ModelFilterModal({
     const controller = new AbortController();
     (async () => {
       try {
-        const res = await fetch("/api/model-keywords", { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+        const res = await authFetch("/api/model-keywords", { signal: controller.signal });
         if (res.ok) {
           const data = await res.json();
           setKeywords(data.keywords || []);
@@ -90,7 +90,7 @@ export function ModelFilterModal({
       }
     })();
     return () => controller.abort();
-  }, [token]);
+  }, [token, authFetch]);
 
   // 组件卸载时取消同步请求
   useEffect(() => {
@@ -114,7 +114,7 @@ export function ModelFilterModal({
         const batch = targetChannels.slice(i, i + batchSize);
         const results = await Promise.allSettled(
           batch.map(async (ch) => {
-            const res = await fetch(`/api/channel/${ch.id}/validate-keys`, {
+            const res = await authFetch(`/api/channel/${ch.id}/validate-keys`, {
               method: "POST",
               headers,
               signal,
@@ -184,14 +184,14 @@ export function ModelFilterModal({
     } finally {
       setFetching(false);
     }
-  }, [targetChannels, headers, toast]);
+  }, [targetChannels, headers, toast, authFetch]);
 
   useEffect(() => {
     if (!token || targetChannels.length === 0) return;
     const controller = new AbortController();
     fetchModels(controller.signal);
     return () => controller.abort();
-  }, [token, fetchModels]);
+  }, [token, fetchModels, targetChannels.length]);
 
   // Filter logic
   const enabledKeywords = useMemo(
@@ -326,13 +326,13 @@ export function ModelFilterModal({
     if (!searchText.trim() || adding) return;
     setAdding(true);
     try {
-      const res = await fetch("/api/model-keywords", {
+      const res = await authFetch("/api/model-keywords", {
         method: "POST",
         headers,
         body: JSON.stringify({ keyword: searchText.trim() }),
       });
       if (!res.ok) throw new Error();
-      const kwRes = await fetch("/api/model-keywords", { headers: { Authorization: `Bearer ${token}` } });
+      const kwRes = await authFetch("/api/model-keywords");
       if (kwRes.ok) {
         const data = await kwRes.json();
         setKeywords(data.keywords || []);
@@ -348,7 +348,7 @@ export function ModelFilterModal({
 
   const handleDeleteKeyword = async (id: string) => {
     try {
-      await fetch(`/api/model-keywords?id=${id}`, { method: "DELETE", headers });
+      await authFetch(`/api/model-keywords?id=${id}`, { method: "DELETE", headers });
       setKeywords((prev) => prev.filter((k) => k.id !== id));
     } catch (error) {
       logWarn("[ModelFilter] 删除关键词失败", error);
@@ -359,7 +359,7 @@ export function ModelFilterModal({
   const handleToggleKeyword = async (id: string, enabled: boolean) => {
     setKeywords((prev) => prev.map((k) => (k.id === id ? { ...k, enabled } : k)));
     try {
-      const res = await fetch("/api/model-keywords", {
+      const res = await authFetch("/api/model-keywords", {
         method: "PUT",
         headers,
         body: JSON.stringify({ id, enabled }),
@@ -377,7 +377,7 @@ export function ModelFilterModal({
     const previous = keywords.map((k) => ({ ...k }));
     setKeywords((prev) => prev.map((k) => ({ ...k, enabled })));
     try {
-      const res = await fetch("/api/model-keywords/toggle-all", {
+      const res = await authFetch("/api/model-keywords/toggle-all", {
         method: "PUT",
         headers,
         body: JSON.stringify({ enabled }),
@@ -399,7 +399,7 @@ export function ModelFilterModal({
     try {
       await Promise.all(
         inverted.map((k) =>
-          fetch("/api/model-keywords", {
+          authFetch("/api/model-keywords", {
             method: "PUT",
             headers,
             body: JSON.stringify({ id: k.id, enabled: k.enabled }),
@@ -416,7 +416,7 @@ export function ModelFilterModal({
   const handleEditSave = async (id: string) => {
     if (!editValue.trim()) return;
     try {
-      const res = await fetch("/api/model-keywords", {
+      const res = await authFetch("/api/model-keywords", {
         method: "PUT",
         headers,
         body: JSON.stringify({ id, keyword: editValue.trim() }),
@@ -452,7 +452,7 @@ export function ModelFilterModal({
             const selectedModelPairs = d
               ? d.modelPairs.filter((pair) => d.selectedModels.has(pair.modelName))
               : [];
-            const res = await fetch(`/api/channel/${ch.id}/sync`, {
+            const res = await authFetch(`/api/channel/${ch.id}/sync`, {
               method: "POST",
               headers,
               body: JSON.stringify({

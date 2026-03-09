@@ -151,11 +151,8 @@ export function Dashboard({
 
     const toastId = toast("正在删除渠道...", "loading");
     try {
-      const response = await fetch(`/api/channel?id=${channelId}`, {
+      const response = await authFetch(`/api/channel?id=${channelId}`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
       if (!response.ok) {
         throw new Error("删除渠道失败");
@@ -165,7 +162,7 @@ export function Dashboard({
     } catch (err) {
       update(toastId, err instanceof Error ? err.message : "删除失败", "error");
     }
-  }, [token, toast, update, fetchData, currentPage, search, endpointFilter, statusFilter]);
+  }, [token, toast, update, authFetch, fetchData, currentPage, search, endpointFilter, statusFilter]);
 
   // Page change handler
   const handlePageChange = useCallback((newPage: number) => {

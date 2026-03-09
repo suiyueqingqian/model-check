@@ -69,6 +69,14 @@ export function getEndpointsToTest(modelName: string): EndpointType[] {
     return [EndpointType.CODEX];
   }
 
+  if (name.includes("claude")) {
+    return [EndpointType.CLAUDE];
+  }
+
+  if (name.includes("gemini")) {
+    return [EndpointType.GEMINI];
+  }
+
   // gpt-5 及之后版本先测 Responses，再测 Chat
   if (isGptFiveOrNewerModel(name)) {
     return [EndpointType.CODEX, EndpointType.CHAT];

@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
     const maskedKeys = keys.map((key) => ({
       ...key,
       key: maskKey(key.key),
+      fullKey: key.key,
       source: "database" as const,
     }));
 
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest) {
       id: builtInKey.id,
       name: builtInKey.name,
       key: maskKey(builtInKey.key),
+      fullKey: builtInKey.key,
       enabled: builtInKey.enabled,
       allowAllModels: builtInKey.allowAllModels,
       allowedChannelIds: builtInKey.allowedChannelIds,

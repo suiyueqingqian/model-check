@@ -47,10 +47,7 @@ async function getRuntimeConfig() {
 }
 
 // GET /api/scheduler - Get scheduler status
-export async function GET(request: NextRequest) {
-  const authError = requireAuth(request);
-  if (authError) return authError;
-
+export async function GET() {
   try {
     const status = getCronStatus();
     const config = await getRuntimeConfig();

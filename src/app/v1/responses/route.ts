@@ -39,6 +39,19 @@ type ProxyAttemptSuccess = {
   latency: number;
 };
 
+function getActualModelName(modelName: string): string {
+  const slashIndex = modelName.indexOf("/");
+  return slashIndex > 0 ? modelName.slice(slashIndex + 1) : modelName;
+}
+
+function isClaudeModelName(modelName: string): boolean {
+  return getActualModelName(modelName).toLowerCase().includes("claude");
+}
+
+function isGeminiModelName(modelName: string): boolean {
+  return getActualModelName(modelName).toLowerCase().includes("gemini");
+}
+
 function normalizeChatMessageContent(content: unknown): string {
   if (typeof content === "string") {
     return content;
@@ -586,6 +599,30 @@ export async function POST(request: NextRequest) {
         });
         return errorResponse("Missing or invalid 'model' field", 400);
       }
+    }
+
+    if (typeof modelName === "string" && isClaudeModelName(modelName)) {
+      await writeRequestLog({
+        endpointType: "CODEX",
+        requestedModel: modelName,
+        isStream: body.stream !== false,
+        success: false,
+        statusCode: 400,
+        errorMsg: "Claude 模型仅支持 /v1/messages 接口",
+      });
+      return errorResponse("Claude 模型仅支持 /v1/messages 接口", 400);
+    }
+
+    if (typeof modelName === "string" && isGeminiModelName(modelName)) {
+      await writeRequestLog({
+        endpointType: "CODEX",
+        requestedModel: modelName,
+        isStream: body.stream !== false,
+        success: false,
+        statusCode: 400,
+        errorMsg: "Gemini 模型仅支持 /v1beta/models 接口",
+      });
+      return errorResponse("Gemini 模型仅支持 /v1beta/models 接口", 400);
     }
 
     const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "CODEX");

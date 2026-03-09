@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback, useRef, FormEvent } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, FormEvent } from "react";
 import {
   Plus,
   Pencil,
@@ -30,6 +30,7 @@ interface Channel {
   name: string;
   baseUrl: string;
   apiKey: string;
+  fullApiKey?: string;
   proxy: string | null;
   enabled: boolean;
   models?: { lastStatus: boolean | null }[];
@@ -105,7 +106,7 @@ function getChannelBorderClass(channel: Channel): string {
 }
 
 export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
-  const { token } = useAuth();
+  const { token, authFetch } = useAuth();
   const { toast } = useToast();
   const importAbortRef = useRef<AbortController | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -222,9 +223,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       // Then try to get env config from API
       if (token) {
         try {
-          const response = await fetch("/api/channel/webdav", {
-            headers: { Authorization: `Bearer ${token}` },
-          });
+          const response = await authFetch("/api/channel/webdav");
           if (response.ok) {
             const envConfig = await response.json();
             setWebdavEnvConfigured(envConfig.configured);
@@ -250,23 +249,22 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     };
 
     loadWebdavConfig();
-  }, [token]);
+  }, [token, authFetch]);
 
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
-  };
+  const headers = useMemo(
+    () => ({
+      "Content-Type": "application/json",
+    }),
+    []
+  );
 
   // Fetch channels
   const fetchChannels = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/channel", {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+      const response = await authFetch("/api/channel", {
+        headers,
         signal,
       });
       if (!response.ok) throw new Error("获取渠道列表失败");
@@ -284,7 +282,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         setLoading(false);
       }
     }
-  }, [token]);
+  }, [authFetch, headers]);
 
   useEffect(() => {
     if (isExpanded && token) {
@@ -324,12 +322,8 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     // Load existing keys (full values) + main key
     try {
       const [keysRes, mainKeyRes] = await Promise.all([
-        fetch(`/api/channel/${channel.id}/keys`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch(`/api/channel/${channel.id}/key`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
+        authFetch(`/api/channel/${channel.id}/keys`),
+        authFetch(`/api/channel/${channel.id}/key`),
       ]);
       if (keysRes.ok) {
         const data = await keysRes.json();
@@ -389,7 +383,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         }
         // In list mode, keys are managed individually via API, no need to send
 
-        const response = await fetch("/api/channel", {
+        const response = await authFetch("/api/channel", {
           method: "PUT",
           headers,
           body: JSON.stringify(updateBody),
@@ -422,7 +416,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
           keys: formData.multiKeys,
         };
 
-        const response = await fetch("/api/channel", {
+        const response = await authFetch("/api/channel", {
           method: "POST",
           headers,
           body: JSON.stringify(createBody),
@@ -462,7 +456,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     if (!editingChannel || validating) return;
     setValidating(true);
     try {
-      const res = await fetch(`/api/channel/${editingChannel.id}/validate-keys`, {
+      const res = await authFetch(`/api/channel/${editingChannel.id}/validate-keys`, {
         method: "POST",
         headers,
       });
@@ -493,7 +487,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     if (!editingChannel || !newSingleKey.trim() || addingSingleKey) return;
     setAddingSingleKey(true);
     try {
-      const res = await fetch(`/api/channel/${editingChannel.id}/keys`, {
+      const res = await authFetch(`/api/channel/${editingChannel.id}/keys`, {
         method: "POST",
         headers,
         body: JSON.stringify({ apiKey: newSingleKey.trim() }),
@@ -527,7 +521,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     if (!editingChannel) return;
     setDeletingKeyId(keyId);
     try {
-      const res = await fetch(`/api/channel/${editingChannel.id}/keys?keyId=${keyId}`, {
+      const res = await authFetch(`/api/channel/${editingChannel.id}/keys?keyId=${keyId}`, {
         method: "DELETE",
         headers,
       });
@@ -553,14 +547,14 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     try {
       const firstExtra = channelKeysInfo[0];
       // Promote first extra key to main key
-      const res = await fetch("/api/channel", {
+      const res = await authFetch("/api/channel", {
         method: "PUT",
         headers,
         body: JSON.stringify({ id: editingChannel.id, apiKey: firstExtra.fullKey }),
       });
       if (!res.ok) throw new Error("更新失败");
       // Delete the promoted key from channelKey table
-      await fetch(`/api/channel/${editingChannel.id}/keys?keyId=${firstExtra.id}`, {
+      await authFetch(`/api/channel/${editingChannel.id}/keys?keyId=${firstExtra.id}`, {
         method: "DELETE",
         headers,
       });
@@ -589,7 +583,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       const deletedIds = new Set<string>();
       for (const k of invalidKeys) {
         try {
-          await fetch(`/api/channel/${editingChannel.id}/keys?keyId=${k.id}`, {
+          await authFetch(`/api/channel/${editingChannel.id}/keys?keyId=${k.id}`, {
             method: "DELETE",
             headers,
           });
@@ -616,7 +610,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     try {
       if (editingKeyTarget === "main") {
         // Update main key via channel API
-        const res = await fetch("/api/channel", {
+        const res = await authFetch("/api/channel", {
           method: "PUT",
           headers,
           body: JSON.stringify({ id: editingChannel.id, apiKey: editKeyValue.trim() }),
@@ -629,7 +623,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         setMaskedApiKey(masked);
       } else {
         // Update extra key
-        const res = await fetch(`/api/channel/${editingChannel.id}/keys`, {
+        const res = await authFetch(`/api/channel/${editingChannel.id}/keys`, {
           method: "PUT",
           headers,
           body: JSON.stringify({ keyId: editingKeyTarget, apiKey: editKeyValue.trim() }),
@@ -663,7 +657,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     }
     setSavingKeys(true);
     try {
-      const res = await fetch("/api/channel", {
+      const res = await authFetch("/api/channel", {
         method: "PUT",
         headers,
         body: JSON.stringify({
@@ -690,7 +684,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   // Delete channel
   const handleDelete = async (id: string) => {
     try {
-      const response = await fetch(`/api/channel?id=${id}`, {
+      const response = await authFetch(`/api/channel?id=${id}`, {
         method: "DELETE",
         headers,
       });
@@ -710,7 +704,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
       sortOrder: index,
     }));
 
-    const response = await fetch("/api/channel", {
+    const response = await authFetch("/api/channel", {
       method: "PUT",
       headers,
       body: JSON.stringify({ orders }),
@@ -757,10 +751,10 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const handleCopyApiKey = async (id: string) => {
     setCopyingId(id);
     try {
-      const response = await fetch(`/api/channel/${id}/key`, { headers });
-      if (!response.ok) throw new Error("获取 API Key 失败");
-      const data = await response.json();
-      await navigator.clipboard.writeText(data.apiKey);
+      const targetChannel = channels.find((item) => item.id === id);
+      const fullApiKey = targetChannel?.fullApiKey;
+      if (!fullApiKey) throw new Error("获取 API Key 失败");
+      await navigator.clipboard.writeText(fullApiKey);
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 2000);
     } catch (err) {
@@ -775,7 +769,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     setExporting(true);
     setError(null);
     try {
-      const response = await fetch("/api/channel/export", { headers });
+      const response = await authFetch("/api/channel/export", { headers });
       if (!response.ok) throw new Error("导出失败");
       const data = await response.json();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -811,7 +805,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
 
       if (isAccountsBackup) {
         // Use SSE import-accounts API
-        const response = await fetch("/api/channel/import-accounts", {
+        const response = await authFetch("/api/channel/import-accounts", {
           method: "POST",
           headers,
           body: JSON.stringify(data),
@@ -892,7 +886,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         }
       } else {
         // Original channel import format
-        const response = await fetch("/api/channel/import", {
+        const response = await authFetch("/api/channel/import", {
           method: "POST",
           headers,
           body: JSON.stringify({ ...data, mode: importMode }),
@@ -963,7 +957,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     }));
 
     try {
-      const response = await fetch("/api/channel/webdav", {
+      const response = await authFetch("/api/channel/webdav", {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -1343,17 +1337,13 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                         <button
                           type="button"
                           onClick={async () => {
-                            if (keyViewMode === "edit" && editingChannel) {
-                              // 切回列表时从服务器重新加载 keys，避免使用临时 ID
-                              try {
-                                const [keysRes, mainKeyRes] = await Promise.all([
-                                  fetch(`/api/channel/${editingChannel.id}/keys`, {
-                                    headers: { Authorization: `Bearer ${token}` },
-                                  }),
-                                  fetch(`/api/channel/${editingChannel.id}/key`, {
-                                    headers: { Authorization: `Bearer ${token}` },
-                                  }),
-                                ]);
+                              if (keyViewMode === "edit" && editingChannel) {
+                                // 切回列表时从服务器重新加载 keys，避免使用临时 ID
+                                try {
+                                  const [keysRes, mainKeyRes] = await Promise.all([
+                                  authFetch(`/api/channel/${editingChannel.id}/keys`),
+                                  authFetch(`/api/channel/${editingChannel.id}/key`),
+                                  ]);
                                 if (keysRes.ok) {
                                   const data = await keysRes.json();
                                   setChannelKeysInfo((data.keys || []).map((k: { id: string; maskedKey: string; fullKey: string; lastValid?: boolean | null }) => ({
@@ -2065,7 +2055,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                                 if (!ch.apiKey.trim() || !ch.url) return;
                                 setAddingFailedChannel(ch.name);
                                 try {
-                                  const res = await fetch("/api/channel", {
+                                  const res = await authFetch("/api/channel", {
                                     method: "POST",
                                     headers,
                                     body: JSON.stringify({

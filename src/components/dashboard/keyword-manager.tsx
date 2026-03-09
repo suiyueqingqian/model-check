@@ -26,7 +26,7 @@ interface Keyword {
 }
 
 export function KeywordManager({ className }: { className?: string }) {
-  const { token } = useAuth();
+  const { token, authFetch } = useAuth();
   const { toast } = useToast();
   const [isExpanded, setIsExpanded] = useState(false);
   const [keywords, setKeywords] = useState<Keyword[]>([]);
@@ -49,13 +49,12 @@ export function KeywordManager({ className }: { className?: string }) {
 
   const headers = {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
   };
 
   const fetchKeywords = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/model-keywords", { headers: { Authorization: `Bearer ${token}` }, signal });
+      const res = await authFetch("/api/model-keywords", { signal });
       if (!res.ok) throw new Error();
       const data = await res.json();
       setKeywords(data.keywords || []);
@@ -64,7 +63,7 @@ export function KeywordManager({ className }: { className?: string }) {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [authFetch]);
 
   useEffect(() => {
     if (isExpanded && token) {
@@ -78,7 +77,7 @@ export function KeywordManager({ className }: { className?: string }) {
     if (!newKeyword.trim() || adding) return;
     setAdding(true);
     try {
-      const res = await fetch("/api/model-keywords", {
+      const res = await authFetch("/api/model-keywords", {
         method: "POST",
         headers,
         body: JSON.stringify({ keyword: newKeyword.trim() }),
@@ -97,7 +96,7 @@ export function KeywordManager({ className }: { className?: string }) {
     if (deletingId === id) return;
     setDeletingId(id);
     try {
-      const res = await fetch(`/api/model-keywords?id=${id}`, {
+      const res = await authFetch(`/api/model-keywords?id=${id}`, {
         method: "DELETE",
         headers,
       });
@@ -114,7 +113,7 @@ export function KeywordManager({ className }: { className?: string }) {
     // Optimistic update
     setKeywords((prev) => prev.map((k) => (k.id === id ? { ...k, enabled } : k)));
     try {
-      const res = await fetch("/api/model-keywords", {
+      const res = await authFetch("/api/model-keywords", {
         method: "PUT",
         headers,
         body: JSON.stringify({ id, enabled }),
@@ -132,7 +131,7 @@ export function KeywordManager({ className }: { className?: string }) {
     const previous = keywords.map((k) => ({ ...k }));
     setKeywords((prev) => prev.map((k) => ({ ...k, enabled })));
     try {
-      const res = await fetch("/api/model-keywords/toggle-all", {
+      const res = await authFetch("/api/model-keywords/toggle-all", {
         method: "PUT",
         headers,
         body: JSON.stringify({ enabled }),
@@ -150,7 +149,7 @@ export function KeywordManager({ className }: { className?: string }) {
     if (!editValue.trim() || saving) return;
     setSaving(true);
     try {
-      const res = await fetch("/api/model-keywords", {
+      const res = await authFetch("/api/model-keywords", {
         method: "PUT",
         headers,
         body: JSON.stringify({ id, keyword: editValue.trim() }),

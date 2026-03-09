@@ -30,6 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const saved = localStorage.getItem("auth_token");
     if (saved && isTokenExpired(saved)) {
+      sessionStorage.setItem("auth_expired_notice", "1");
       localStorage.removeItem("auth_token");
       return null;
     }
@@ -40,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!token) return;
     const clearAuth = () => {
+      sessionStorage.setItem("auth_expired_notice", "1");
       setToken(null);
       localStorage.removeItem("auth_token");
     };
@@ -69,6 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const data = await response.json();
       if (data.token) {
+        sessionStorage.removeItem("auth_expired_notice");
         setToken(data.token);
         localStorage.setItem("auth_token", data.token);
         return true;
@@ -81,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    sessionStorage.removeItem("auth_expired_notice");
     setToken(null);
     localStorage.removeItem("auth_token");
   }, []);
@@ -93,6 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const response = await fetch(input, { ...init, headers });
     if (response.status === 401 && token) {
+      sessionStorage.setItem("auth_expired_notice", "1");
       setToken(null);
       localStorage.removeItem("auth_token");
     }

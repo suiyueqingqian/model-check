@@ -30,6 +30,15 @@ function isPrefixedModelName(modelName: string): boolean {
   return slashIndex > 0 && slashIndex < modelName.length - 1;
 }
 
+function getActualModelName(modelName: string): string {
+  const slashIndex = modelName.indexOf("/");
+  return slashIndex > 0 ? modelName.slice(slashIndex + 1) : modelName;
+}
+
+function isGeminiModelName(modelName: string): boolean {
+  return getActualModelName(modelName).toLowerCase().includes("gemini");
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -108,6 +117,16 @@ export async function POST(
         });
         return errorResponse("Missing or invalid model name in path", 400);
       }
+    }
+
+    if (!isGeminiModelName(modelName)) {
+      await writeRequestLog({
+        requestedModel: modelName,
+        success: false,
+        statusCode: 400,
+        errorMsg: "仅 Gemini 模型支持 /v1beta/models 接口",
+      });
+      return errorResponse("仅 Gemini 模型支持 /v1beta/models 接口", 400);
     }
 
     const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "GEMINI");
@@ -392,6 +411,16 @@ export async function GET(
         });
         return errorResponse("Missing or invalid model name in path", 400);
       }
+    }
+
+    if (!isGeminiModelName(modelName)) {
+      await writeRequestLog({
+        requestedModel: modelName,
+        success: false,
+        statusCode: 400,
+        errorMsg: "仅 Gemini 模型支持 /v1beta/models 接口",
+      });
+      return errorResponse("仅 Gemini 模型支持 /v1beta/models 接口", 400);
     }
 
     const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "GEMINI");

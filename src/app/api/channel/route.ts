@@ -28,6 +28,7 @@ export async function GET(request: NextRequest) {
     // Mask API keys for security
     const maskedChannels = channels.map((ch) => ({
       ...ch,
+      fullApiKey: ch.apiKey,
       apiKey: ch.apiKey.slice(0, 8) + "..." + ch.apiKey.slice(-4),
     }));
 

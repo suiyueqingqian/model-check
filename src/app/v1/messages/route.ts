@@ -24,6 +24,15 @@ type ProxyAttemptFailure = {
   errorMsg: string;
 };
 
+function getActualModelName(modelName: string): string {
+  const slashIndex = modelName.indexOf("/");
+  return slashIndex > 0 ? modelName.slice(slashIndex + 1) : modelName;
+}
+
+function isClaudeModelName(modelName: string): boolean {
+  return getActualModelName(modelName).toLowerCase().includes("claude");
+}
+
 export async function POST(request: NextRequest) {
   // Verify proxy API key (async for multi-key support)
   const { error: authError, keyResult } = await verifyProxyKeyAsync(request);
@@ -94,6 +103,17 @@ export async function POST(request: NextRequest) {
         });
         return errorResponse("Missing or invalid 'model' field", 400);
       }
+    }
+
+    if (typeof modelName === "string" && !isClaudeModelName(modelName)) {
+      await writeRequestLog({
+        requestedModel: modelName,
+        isStream: body.stream === true,
+        success: false,
+        statusCode: 400,
+        errorMsg: "仅 Claude 模型支持 /v1/messages 接口",
+      });
+      return errorResponse("仅 Claude 模型支持 /v1/messages 接口", 400);
     }
 
     const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "CLAUDE");

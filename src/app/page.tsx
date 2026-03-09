@@ -6,11 +6,13 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Header, EndpointFilter, StatusFilter } from "@/components/layout/header";
 import { LoginModal } from "@/components/ui/login-modal";
 import { Dashboard } from "@/components/dashboard";
+import { useAuth } from "@/components/providers/auth-provider";
 import { useSSE } from "@/hooks/use-sse";
 import { logWarn } from "@/lib/utils/error";
 
 // Polling interval for testing status (5 seconds)
 const TESTING_STATUS_POLL_INTERVAL = 5000;
+const TESTING_STATUS_RECONCILE_INTERVAL = 15000;
 // Debounce delay for refreshKey updates (ms)
 const REFRESH_DEBOUNCE_DELAY = 500;
 
@@ -28,13 +30,12 @@ export default function Home() {
 
   // Detection running state
   const [isDetectionRunning, setIsDetectionRunning] = useState(false);
+  const { authFetch } = useAuth();
 
   // Track if polling should be active
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   // Debounce timer for refreshKey updates
   const refreshDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  // Track SSE connection state for polling logic
-  const sseConnectedRef = useRef(false);
   // Ignore progress fetch after stop to prevent race condition
   const ignoreProgressFetchRef = useRef(false);
   // Ignore SSE events after stop
@@ -44,6 +45,9 @@ export default function Home() {
 
   // Add models to testing set
   const addTestingModels = useCallback((modelIds: string[]) => {
+    if (modelIds.length > 0) {
+      setIsDetectionRunning(true);
+    }
     setTestingModelIds((prev) => {
       const next = new Set(prev);
       modelIds.forEach((id) => next.add(id));
@@ -89,11 +93,6 @@ export default function Home() {
     },
   });
 
-  // Keep ref in sync with isConnected state
-  useEffect(() => {
-    sseConnectedRef.current = isConnected;
-  }, [isConnected]);
-
   // Fetch detection progress (used for initial load and polling fallback)
   const fetchProgress = useCallback(async () => {
     // Skip fetch if we just stopped detection (prevent race condition)
@@ -101,33 +100,27 @@ export default function Home() {
       return;
     }
     try {
-      const response = await fetch("/api/detect");
-      if (response.ok) {
-        const data = await response.json();
-        // Update testing model IDs
-        if (data.testingModelIds && Array.isArray(data.testingModelIds)) {
-          if (sseConnectedRef.current) {
-            // SSE is connected: only merge new IDs, don't overwrite
-            // This prevents polling from re-adding models that SSE already removed
-            setTestingModelIds((prev) => {
-              const next = new Set(prev);
-              data.testingModelIds.forEach((id: string) => next.add(id));
-              return next;
-            });
-          } else {
-            // SSE not connected: full replacement (fallback mode)
-            setTestingModelIds(new Set(data.testingModelIds));
-          }
-          // Update detection running state
-          setIsDetectionRunning(data.testingModelIds.length > 0);
-        } else {
+      const response = await authFetch("/api/detect");
+      if (!response.ok) {
+        if (response.status === 401) {
+          setTestingModelIds(new Set());
           setIsDetectionRunning(false);
         }
+        return;
+      }
+
+      const data = await response.json();
+      if (data.testingModelIds && Array.isArray(data.testingModelIds)) {
+        setTestingModelIds(new Set(data.testingModelIds));
+        setIsDetectionRunning(data.testingModelIds.length > 0);
+      } else {
+        setTestingModelIds(new Set());
+        setIsDetectionRunning(false);
       }
     } catch (error) {
       logWarn("[Home] 获取检测进度失败", error);
     }
-  }, []);
+  }, [authFetch]);
 
   // Auto-update isDetectionRunning when testingModelIds becomes empty
   // This ensures the button state updates when all models finish testing via SSE
@@ -143,6 +136,9 @@ export default function Home() {
     setTestingModelIds((prev) => {
       const next = new Set(prev);
       modelIds.forEach((id) => next.delete(id));
+      if (next.size === 0) {
+        setIsDetectionRunning(false);
+      }
       return next;
     });
     // Note: Removed fetchProgress() call here to prevent race condition
@@ -154,8 +150,7 @@ export default function Home() {
     void Promise.resolve().then(fetchProgress);
   }, [fetchProgress]);
 
-  // Poll for testing status when detection is running AND SSE is not connected
-  // SSE is the primary source of truth; polling is only a fallback
+  // Poll for testing status. SSE 负责实时刷新，轮询负责兜底纠偏。
   useEffect(() => {
     // Clear existing interval
     if (pollIntervalRef.current) {
@@ -163,11 +158,11 @@ export default function Home() {
       pollIntervalRef.current = null;
     }
 
-    // Only start polling if:
-    // 1. Detection is running or we have testing models
-    // 2. SSE is NOT connected (polling is fallback only)
-    if ((isDetectionRunning || testingModelIds.size > 0) && !isConnected) {
-      pollIntervalRef.current = setInterval(fetchProgress, TESTING_STATUS_POLL_INTERVAL);
+    if (isDetectionRunning || testingModelIds.size > 0) {
+      const intervalMs = isConnected
+        ? TESTING_STATUS_RECONCILE_INTERVAL
+        : TESTING_STATUS_POLL_INTERVAL;
+      pollIntervalRef.current = setInterval(fetchProgress, intervalMs);
     }
 
     return () => {
@@ -187,7 +182,7 @@ export default function Home() {
   }, []);
 
   // Handle detection start from header - immediately update UI
-  const handleDetectionStart = useCallback(async () => {
+  const handleDetectionStart = useCallback(async (modelIds: string[] = []) => {
     // Cancel any pending clear-ignore-flags timer from previous stop
     if (clearIgnoreFlagsTimerRef.current) {
       clearTimeout(clearIgnoreFlagsTimerRef.current);
@@ -198,8 +193,7 @@ export default function Home() {
     ignoreSSERef.current = false;
 
     setIsDetectionRunning(true);
-    // Clear testing model IDs to reset UI to "untested" state
-    setTestingModelIds(new Set());
+    setTestingModelIds(new Set(modelIds));
     // Trigger dashboard refresh to show reset state
     setRefreshKey((k) => k + 1);
     // Fetch progress to get all model IDs that will be tested

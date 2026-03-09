@@ -27,6 +27,7 @@ interface ProxyKeyData {
   id: string;
   name: string;
   key: string;
+  fullKey?: string;
   enabled: boolean;
   allowAllModels: boolean;
   allowedChannelIds: string[] | null;
@@ -44,7 +45,7 @@ interface ProxyKeyManagerProps {
 }
 
 export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
-  const { token } = useAuth();
+  const { token, authFetch } = useAuth();
   const { toast } = useToast();
 
   const [isExpanded, setIsExpanded] = useState(false);
@@ -79,8 +80,7 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
 
     setLoading(true);
     try {
-      const response = await fetch("/api/proxy-keys", {
-        headers: { Authorization: `Bearer ${token}` },
+      const response = await authFetch("/api/proxy-keys", {
         signal,
       });
 
@@ -99,7 +99,7 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
         setLoading(false);
       }
     }
-  }, [token, toast]);
+  }, [token, authFetch, toast]);
 
   // Load keys when expanded
   useEffect(() => {
@@ -114,14 +114,12 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
   const handleCopy = async (id: string) => {
     setCopyingId(id);
     try {
-      const response = await fetch(`/api/proxy-keys/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) throw new Error("Failed to get key");
-
-      const data = await response.json();
-      await navigator.clipboard.writeText(data.key.key);
+      const targetKey = keys.find((item) => item.id === id);
+      const fullKey = targetKey?.fullKey;
+      if (!fullKey) {
+        throw new Error("Failed to get key");
+      }
+      await navigator.clipboard.writeText(fullKey);
       if (mountedRef.current) {
         setCopiedId(id);
         setTimeout(() => {
@@ -143,11 +141,10 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
   // Toggle key enabled status
   const handleToggleEnabled = async (key: ProxyKeyData) => {
     try {
-      const response = await fetch(`/api/proxy-keys/${key.id}`, {
+      const response = await authFetch(`/api/proxy-keys/${key.id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ enabled: !key.enabled }),
       });
@@ -168,9 +165,8 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
   // Delete key
   const handleDelete = async (id: string) => {
     try {
-      const response = await fetch(`/api/proxy-keys/${id}`, {
+      const response = await authFetch(`/api/proxy-keys/${id}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
       });
 
       if (!response.ok) throw new Error("Failed to delete key");
@@ -193,11 +189,10 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
       const bytes = crypto.getRandomValues(new Uint8Array(48));
       const newKey = "sk-" + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 
-      const response = await fetch(`/api/proxy-keys/${id}`, {
+      const response = await authFetch(`/api/proxy-keys/${id}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({ key: newKey }),
       });
@@ -224,9 +219,7 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
         return;
       }
 
-      const response = await fetch(`/api/proxy-keys/${key.id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const response = await authFetch(`/api/proxy-keys/${key.id}`);
 
       if (!response.ok) throw new Error("Failed to get key");
 
