@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { isAuthenticated } from "@/lib/middleware/auth";
 import { Prisma } from "@/generated/prisma";
-import { supportsDisplayEndpoint, isResponsesCompatibleChatModel } from "@/lib/utils/model-name";
+import { supportsDisplayEndpoint } from "@/lib/utils/model-name";
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -124,33 +124,8 @@ export async function GET(request: NextRequest) {
 
     const totalModels = allChannelsForStats.reduce((sum, ch) => sum + ch.models.length, 0);
 
-    // A model is healthy if all its tested endpoints are successful
     const healthyModels = allChannelsForStats.reduce((sum, ch) => {
-      return sum + ch.models.filter((m) => {
-        if (m.checkLogs.length === 0) return false;
-
-        // 使用与前端一致的语义端点逻辑（合并 CHAT/CODEX）
-        const endpointStatuses: Record<string, string> = {};
-        const chatLikeLogs: typeof m.checkLogs = [];
-
-        for (const log of m.checkLogs) {
-          if (isResponsesCompatibleChatModel(m.modelName) && (log.endpointType === "CHAT" || log.endpointType === "CODEX")) {
-            chatLikeLogs.push(log);
-            continue;
-          }
-          if (!endpointStatuses[log.endpointType]) {
-            endpointStatuses[log.endpointType] = log.status;
-          }
-        }
-
-        if (chatLikeLogs.length > 0) {
-          endpointStatuses.CHAT = chatLikeLogs.some((log) => log.status === "SUCCESS") ? "SUCCESS" : "FAIL";
-        }
-
-        // Model is healthy only if all tested endpoints are successful
-        const statuses = Object.values(endpointStatuses);
-        return statuses.length > 0 && statuses.every((s) => s === "SUCCESS");
-      }).length;
+      return sum + ch.models.filter((m) => m.lastStatus === true).length;
     }, 0);
 
     const totalPages = Math.ceil(totalFilteredChannels / pageSize);

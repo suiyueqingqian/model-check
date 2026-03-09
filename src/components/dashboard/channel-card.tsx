@@ -131,17 +131,11 @@ function getSemanticEndpointStatuses(modelName: string, checkLogs: CheckLog[]): 
 }
 
 function isModelHealthy(model: Model): boolean {
-  if (model.checkLogs.length === 0) return false;
-  const endpointStatuses = getSemanticEndpointStatuses(model.modelName, model.checkLogs);
-  const statuses = Object.values(endpointStatuses);
-  return statuses.length > 0 && statuses.every((s) => s === "SUCCESS");
+  return model.lastStatus === true;
 }
 
 function isModelAvailable(model: Model): boolean {
-  if (model.checkLogs.length === 0) return false;
-  const endpointStatuses = getSemanticEndpointStatuses(model.modelName, model.checkLogs);
-  const statuses = Object.values(endpointStatuses);
-  return statuses.length > 0 && statuses.some((s) => s === "SUCCESS");
+  return model.lastStatus === true;
 }
 
 export function ChannelCard({ channel, onDelete, className, onEndpointFilterChange, activeEndpointFilter, testingModelIds = new Set(), onTestModels, onStopModels }: ChannelCardProps) {
@@ -166,7 +160,7 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
   // Calculate channel status based on new logic
   const channelStatus = (() => {
     if (totalCount === 0) return "unknown" as const;
-    const checkedModels = channel.models.filter((m) => m.checkLogs.length > 0);
+    const checkedModels = channel.models.filter((m) => m.lastStatus !== null);
     if (checkedModels.length === 0) return "unknown" as const;
     if (healthyCount === checkedModels.length) return "healthy" as const;
     if (healthyCount === 0) return "unhealthy" as const;
@@ -175,7 +169,7 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
 
   // Check if all models are unavailable after detection
   // A model is unavailable only if BOTH chat and cli endpoints fail (no endpoint works)
-  const checkedModels = channel.models.filter((m) => m.checkLogs.length > 0);
+  const checkedModels = channel.models.filter((m) => m.lastStatus !== null);
   const availableCount = checkedModels.filter(isModelAvailable).length;
   const isAllUnhealthy = checkedModels.length > 0 && availableCount === 0;
 
@@ -628,16 +622,9 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
   const semanticStatuses = getSemanticEndpointStatuses(model.modelName, model.checkLogs);
 
   const testedEndpoints = Object.keys(semanticStatuses);
-  const hasBeenTested = testedEndpoints.length > 0;
-  const allSuccess = hasBeenTested && testedEndpoints.every(
-    (ep) => semanticStatuses[ep] === "SUCCESS"
-  );
-  const allFail = hasBeenTested && testedEndpoints.every(
-    (ep) => semanticStatuses[ep] === "FAIL"
-  );
-  const isHealthy = hasBeenTested && allSuccess;
-  const isUnknown = !hasBeenTested;
-  const isPartial = hasBeenTested && !allSuccess && !allFail;
+  const isHealthy = model.lastStatus === true;
+  const isUnknown = model.lastStatus === null;
+  const isPartial = false;
 
   // Get the latest latency from any endpoint
   const latestLog = model.checkLogs[0];
