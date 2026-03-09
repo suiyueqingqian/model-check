@@ -11,7 +11,7 @@ import { useAuth } from "@/components/providers/auth-provider";
 
 const EMPTY_SET = new Set<string>();
 import { useToast } from "@/components/ui/toast";
-import { getDisplayEndpoints, isResponsesCompatibleChatModel, supportsDisplayEndpoint } from "@/lib/utils/model-name";
+import { getDisplayEndpoints, isResponsesCompatibleChatModel, isCodexNamedModel, supportsDisplayEndpoint } from "@/lib/utils/model-name";
 
 interface CheckLog {
   id: string;
@@ -529,6 +529,10 @@ function getDisplayEndpointLog(
   endpointStatuses: Record<string, CheckLog>,
   endpointType: string
 ): CheckLog | undefined {
+  if (isCodexNamedModel(modelName)) {
+    return endpointType === "CODEX" ? endpointStatuses.CODEX : undefined;
+  }
+
   const directLog = endpointStatuses[endpointType];
   if (directLog) {
     return directLog;

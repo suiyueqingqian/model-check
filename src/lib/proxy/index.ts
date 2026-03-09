@@ -920,20 +920,55 @@ export function streamResponse(
   }
 
   const IDLE_TIMEOUT_MS = 60000; // 60s idle timeout
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let settled = false;
+  let canceled = false;
+
+  const clearIdle = () => {
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+  };
+
+  const completeStream = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    if (settled || canceled) {
+      return;
+    }
+    settled = true;
+    clearIdle();
+    callbacks?.onComplete?.();
+    controller.close();
+  };
+
+  const failStream = (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    err: unknown
+  ) => {
+    if (settled || canceled) {
+      return;
+    }
+    settled = true;
+    clearIdle();
+    const error = err instanceof Error ? err : new Error("Upstream stream interrupted");
+    callbacks?.onError?.(error);
+    try {
+      controller.error(error);
+    } catch {
+      // controller already closed or errored
+    }
+  };
+
   const stream = new ReadableStream({
     async start(controller) {
-      let idleTimer: ReturnType<typeof setTimeout> | null = null;
-
-      const clearIdle = () => {
-        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-      };
-
       const resetIdleTimer = () => {
+        if (settled || canceled) {
+          return;
+        }
         clearIdle();
         idleTimer = setTimeout(() => {
           const err = new Error("Stream idle timeout (60s no data)");
-          callbacks?.onError?.(err);
-          try { controller.error(err); } catch { /* already closed */ }
+          failStream(controller, err);
           reader.cancel().catch(() => {});
         }, IDLE_TIMEOUT_MS);
       };
@@ -944,25 +979,19 @@ export function streamResponse(
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            clearIdle();
-            callbacks?.onComplete?.();
-            controller.close();
+            completeStream(controller);
             break;
           }
           resetIdleTimer();
           controller.enqueue(value);
         }
       } catch (err) {
-        clearIdle();
-        callbacks?.onError?.(err instanceof Error ? err : new Error("Upstream stream interrupted"));
-        try {
-          controller.error(err instanceof Error ? err : new Error("Upstream stream interrupted"));
-        } catch {
-          // controller already closed or errored
-        }
+        failStream(controller, err);
       }
     },
     cancel() {
+      canceled = true;
+      clearIdle();
       reader.cancel();
     },
   });
@@ -999,26 +1028,50 @@ export function withStreamTracking(
   if (!body) return response;
 
   const reader = body.getReader();
+  let settled = false;
+  let canceled = false;
+
+  const completeStream = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    if (settled || canceled) {
+      return;
+    }
+    settled = true;
+    onComplete();
+    controller.close();
+  };
+
+  const failStream = (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    err: unknown
+  ) => {
+    if (settled || canceled) {
+      return;
+    }
+    settled = true;
+    const error = err instanceof Error ? err : new Error("Stream tracking error");
+    onError(error);
+    try {
+      controller.error(error);
+    } catch {
+      // controller already closed
+    }
+  };
+
   const stream = new ReadableStream({
     async pull(controller) {
       try {
         const { done, value } = await reader.read();
         if (done) {
-          onComplete();
-          controller.close();
+          completeStream(controller);
         } else {
           controller.enqueue(value);
         }
       } catch (err) {
-        onError(err instanceof Error ? err : new Error("Stream tracking error"));
-        try {
-          controller.error(err instanceof Error ? err : new Error("Stream tracking error"));
-        } catch {
-          // controller already closed
-        }
+        failStream(controller, err);
       }
     },
     cancel() {
+      canceled = true;
       reader.cancel();
     },
   });

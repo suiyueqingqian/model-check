@@ -1,5 +1,9 @@
 const GPT_VERSION_REGEX = /gpt-?(\d+(?:\.\d+)?)/i;
 
+export function isCodexNamedModel(modelName: string): boolean {
+  return modelName.toLowerCase().includes("codex");
+}
+
 export function getGptVersion(modelName: string): number | null {
   const match = modelName.toLowerCase().match(GPT_VERSION_REGEX);
   if (!match) {
@@ -20,11 +24,18 @@ export function isGptFiveOrNewerModel(modelName: string): boolean {
 }
 
 export function isResponsesCompatibleChatModel(modelName: string): boolean {
-  return isGptFiveOrNewerModel(modelName) && !modelName.toLowerCase().includes("codex");
+  return isGptFiveOrNewerModel(modelName) && !isCodexNamedModel(modelName);
 }
 
 export function getDisplayEndpoints(modelName: string, endpoints: string[] = []): string[] {
   const merged = new Set(endpoints);
+
+  if (isCodexNamedModel(modelName)) {
+    const codexOnly = merged.has("CODEX") || merged.has("CHAT")
+      ? ["CODEX"]
+      : [];
+    return codexOnly;
+  }
 
   if (isResponsesCompatibleChatModel(modelName) && (merged.has("CHAT") || merged.has("CODEX"))) {
     merged.add("CHAT");

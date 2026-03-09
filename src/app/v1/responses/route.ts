@@ -125,6 +125,26 @@ function buildChatFallbackBody(
   return fallbackBody;
 }
 
+function hasResponsesOnlyFields(body: Record<string, unknown>): boolean {
+  if (Array.isArray(body.tools) && body.tools.length > 0) {
+    return true;
+  }
+
+  if ("reasoning" in body || "text" in body) {
+    return true;
+  }
+
+  if (
+    "previous_response_id" in body ||
+    "include" in body ||
+    "truncation" in body
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function extractChatText(payload: unknown): string {
   if (!payload || typeof payload !== "object") {
     return "";
@@ -414,7 +434,7 @@ function buildAttemptList(
     },
   };
 
-  if (!shouldTryChatFallback) {
+  if (!shouldTryChatFallback || hasResponsesOnlyFields(requestedBody)) {
     return [attempts.CODEX];
   }
 

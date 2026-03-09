@@ -69,9 +69,9 @@ export function getEndpointsToTest(modelName: string): EndpointType[] {
     return [EndpointType.CODEX];
   }
 
-  // gpt-5 及之后版本先测 Chat，再测 Responses
+  // gpt-5 及之后版本先测 Responses，再测 Chat
   if (isGptFiveOrNewerModel(name)) {
-    return [EndpointType.CHAT, EndpointType.CODEX];
+    return [EndpointType.CODEX, EndpointType.CHAT];
   }
 
   // Image models only support IMAGE endpoint
