@@ -26,6 +26,38 @@ export function randomDelay(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+interface DetectionExecutionOptions {
+  signal?: AbortSignal;
+}
+
+function isUserCancelled(signal?: AbortSignal): boolean {
+  return signal?.aborted === true && signal.reason === "cancelled-by-user";
+}
+
+function createAbortContext(externalSignal?: AbortSignal) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DETECTION_TIMEOUT);
+
+  const onExternalAbort = () => controller.abort(externalSignal?.reason);
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort(externalSignal.reason);
+    } else {
+      externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeoutId);
+      if (externalSignal) {
+        externalSignal.removeEventListener("abort", onExternalAbort);
+      }
+    },
+  };
+}
+
 /**
  * Check if response body contains error indicators
  * Some API gateways/proxies return HTTP 200 but with error in body
@@ -332,8 +364,12 @@ function extractResponseContent(
 /**
  * Execute detection for a single model
  */
-export async function executeDetection(job: DetectionJobData): Promise<DetectionResult> {
+export async function executeDetection(
+  job: DetectionJobData,
+  options?: DetectionExecutionOptions
+): Promise<DetectionResult> {
   const startTime = Date.now();
+  let abortContext: ReturnType<typeof createAbortContext> | null = null;
 
   // Use channel proxy if specified, otherwise fall back to global proxy
   const proxy = job.proxy || GLOBAL_PROXY;
@@ -347,21 +383,27 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
   );
 
   try {
-    // Create abort controller for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), DETECTION_TIMEOUT);
+    if (isUserCancelled(options?.signal)) {
+      return {
+        status: CheckStatus.FAIL,
+        latency: Date.now() - startTime,
+        errorMsg: "Model detection cancelled by user",
+        endpointType: job.endpointType,
+      };
+    }
+
+    abortContext = createAbortContext(options?.signal);
 
     // Build fetch options
     const fetchOptions = {
       method: "POST" as const,
       headers: endpoint.headers,
       body: JSON.stringify(endpoint.requestBody),
-      signal: controller.signal,
+      signal: abortContext.signal,
     };
 
     // Use proxyFetch for proxy support
     const response = await proxyFetch(endpoint.url, fetchOptions, proxy);
-    clearTimeout(timeoutId);
 
     const latency = Date.now() - startTime;
 
@@ -419,7 +461,7 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
     // CLAUDE endpoint failed — retry with thinking parameter
     // Some platforms (e.g. new-api) require thinking for newer Claude models
     if (job.endpointType === EndpointType.CLAUDE) {
-      const retryResult = await retryClaudeWithThinking(job, startTime);
+      const retryResult = await retryClaudeWithThinking(job, startTime, options);
       if (retryResult) return retryResult;
     }
 
@@ -427,7 +469,7 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
     if (job.endpointType === EndpointType.CHAT) {
       const name = job.modelName.toLowerCase();
       if (isGptFiveOrNewerModel(name) && !name.includes("codex")) {
-        const retryResult = await retryWithResponsesEndpoint(job, startTime);
+        const retryResult = await retryWithResponsesEndpoint(job, startTime, options);
         if (retryResult) return retryResult;
       }
     }
@@ -445,15 +487,26 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
 
     if (error instanceof Error) {
       if (error.name === "AbortError") {
-        errorMsg = `Timeout after ${DETECTION_TIMEOUT}ms`;
+        errorMsg = isUserCancelled(options?.signal)
+          ? "Model detection cancelled by user"
+          : `Timeout after ${DETECTION_TIMEOUT}ms`;
       } else {
         errorMsg = error.message;
       }
     }
 
+    if (isUserCancelled(options?.signal)) {
+      return {
+        status: CheckStatus.FAIL,
+        latency,
+        errorMsg: "Model detection cancelled by user",
+        endpointType: job.endpointType,
+      };
+    }
+
     // CLAUDE endpoint error — retry with thinking parameter (skip on timeout)
     if (!(error instanceof Error && error.name === "AbortError") && job.endpointType === EndpointType.CLAUDE) {
-      const retryResult = await retryClaudeWithThinking(job, startTime);
+      const retryResult = await retryClaudeWithThinking(job, startTime, options);
       if (retryResult) return retryResult;
     }
 
@@ -461,7 +514,7 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
     if (!(error instanceof Error && error.name === "AbortError") && job.endpointType === EndpointType.CHAT) {
       const name = job.modelName.toLowerCase();
       if (isGptFiveOrNewerModel(name) && !name.includes("codex")) {
-        const retryResult = await retryWithResponsesEndpoint(job, startTime);
+        const retryResult = await retryWithResponsesEndpoint(job, startTime, options);
         if (retryResult) return retryResult;
       }
     }
@@ -472,6 +525,8 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
       errorMsg,
       endpointType: job.endpointType,
     };
+  } finally {
+    abortContext?.cleanup();
   }
 }
 
@@ -481,22 +536,31 @@ export async function executeDetection(job: DetectionJobData): Promise<Detection
  */
 async function retryClaudeWithThinking(
   job: DetectionJobData,
-  originalStartTime: number
+  originalStartTime: number,
+  options?: DetectionExecutionOptions
 ): Promise<DetectionResult | null> {
   const proxy = job.proxy || GLOBAL_PROXY;
   const endpoint = buildClaudeEndpointWithThinking(job.baseUrl, job.apiKey, job.modelName);
+  let abortContext: ReturnType<typeof createAbortContext> | null = null;
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), DETECTION_TIMEOUT);
+    if (isUserCancelled(options?.signal)) {
+      return {
+        status: CheckStatus.FAIL,
+        latency: Date.now() - originalStartTime,
+        errorMsg: "Model detection cancelled by user",
+        endpointType: job.endpointType,
+      };
+    }
+
+    abortContext = createAbortContext(options?.signal);
 
     const response = await proxyFetch(endpoint.url, {
       method: "POST",
       headers: endpoint.headers,
       body: JSON.stringify(endpoint.requestBody),
-      signal: controller.signal,
+      signal: abortContext.signal,
     }, proxy);
-    clearTimeout(timeoutId);
 
     const latency = Date.now() - originalStartTime;
 
@@ -532,6 +596,8 @@ async function retryClaudeWithThinking(
     return null;
   } catch {
     return null;
+  } finally {
+    abortContext?.cleanup();
   }
 }
 
@@ -540,22 +606,31 @@ async function retryClaudeWithThinking(
  */
 async function retryWithResponsesEndpoint(
   job: DetectionJobData,
-  originalStartTime: number
+  originalStartTime: number,
+  options?: DetectionExecutionOptions
 ): Promise<DetectionResult | null> {
   const proxy = job.proxy || GLOBAL_PROXY;
   const endpoint = buildEndpointDetection(job.baseUrl, job.apiKey, job.modelName, EndpointType.CODEX);
+  let abortContext: ReturnType<typeof createAbortContext> | null = null;
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), DETECTION_TIMEOUT);
+    if (isUserCancelled(options?.signal)) {
+      return {
+        status: CheckStatus.FAIL,
+        latency: Date.now() - originalStartTime,
+        errorMsg: "Model detection cancelled by user",
+        endpointType: job.endpointType,
+      };
+    }
+
+    abortContext = createAbortContext(options?.signal);
 
     const response = await proxyFetch(endpoint.url, {
       method: "POST",
       headers: endpoint.headers,
       body: JSON.stringify(endpoint.requestBody),
-      signal: controller.signal,
+      signal: abortContext.signal,
     }, proxy);
-    clearTimeout(timeoutId);
 
     const latency = Date.now() - originalStartTime;
 
@@ -591,6 +666,8 @@ async function retryWithResponsesEndpoint(
     return null;
   } catch {
     return null;
+  } finally {
+    abortContext?.cleanup();
   }
 }
 

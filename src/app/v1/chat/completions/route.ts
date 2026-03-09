@@ -17,6 +17,17 @@ import {
   normalizeBaseUrl,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
+import {
+  buildChatCompletionFromClaude,
+  buildChatCompletionFromGemini,
+  buildClaudeBodyFromChatRequest,
+  buildGeminiBodyFromChatRequest,
+  convertClaudeStreamToChatStream,
+  createSyntheticChatStreamResponse,
+  extractTextFromGemini,
+  isClaudeModelName,
+  isGeminiModelName,
+} from "@/lib/proxy/compat";
 import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 import { createAsyncErrorHandler, isExpectedCloseError, logWarn } from "@/lib/utils/error";
 
@@ -28,29 +39,26 @@ const RESPONSES_FALLBACK_HEADERS = {
 
 type ProxyAttemptFailure = {
   modelId: string;
-  endpointType: "CHAT" | "CODEX";
+  endpointType: "CHAT" | "CODEX" | "CLAUDE" | "GEMINI";
   latency?: number;
   statusCode?: number;
   errorMsg: string;
+};
+
+type ProxyAttemptApiType = "openai" | "anthropic" | "gemini";
+
+type ProxyAttempt = {
+  endpointType: "CHAT" | "CODEX" | "CLAUDE" | "GEMINI";
+  url: string;
+  body: Record<string, unknown>;
+  apiType: ProxyAttemptApiType;
+  extraHeaders?: Record<string, string>;
 };
 
 type ProxyAttemptSuccess = {
   response: Response;
   latency: number;
 };
-
-function getActualModelName(modelName: string): string {
-  const slashIndex = modelName.indexOf("/");
-  return slashIndex > 0 ? modelName.slice(slashIndex + 1) : modelName;
-}
-
-function isClaudeModelName(modelName: string): boolean {
-  return getActualModelName(modelName).toLowerCase().includes("claude");
-}
-
-function isGeminiModelName(modelName: string): boolean {
-  return getActualModelName(modelName).toLowerCase().includes("gemini");
-}
 
 function normalizeMessagesForGeminiCli(messages: unknown): unknown {
   if (!Array.isArray(messages)) {
@@ -415,11 +423,28 @@ function buildAttemptList(
   actualModelName: string,
   preferredProxyEndpoint: "CHAT" | "CODEX" | null,
   shouldTryResponsesFallback: boolean
-): Array<{
-  endpointType: "CHAT" | "CODEX";
-  url: string;
-  body: Record<string, unknown>;
-}> {
+): ProxyAttempt[] {
+  if (isClaudeModelName(actualModelName)) {
+    return [{
+      endpointType: "CLAUDE",
+      url: `${baseUrl}/v1/messages`,
+      body: buildClaudeBodyFromChatRequest(requestedBody, actualModelName),
+      apiType: "anthropic",
+    }];
+  }
+
+  if (isGeminiModelName(actualModelName)) {
+    const geminiBaseUrl = baseUrl.endsWith("/v1beta")
+      ? baseUrl.slice(0, -7)
+      : baseUrl;
+    return [{
+      endpointType: "GEMINI",
+      url: `${geminiBaseUrl}/v1beta/models/${actualModelName}:generateContent`,
+      body: buildGeminiBodyFromChatRequest(requestedBody),
+      apiType: "gemini",
+    }];
+  }
+
   const attempts = {
     CHAT: {
       endpointType: "CHAT" as const,
@@ -429,11 +454,14 @@ function buildAttemptList(
         model: actualModelName,
         messages: normalizeMessagesForGeminiCli(requestedBody.messages),
       },
+      apiType: "openai" as const,
     },
     CODEX: {
       endpointType: "CODEX" as const,
       url: `${baseUrl}/v1/responses`,
       body: buildResponsesFallbackBody(requestedBody, actualModelName),
+      apiType: "openai" as const,
+      extraHeaders: RESPONSES_FALLBACK_HEADERS,
     },
   };
 
@@ -451,11 +479,7 @@ async function requestUpstreamAttempt(
     apiKey: string;
     proxy: string | null;
   },
-  attempt: {
-    endpointType: "CHAT" | "CODEX";
-    url: string;
-    body: Record<string, unknown>;
-  }
+  attempt: ProxyAttempt
 ): Promise<
   | { ok: true; data: ProxyAttemptSuccess }
   | { ok: false; data: { latency: number; statusCode: number; errorMsg: string } }
@@ -463,11 +487,7 @@ async function requestUpstreamAttempt(
   const startedAt = Date.now();
 
   try {
-    const headers = buildUpstreamHeaders(
-      channel.apiKey,
-      "openai",
-      attempt.endpointType === "CODEX" ? RESPONSES_FALLBACK_HEADERS : undefined
-    );
+    const headers = buildUpstreamHeaders(channel.apiKey, attempt.apiType, attempt.extraHeaders);
     const response = await proxyRequest(
       attempt.url,
       "POST",
@@ -520,7 +540,7 @@ export async function POST(request: NextRequest) {
     const handleRecordModelResultError = createAsyncErrorHandler("[ChatProxy] 记录模型结果失败", "warn");
     const handlePreferredEndpointError = createAsyncErrorHandler("[ChatProxy] 记录优先代理端点失败", "warn");
     const writeRequestLog = (options: {
-      endpointType?: "CHAT" | "CODEX";
+      endpointType?: "CHAT" | "CODEX" | "CLAUDE" | "GEMINI";
       requestedModel?: string | null;
       actualModelName?: string | null;
       channelId?: string | null;
@@ -587,34 +607,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (typeof modelName === "string" && isClaudeModelName(modelName)) {
-      await writeRequestLog({
-        endpointType: "CHAT",
-        requestedModel: modelName,
-        isStream: body.stream === true,
-        success: false,
-        statusCode: 400,
-        errorMsg: "Claude 模型仅支持 /v1/messages 接口",
-      });
-      return errorResponse("Claude 模型仅支持 /v1/messages 接口", 400);
-    }
+    const requestedEndpointType =
+      typeof modelName === "string" && isClaudeModelName(modelName)
+        ? "CLAUDE"
+        : typeof modelName === "string" && isGeminiModelName(modelName)
+          ? "GEMINI"
+          : "CHAT";
 
-    if (typeof modelName === "string" && isGeminiModelName(modelName)) {
-      await writeRequestLog({
-        endpointType: "CHAT",
-        requestedModel: modelName,
-        isStream: body.stream === true,
-        success: false,
-        statusCode: 400,
-        errorMsg: "Gemini 模型仅支持 /v1beta/models 接口",
-      });
-      return errorResponse("Gemini 模型仅支持 /v1beta/models 接口", 400);
-    }
-
-    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "CHAT");
+    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(
+      modelName,
+      keyResult!,
+      requestedEndpointType
+    );
     if (candidates.length === 0) {
       await writeRequestLog({
-        endpointType: "CHAT",
+        endpointType: requestedEndpointType,
         requestedModel: modelName,
         isStream: body.stream === true,
         success: false,
@@ -631,7 +638,7 @@ export async function POST(request: NextRequest) {
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
     let finalFailureLog: {
-      endpointType?: "CHAT" | "CODEX";
+      endpointType?: "CHAT" | "CODEX" | "CLAUDE" | "GEMINI";
       actualModelName?: string | null;
       channelId?: string | null;
       channelName?: string | null;
@@ -739,7 +746,7 @@ export async function POST(request: NextRequest) {
                   onComplete: () => Promise.all([
                     rememberPreferredProxyEndpoint(
                       channel.modelId!,
-                      attempt.endpointType
+                      attempt.endpointType as "CHAT" | "CODEX"
                     ).catch(handlePreferredEndpointError),
                     writeRequestLog({
                       endpointType: attempt.endpointType,
@@ -811,7 +818,7 @@ export async function POST(request: NextRequest) {
             if (channel.modelId && !isUnifiedRouting) {
               await savePreferredProxyEndpoint(
                 channel.modelId,
-                attempt.endpointType
+                attempt.endpointType as "CHAT" | "CODEX"
               );
             }
 
@@ -839,6 +846,232 @@ export async function POST(request: NextRequest) {
             });
 
             return NextResponse.json(data);
+          }
+
+          if (attempt.endpointType === "CLAUDE") {
+            if (isStream) {
+              const convertedResponse = convertClaudeStreamToChatStream(response, modelName);
+
+              if (isUnifiedRouting && channel.modelId) {
+                return withStreamTracking(
+                  convertedResponse,
+                  () => Promise.all([
+                    recordModelResult(channel.modelId!, attempt.endpointType, true, {
+                      channelId: channel.channelId,
+                      modelName: channel.actualModelName,
+                      latency,
+                      statusCode: response.status,
+                      responseContent: "代理流式请求成功",
+                    }),
+                    writeRequestLog({
+                      endpointType: attempt.endpointType,
+                      requestedModel: modelName,
+                      actualModelName: channel.actualModelName,
+                      channelId: channel.channelId,
+                      channelName: channel.channelName,
+                      modelId: channel.modelId,
+                      isStream: true,
+                      success: true,
+                      statusCode: response.status,
+                      latency,
+                    }),
+                  ]).then(() => {}),
+                  () => Promise.all([
+                    recordModelResult(channel.modelId!, attempt.endpointType, false, {
+                      channelId: channel.channelId,
+                      modelName: channel.actualModelName,
+                      latency,
+                      statusCode: 502,
+                      errorMsg: "流式传输中断",
+                    }),
+                    writeRequestLog({
+                      endpointType: attempt.endpointType,
+                      requestedModel: modelName,
+                      actualModelName: channel.actualModelName,
+                      channelId: channel.channelId,
+                      channelName: channel.channelName,
+                      modelId: channel.modelId,
+                      isStream: true,
+                      success: false,
+                      statusCode: 502,
+                      latency,
+                      errorMsg: "流式传输中断",
+                    }),
+                  ]).then(() => {})
+                );
+              }
+
+              return withStreamTracking(
+                convertedResponse,
+                () => writeRequestLog({
+                  endpointType: attempt.endpointType,
+                  requestedModel: modelName,
+                  actualModelName: channel.actualModelName,
+                  channelId: channel.channelId,
+                  channelName: channel.channelName,
+                  modelId: channel.modelId,
+                  isStream: true,
+                  success: true,
+                  statusCode: response.status,
+                  latency,
+                }),
+                () => writeRequestLog({
+                  endpointType: attempt.endpointType,
+                  requestedModel: modelName,
+                  actualModelName: channel.actualModelName,
+                  channelId: channel.channelId,
+                  channelName: channel.channelName,
+                  modelId: channel.modelId,
+                  isStream: true,
+                  success: false,
+                  statusCode: 502,
+                  latency,
+                  errorMsg: "流式传输中断",
+                })
+              );
+            }
+
+            const data = await response.json();
+            const convertedPayload = buildChatCompletionFromClaude(data, modelName);
+
+            if (isUnifiedRouting && channel.modelId) {
+              await recordModelResult(channel.modelId, attempt.endpointType, true, {
+                channelId: channel.channelId,
+                modelName: channel.actualModelName,
+                latency,
+                statusCode: response.status,
+                responseContent: "代理请求成功",
+              });
+            }
+
+            await writeRequestLog({
+              endpointType: attempt.endpointType,
+              requestedModel: modelName,
+              actualModelName: channel.actualModelName,
+              channelId: channel.channelId,
+              channelName: channel.channelName,
+              modelId: channel.modelId,
+              isStream: false,
+              success: true,
+              statusCode: response.status,
+              latency,
+            });
+
+            return NextResponse.json(convertedPayload);
+          }
+
+          if (attempt.endpointType === "GEMINI") {
+            const data = await response.json();
+            const geminiText = extractTextFromGemini(data);
+
+            if (isStream) {
+              const convertedResponse = createSyntheticChatStreamResponse(geminiText, modelName);
+
+              if (isUnifiedRouting && channel.modelId) {
+                return withStreamTracking(
+                  convertedResponse,
+                  () => Promise.all([
+                    recordModelResult(channel.modelId!, attempt.endpointType, true, {
+                      channelId: channel.channelId,
+                      modelName: channel.actualModelName,
+                      latency,
+                      statusCode: response.status,
+                      responseContent: "代理流式请求成功",
+                    }),
+                    writeRequestLog({
+                      endpointType: attempt.endpointType,
+                      requestedModel: modelName,
+                      actualModelName: channel.actualModelName,
+                      channelId: channel.channelId,
+                      channelName: channel.channelName,
+                      modelId: channel.modelId,
+                      isStream: true,
+                      success: true,
+                      statusCode: response.status,
+                      latency,
+                    }),
+                  ]).then(() => {}),
+                  () => Promise.all([
+                    recordModelResult(channel.modelId!, attempt.endpointType, false, {
+                      channelId: channel.channelId,
+                      modelName: channel.actualModelName,
+                      latency,
+                      statusCode: 502,
+                      errorMsg: "流式传输中断",
+                    }),
+                    writeRequestLog({
+                      endpointType: attempt.endpointType,
+                      requestedModel: modelName,
+                      actualModelName: channel.actualModelName,
+                      channelId: channel.channelId,
+                      channelName: channel.channelName,
+                      modelId: channel.modelId,
+                      isStream: true,
+                      success: false,
+                      statusCode: 502,
+                      latency,
+                      errorMsg: "流式传输中断",
+                    }),
+                  ]).then(() => {})
+                );
+              }
+
+              return withStreamTracking(
+                convertedResponse,
+                () => writeRequestLog({
+                  endpointType: attempt.endpointType,
+                  requestedModel: modelName,
+                  actualModelName: channel.actualModelName,
+                  channelId: channel.channelId,
+                  channelName: channel.channelName,
+                  modelId: channel.modelId,
+                  isStream: true,
+                  success: true,
+                  statusCode: response.status,
+                  latency,
+                }),
+                () => writeRequestLog({
+                  endpointType: attempt.endpointType,
+                  requestedModel: modelName,
+                  actualModelName: channel.actualModelName,
+                  channelId: channel.channelId,
+                  channelName: channel.channelName,
+                  modelId: channel.modelId,
+                  isStream: true,
+                  success: false,
+                  statusCode: 502,
+                  latency,
+                  errorMsg: "流式传输中断",
+                })
+              );
+            }
+
+            const convertedPayload = buildChatCompletionFromGemini(data, modelName);
+
+            if (isUnifiedRouting && channel.modelId) {
+              await recordModelResult(channel.modelId, attempt.endpointType, true, {
+                channelId: channel.channelId,
+                modelName: channel.actualModelName,
+                latency,
+                statusCode: response.status,
+                responseContent: "代理请求成功",
+              });
+            }
+
+            await writeRequestLog({
+              endpointType: attempt.endpointType,
+              requestedModel: modelName,
+              actualModelName: channel.actualModelName,
+              channelId: channel.channelId,
+              channelName: channel.channelName,
+              modelId: channel.modelId,
+              isStream: false,
+              success: true,
+              statusCode: response.status,
+              latency,
+            });
+
+            return NextResponse.json(convertedPayload);
           }
 
           if (isStream) {
@@ -898,7 +1131,7 @@ export async function POST(request: NextRequest) {
                 () => Promise.all([
                   rememberPreferredProxyEndpoint(
                     channel.modelId!,
-                    attempt.endpointType
+                    attempt.endpointType as "CHAT" | "CODEX"
                   ).catch(handlePreferredEndpointError),
                   writeRequestLog({
                     endpointType: attempt.endpointType,
@@ -972,7 +1205,7 @@ export async function POST(request: NextRequest) {
           if (channel.modelId && !isUnifiedRouting) {
             await savePreferredProxyEndpoint(
               channel.modelId,
-              attempt.endpointType
+              attempt.endpointType as "CHAT" | "CODEX"
             );
           }
 

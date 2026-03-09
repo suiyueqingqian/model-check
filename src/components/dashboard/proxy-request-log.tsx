@@ -87,6 +87,15 @@ function getUpstreamPath(value: string | null): string {
   }
 }
 
+function getForwardingSummary(requestPath: string, endpointType: string | null): string | null {
+  const upstreamPath = getUpstreamPath(endpointType);
+  if (upstreamPath === "-" || requestPath === upstreamPath) {
+    return null;
+  }
+
+  return `实际转发: ${formatEndpointLabel(endpointType)} ${upstreamPath}`;
+}
+
 function DetailItem({
   label,
   value,
@@ -415,9 +424,22 @@ export function ProxyRequestLog({
                       <div className="truncate font-mono text-sm" title={log.requestedModel || "-"}>
                         {log.requestedModel || "-"}
                       </div>
-                      <div className="truncate text-xs text-muted-foreground" title={log.requestPath}>
-                        请求入口: {log.requestPath}
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+                        <span className="rounded border border-blue-500/20 bg-blue-500/10 px-1.5 py-0.5 text-blue-600 dark:text-blue-300">
+                          用户入口
+                        </span>
+                        <span className="truncate font-mono text-muted-foreground" title={log.requestPath}>
+                          {log.requestPath}
+                        </span>
                       </div>
+                      {getForwardingSummary(log.requestPath, log.endpointType) && (
+                        <div
+                          className="truncate text-xs text-amber-600 dark:text-amber-300"
+                          title={getForwardingSummary(log.requestPath, log.endpointType) || ""}
+                        >
+                          {getForwardingSummary(log.requestPath, log.endpointType)}
+                        </div>
+                      )}
                     </div>
 
                     <div className="min-w-0 text-sm">
@@ -466,9 +488,9 @@ export function ProxyRequestLog({
                     <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
                       <DetailItem label="请求模型" value={log.requestedModel || "-"} mono />
                       <DetailItem label="实际模型" value={log.actualModelName || "-"} mono />
-                      <DetailItem label="请求入口" value={log.requestPath} mono />
-                      <DetailItem label="实际上游端点" value={formatEndpointLabel(log.endpointType)} />
-                      <DetailItem label="实际上游 URL" value={getUpstreamPath(log.endpointType)} mono />
+                      <DetailItem label="用户请求入口" value={log.requestPath} mono />
+                      <DetailItem label="项目选择的上游端点" value={formatEndpointLabel(log.endpointType)} />
+                      <DetailItem label="项目尝试的上游路径" value={getUpstreamPath(log.endpointType)} mono />
                       <DetailItem label="请求方法" value={log.requestMethod} />
                       <DetailItem label="请求时间" value={formatTime(log.createdAt)} />
                       <DetailItem label="渠道名" value={log.channelName || "-"} />
@@ -481,7 +503,7 @@ export function ProxyRequestLog({
 
                     {log.requestPath !== getUpstreamPath(log.endpointType) && (
                       <div className="mt-2 rounded-md border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-600 dark:text-blue-300">
-                        请求先进入 {log.requestPath}，项目实际尝试的是 {getUpstreamPath(log.endpointType)}
+                        这条日志里的 {log.requestPath} 是用户请求打进来的入口，不代表实际上游端点。项目实际尝试的是 {getUpstreamPath(log.endpointType)}。
                       </div>
                     )}
 

@@ -6,15 +6,18 @@ import { EndpointType } from "@/generated/prisma";
 import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 import {
   addDetectionJobsBulk,
+  createDetectionSession,
   getQueueStats,
   getTestingModelIds,
   clearStoppedFlag,
   clearModelsCancelled,
+  clearDetectionSessions,
   isQueueRunning,
   saveProgressBaseline,
   getProgressBaseline,
 } from "./queue";
 import type { DetectionJobData } from "@/lib/detection/types";
+import { loadWorkerConfig } from "./worker";
 
 function isEndpointType(value: string): value is EndpointType {
   return Object.values(EndpointType).includes(value as EndpointType);
@@ -129,6 +132,12 @@ function getDetectionModelIds(jobs: DetectionJobData[]): string[] {
   return [...new Set(jobs.map((job) => job.modelId))];
 }
 
+function flattenChannelJobs(
+  channels: Array<{ id: string; jobs: DetectionJobData[] }>
+): DetectionJobData[] {
+  return channels.flatMap((channel) => channel.jobs);
+}
+
 /**
  * Trigger detection for all enabled channels
  * Detect models already stored in database
@@ -143,11 +152,16 @@ export async function triggerFullDetection(): Promise<{
 
   // Clear stopped flag from previous detection stop
   await clearStoppedFlag();
+  await clearDetectionSessions();
   await saveProgressBaseline();
 
   // Fetch all enabled channels with models in one query (avoid time window between reset and read)
   const channelsWithModels = await prisma.channel.findMany({
     where: { enabled: true },
+    orderBy: [
+      { sortOrder: "asc" },
+      { createdAt: "desc" },
+    ],
     include: {
       models: {
         select: {
@@ -161,10 +175,11 @@ export async function triggerFullDetection(): Promise<{
   });
 
   // Reset all models status to "untested" state before detection
-  const channelIds = channelsWithModels.map((c) => c.id);
-  if (channelIds.length > 0) {
+  const allModelIds = channelsWithModels.flatMap((channel) => channel.models.map((model) => model.id));
+  if (allModelIds.length > 0) {
+    await clearModelsCancelled(allModelIds);
     await prisma.model.updateMany({
-      where: { channelId: { in: channelIds } },
+      where: { id: { in: allModelIds } },
       data: {
         lastStatus: null,
         lastLatency: null,
@@ -173,19 +188,30 @@ export async function triggerFullDetection(): Promise<{
     });
   }
 
-  const jobs: DetectionJobData[] = [];
-
+  const channelsWithJobs: Array<{ id: string; jobs: DetectionJobData[] }> = [];
   for (const channel of channelsWithModels) {
     const channelJobs = await buildJobsForModels(channel, channel.models);
-    jobs.push(...channelJobs);
+    channelsWithJobs.push({
+      id: channel.id,
+      jobs: channelJobs,
+    });
   }
+
+  const jobs = flattenChannelJobs(channelsWithJobs);
 
   if (jobs.length === 0) {
     return { channelCount: 0, modelCount: 0, jobCount: 0, jobIds: [], modelIds: [] };
   }
 
-  // Add all jobs to queue
-  const jobIds = await addDetectionJobsBulk(jobs);
+  const runtimeConfig = await loadWorkerConfig();
+  const { jobIds } = await createDetectionSession(
+    channelsWithJobs.map((channel) => ({
+      channelId: channel.id,
+      jobs: channel.jobs,
+    })),
+    runtimeConfig.maxGlobalConcurrency,
+    runtimeConfig.channelConcurrency
+  );
   const { modelCount, jobCount } = getDetectionCounts(jobs);
   const modelIds = getDetectionModelIds(jobs);
 
@@ -685,6 +711,7 @@ export async function triggerSelectiveDetection(
 
   // Clear stopped flag from previous detection stop
   await clearStoppedFlag();
+  await clearDetectionSessions();
 
   // If no specific channels selected, fall back to full detection
   // (triggerFullDetection has its own saveProgressBaseline)
@@ -712,6 +739,10 @@ export async function triggerSelectiveDetection(
       id: { in: channelIds },
       enabled: true,
     },
+    orderBy: [
+      { sortOrder: "asc" },
+      { createdAt: "desc" },
+    ],
     include: {
       models: {
         select: {
@@ -724,8 +755,7 @@ export async function triggerSelectiveDetection(
     },
   });
 
-  const jobs: DetectionJobData[] = [];
-
+  const channelsWithJobs: Array<{ id: string; jobs: DetectionJobData[] }> = [];
   for (const channel of channelsWithModels) {
     // Get models to test for this channel
     let modelsToTest = channel.models;
@@ -737,8 +767,13 @@ export async function triggerSelectiveDetection(
     }
 
     const channelJobs = await buildJobsForModels(channel, modelsToTest);
-    jobs.push(...channelJobs);
+    channelsWithJobs.push({
+      id: channel.id,
+      jobs: channelJobs,
+    });
   }
+
+  const jobs = flattenChannelJobs(channelsWithJobs);
 
   if (jobs.length === 0) {
     return { channelCount: 0, modelCount: 0, jobCount: 0, jobIds: [] };
@@ -746,6 +781,7 @@ export async function triggerSelectiveDetection(
 
   // Reset models status to "untested" state before detection
   const modelIdsToReset = [...new Set(jobs.map((j) => j.modelId))];
+  await clearModelsCancelled(modelIdsToReset);
   await prisma.model.updateMany({
     where: { id: { in: modelIdsToReset } },
     data: {
@@ -755,7 +791,15 @@ export async function triggerSelectiveDetection(
     },
   });
 
-  const jobIds = await addDetectionJobsBulk(jobs);
+  const runtimeConfig = await loadWorkerConfig();
+  const { jobIds } = await createDetectionSession(
+    channelsWithJobs.map((channel) => ({
+      channelId: channel.id,
+      jobs: channel.jobs,
+    })),
+    runtimeConfig.maxGlobalConcurrency,
+    runtimeConfig.channelConcurrency
+  );
   const { modelCount, jobCount } = getDetectionCounts(jobs);
 
   return {

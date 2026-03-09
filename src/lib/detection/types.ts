@@ -37,6 +37,7 @@ export interface DetectionJobData {
   apiKey: string;
   proxy?: string | null;
   endpointType: EndpointType;
+  sessionId?: string | null;
 }
 
 // Channel with models for batch detection

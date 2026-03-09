@@ -630,7 +630,8 @@ export async function findChannelByModelWithPermission(
     keyResult.isEnvKey,
     channel.channelId,
     channel.modelId,
-    channel.modelStatus
+    channel.modelStatus,
+    channel.actualModelName
   );
 
   if (!hasPermission) {

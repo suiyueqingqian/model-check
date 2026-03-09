@@ -105,7 +105,7 @@ check_port_conflicts() {
 show_banner() {
     echo -e "${CYAN}"
     echo "╔══════════════════════════════════════════════╗"
-    echo "║       Model Check - 一键部署脚本                ║"
+    echo "║       Model Check - 一键部署脚本               ║"
     echo "║  https://github.com/chxcodepro/model-check   ║"
     echo "╚══════════════════════════════════════════════╝"
     echo -e "${NC}"

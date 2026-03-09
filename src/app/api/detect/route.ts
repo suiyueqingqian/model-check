@@ -124,12 +124,14 @@ export async function DELETE(request: NextRequest) {
     const { modelIds } = body;
 
     if (Array.isArray(modelIds) && modelIds.length > 0) {
-      // 选择性停止 - 只移除指定模型的任务
-      const removed = await removeJobsByModelIds(modelIds);
+      const result = await removeJobsByModelIds(modelIds);
+      const message = result.signaledActive > 0
+        ? `已停止 ${result.cleared} 个检测任务，其中 ${result.signaledActive} 个正在终止中`
+        : `已停止 ${result.cleared} 个检测任务`;
       return NextResponse.json({
         success: true,
-        message: `已停止 ${removed} 个检测任务`,
-        cleared: removed,
+        message,
+        ...result,
       });
     }
 

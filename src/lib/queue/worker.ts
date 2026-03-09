@@ -8,7 +8,7 @@ import type { DetectionJobData, DetectionResult } from "@/lib/detection/types";
 import { DETECTION_QUEUE_NAME, PROGRESS_CHANNEL } from "./constants";
 
 // Worker configuration (from environment variables)
-const WORKER_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || "50", 10);
+const WORKER_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || "0", 10);
 const SEMAPHORE_POLL_MS = 500; // Poll interval when waiting for slot
 const SEMAPHORE_TTL = 660; // TTL in seconds for semaphore keys (should > PROXY_TIMEOUT 600s)
 const CONFIG_CACHE_TTL_MS = 5000;
@@ -30,6 +30,7 @@ const DEFAULT_WORKER_CONFIG: WorkerRuntimeConfig = {
 let cachedConfig: WorkerRuntimeConfig | null = null;
 let cachedAt = 0;
 let loadingConfigPromise: Promise<WorkerRuntimeConfig> | null = null;
+const activeDetectionControllers = new Map<string, Set<AbortController>>();
 
 // Redis keys
 const GLOBAL_SEMAPHORE_KEY = "detection:semaphore:global";
@@ -37,8 +38,53 @@ const GLOBAL_SEMAPHORE_KEY = "detection:semaphore:global";
 // Worker instance
 let worker: Worker<DetectionJobData, DetectionResult> | null = null;
 
+function registerActiveDetectionController(modelId: string, controller: AbortController): void {
+  const controllers = activeDetectionControllers.get(modelId);
+  if (controllers) {
+    controllers.add(controller);
+    return;
+  }
+  activeDetectionControllers.set(modelId, new Set([controller]));
+}
+
+function unregisterActiveDetectionController(modelId: string, controller: AbortController): void {
+  const controllers = activeDetectionControllers.get(modelId);
+  if (!controllers) {
+    return;
+  }
+  controllers.delete(controller);
+  if (controllers.size === 0) {
+    activeDetectionControllers.delete(modelId);
+  }
+}
+
+export function cancelActiveDetectionsByModelIds(modelIds: string[]): number {
+  let cancelled = 0;
+
+  for (const modelId of modelIds) {
+    const controllers = activeDetectionControllers.get(modelId);
+    if (!controllers) {
+      continue;
+    }
+
+    for (const controller of controllers) {
+      if (controller.signal.aborted) {
+        continue;
+      }
+      controller.abort("cancelled-by-user");
+      cancelled += 1;
+    }
+  }
+
+  return cancelled;
+}
+
 function getEffectiveWorkerConcurrency(config: WorkerRuntimeConfig): number {
-  return Math.max(1, Math.min(WORKER_CONCURRENCY, config.maxGlobalConcurrency));
+  const requestedConcurrency = config.maxGlobalConcurrency * config.channelConcurrency;
+  if (WORKER_CONCURRENCY > 0) {
+    return Math.max(1, Math.min(WORKER_CONCURRENCY, requestedConcurrency));
+  }
+  return Math.max(1, requestedConcurrency);
 }
 
 function applyWorkerConcurrency(config: WorkerRuntimeConfig): void {
@@ -81,7 +127,7 @@ function normalizeConfig(config: Partial<WorkerRuntimeConfig>): WorkerRuntimeCon
   };
 }
 
-async function loadWorkerConfig(): Promise<WorkerRuntimeConfig> {
+export async function loadWorkerConfig(): Promise<WorkerRuntimeConfig> {
   const now = Date.now();
   if (cachedConfig && now - cachedAt < CONFIG_CACHE_TTL_MS) {
     return cachedConfig;
@@ -147,6 +193,7 @@ return current
 async function acquireSlots(channelId: string, config: WorkerRuntimeConfig): Promise<void> {
   const channelKey = channelSemaphoreKey(channelId);
   const MAX_WAIT_ATTEMPTS = 240; // 240 × 500ms = 120s
+  const maxJobConcurrency = getEffectiveWorkerConcurrency(config);
   let attempts = 0;
 
   // Must acquire both global and channel slots
@@ -156,7 +203,7 @@ async function acquireSlots(channelId: string, config: WorkerRuntimeConfig): Pro
     }
     // Atomic incr + expire for global slot
     const globalCount = await redis.eval(ACQUIRE_SLOT_LUA, 1, GLOBAL_SEMAPHORE_KEY, SEMAPHORE_TTL) as number;
-    if (globalCount > config.maxGlobalConcurrency) {
+    if (globalCount > maxJobConcurrency) {
       await redis.decr(GLOBAL_SEMAPHORE_KEY);
       await sleep(SEMAPHORE_POLL_MS);
       continue;
@@ -224,17 +271,27 @@ async function processDetectionJob(
 ): Promise<DetectionResult> {
   const { data } = job;
   const runtimeConfig = await loadWorkerConfig();
+  const queueState = await import("./queue");
 
-  // Check if detection has been stopped before processing
-  const { isDetectionStopped, decrementModelRemaining: decrementRemaining } = await import("./queue");
-  if (await isDetectionStopped()) {
-    await decrementRemaining(data.modelId);
+  const finishCancelledBeforeExecution = async (errorMsg: string): Promise<DetectionResult> => {
+    await queueState.decrementModelRemaining(data.modelId);
+    await queueState.onDetectionJobSettled(
+      data,
+      runtimeConfig.channelConcurrency,
+      await queueState.isDetectionStopped()
+    );
     return {
       status: "FAIL",
       latency: 0,
       endpointType: data.endpointType,
-      errorMsg: "Detection stopped by user",
+      errorMsg,
     };
+  };
+
+  // Check if detection has been stopped before processing
+  const stoppedBeforeStart = await queueState.isDetectionStopped();
+  if (stoppedBeforeStart) {
+    return finishCancelledBeforeExecution("Detection stopped by user");
   }
 
   // Acquire concurrency slots (both global and per-channel)
@@ -245,26 +302,33 @@ async function processDetectionJob(
     await acquireSlots(data.channelId, runtimeConfig);
     slotsAcquired = true;
     // Check again after acquiring slot (in case stop was triggered during wait)
-    if (await isDetectionStopped()) {
-      await decrementRemaining(data.modelId);
-      return {
-        status: "FAIL",
-        latency: 0,
-        endpointType: data.endpointType,
-        errorMsg: "Detection stopped by user",
-      };
+    const stoppedAfterAcquire = await queueState.isDetectionStopped();
+    if (stoppedAfterAcquire) {
+      return finishCancelledBeforeExecution("Detection stopped by user");
+    }
+
+    if (await queueState.isModelCancelled(data.modelId)) {
+      return finishCancelledBeforeExecution("Model detection cancelled by user");
     }
 
     // Anti-blocking delay (3-5 seconds random)
     const delay = randomDelay(runtimeConfig.minDelayMs, runtimeConfig.maxDelayMs);
     await sleep(delay);
 
+    if (await queueState.isModelCancelled(data.modelId)) {
+      return finishCancelledBeforeExecution("Model detection cancelled by user");
+    }
+
     // Execute the actual detection
-    const result = await executeDetection(data);
+    const detectionController = new AbortController();
+    registerActiveDetectionController(data.modelId, detectionController);
+    const result = await executeDetection(data, { signal: detectionController.signal })
+      .finally(() => {
+        unregisterActiveDetectionController(data.modelId, detectionController);
+      });
 
     // Check if this model was selectively cancelled while job was active
-    const { isModelCancelled, clearModelCancelled, decrementModelRemaining } = await import("./queue");
-    const modelCancelled = await isModelCancelled(data.modelId);
+    const modelCancelled = await queueState.isModelCancelled(data.modelId);
 
     if (!modelCancelled) {
       // Use atomic operations to avoid race conditions when updating detectedEndpoints
@@ -314,10 +378,15 @@ async function processDetectionJob(
     }
 
     // 统一在一个地方递减 remaining 计数器，避免取消路径和正常路径重复递减
-    const isModelComplete = await decrementModelRemaining(data.modelId);
+    const isModelComplete = await queueState.decrementModelRemaining(data.modelId);
     if (modelCancelled && isModelComplete) {
-      await clearModelCancelled(data.modelId);
+      await queueState.clearModelCancelled(data.modelId);
     }
+    await queueState.onDetectionJobSettled(
+      data,
+      runtimeConfig.channelConcurrency,
+      await queueState.isDetectionStopped()
+    );
 
     // Publish progress update for SSE (with error handling to not affect detection result)
     const progressData = {
@@ -384,11 +453,34 @@ export function startWorker(): Worker<DetectionJobData, DetectionResult> {
   worker.on("completed", () => {
   });
 
-  worker.on("failed", (job, err) => {
+  worker.on("failed", async (job, err) => {
     const jobInfo = job?.data
       ? `channel=${job.data.channelId} model=${job.data.modelName} endpoint=${job.data.endpointType}`
       : "job=unknown";
     console.error("[Worker] Job failed:", jobInfo, err.message);
+
+    if (!job?.data) {
+      return;
+    }
+
+    const maxAttempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
+    if (job.attemptsMade < maxAttempts) {
+      return;
+    }
+
+    try {
+      const runtimeConfig = await loadWorkerConfig();
+      const { decrementModelRemaining, isDetectionStopped, onDetectionJobSettled } = await import("./queue");
+      await decrementModelRemaining(job.data.modelId);
+      await onDetectionJobSettled(
+        job.data,
+        runtimeConfig.channelConcurrency,
+        await isDetectionStopped()
+      );
+    } catch (settleError) {
+      const settleMessage = settleError instanceof Error ? settleError.message : String(settleError);
+      console.error("[Worker] 最终失败后的补位处理失败:", settleMessage);
+    }
   });
 
   worker.on("error", (err) => {

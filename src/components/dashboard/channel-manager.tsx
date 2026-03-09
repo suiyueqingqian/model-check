@@ -2071,7 +2071,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                                   }
                                   const data = await res.json();
                                   // 添加成功，移到成功列表
-                                  setImportSuccessChannels(prev => [...prev, { id: data.id, name: ch.name }]);
+                                  setImportSuccessChannels(prev => [...prev, { id: data.channel?.id || "", name: ch.name }]);
                                   setImportFailedChannels(prev =>
                                     prev.map((c, i) => i === idx ? { ...c, removed: true } : c)
                                   );
