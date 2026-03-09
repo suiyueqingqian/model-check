@@ -65,6 +65,8 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
     const loadChannels = async () => {
       setLoadingChannels(true);
       try {
+        // 使用 /api/scheduler/config 获取渠道列表（包含 models 的 id 和 modelName）
+        // /api/channel 只返回 lastStatus，不包含模型详情，无法满足 ChannelWithModels 接口
         const response = await fetch("/api/scheduler/config", {
           headers: { Authorization: `Bearer ${token}` },
           signal: controller.signal,

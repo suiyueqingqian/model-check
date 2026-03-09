@@ -74,13 +74,14 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
   }, []);
 
   // Fetch keys
-  const fetchKeys = useCallback(async () => {
+  const fetchKeys = useCallback(async (signal?: AbortSignal) => {
     if (!token) return;
 
     setLoading(true);
     try {
       const response = await fetch("/api/proxy-keys", {
         headers: { Authorization: `Bearer ${token}` },
+        signal,
       });
 
       if (!response.ok) throw new Error("Failed to fetch keys");
@@ -103,7 +104,9 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
   // Load keys when expanded
   useEffect(() => {
     if (isExpanded && token) {
-      fetchKeys();
+      const controller = new AbortController();
+      fetchKeys(controller.signal);
+      return () => controller.abort();
     }
   }, [isExpanded, token, fetchKeys]);
 

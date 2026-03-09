@@ -24,6 +24,7 @@ interface UseSSEOptions {
 
 const MAX_RECONNECT_DELAY = 30000; // 30 seconds max
 const INITIAL_RECONNECT_DELAY = 1000; // 1 second initial
+const RECOVERY_DELAY = 60000; // 达到 maxRetries 后 60 秒重试
 
 export function useSSE(options: UseSSEOptions = {}) {
   const { autoConnect = true, maxRetries = 10 } = options;
@@ -91,6 +92,12 @@ export function useSSE(options: UseSSEOptions = {}) {
 
       // Check if we should retry
       if (retryCountRef.current >= maxRetries) {
+        // 达到最大重试次数后，等待较长时间再重置并重连
+        reconnectTimeoutRef.current = setTimeout(() => {
+          retryCountRef.current = 0;
+          reconnectDelayRef.current = INITIAL_RECONNECT_DELAY;
+          connectRef.current?.();
+        }, RECOVERY_DELAY);
         return;
       }
 

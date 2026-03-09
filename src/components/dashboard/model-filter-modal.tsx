@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   X,
   Loader2,
@@ -47,6 +47,7 @@ export function ModelFilterModal({
 }: ModelFilterModalProps) {
   const { token } = useAuth();
   const { toast } = useToast();
+  const syncAbortRef = useRef<AbortController | null>(null);
 
   const [fetching, setFetching] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -74,16 +75,25 @@ export function ModelFilterModal({
   // Load keywords
   useEffect(() => {
     if (!token) return;
+    const controller = new AbortController();
     (async () => {
       try {
-        const res = await fetch("/api/model-keywords", { headers: { Authorization: `Bearer ${token}` } });
+        const res = await fetch("/api/model-keywords", { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
         if (res.ok) {
           const data = await res.json();
           setKeywords(data.keywords || []);
         }
       } catch { /* ignore */ }
     })();
+    return () => controller.abort();
   }, [token]);
+
+  // 组件卸载时取消同步请求
+  useEffect(() => {
+    return () => {
+      syncAbortRef.current?.abort();
+    };
+  }, []);
 
   // Auto-fetch models on mount
   const fetchModels = useCallback(async (signal?: AbortSignal) => {
@@ -413,6 +423,9 @@ export function ModelFilterModal({
 
   // Confirm sync - per channel
   const handleConfirmSync = async () => {
+    const controller = new AbortController();
+    const signal = controller.signal;
+    syncAbortRef.current = controller;
     setSyncing(true);
     setSyncProgress({ completed: 0, total: targetChannels.length, failed: 0 });
     try {
@@ -421,6 +434,7 @@ export function ModelFilterModal({
       const batchSize = 10;
 
       for (let i = 0; i < targetChannels.length; i += batchSize) {
+        if (signal.aborted) break;
         const batch = targetChannels.slice(i, i + batchSize);
         const results = await Promise.allSettled(
           batch.map(async (ch) => {
@@ -436,6 +450,7 @@ export function ModelFilterModal({
                 selectedModels: selected,
                 selectedModelPairs,
               }),
+              signal,
             });
             if (!res.ok) throw new Error();
             const data = await res.json();
@@ -454,6 +469,8 @@ export function ModelFilterModal({
         }));
       }
 
+      if (signal.aborted) return;
+
       if (targetChannels.length > 1) {
         toast(
           failedCount > 0
@@ -467,8 +484,10 @@ export function ModelFilterModal({
       onSyncComplete?.();
       onClose();
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       toast(err instanceof Error ? err.message : "同步失败", "error");
     } finally {
+      syncAbortRef.current = null;
       setSyncing(false);
     }
   };

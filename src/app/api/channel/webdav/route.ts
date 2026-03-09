@@ -474,19 +474,20 @@ export async function POST(request: NextRequest) {
               continue;
             }
 
-            await prisma.channel.update({
-              where: { id: existing.id },
-              data: {
-                baseUrl: ch.baseUrl,
-                apiKey: ch.apiKey,
-                proxy: ch.proxy,
-                enabled: ch.enabled,
-                keyMode: ch.keyMode || "single",
-                routeStrategy: ch.routeStrategy || "round_robin",
-              },
-            });
-
+            // 把 update + channelKey 操作放在同一个事务里
             await prisma.$transaction(async (tx) => {
+              await tx.channel.update({
+                where: { id: existing.id },
+                data: {
+                  baseUrl: ch.baseUrl,
+                  apiKey: ch.apiKey,
+                  proxy: ch.proxy,
+                  enabled: ch.enabled,
+                  keyMode: ch.keyMode || "single",
+                  routeStrategy: ch.routeStrategy || "round_robin",
+                },
+              });
+
               await tx.channelKey.deleteMany({ where: { channelId: existing.id } });
               if (ch.channelKeys && ch.channelKeys.length > 0) {
                 await tx.channelKey.createMany({

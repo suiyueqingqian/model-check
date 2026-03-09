@@ -368,36 +368,40 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Collect model IDs before cascade delete removes them
-    const channelModels = await prisma.model.findMany({
-      where: { channelId: id },
-      select: { id: true },
-    });
-    const deletedModelIds = channelModels.map(m => m.id);
-
-    await prisma.channel.delete({
-      where: { id },
-    });
-
-    // Clean stale references from ProxyKey JSON permission fields
-    if (deletedModelIds.length > 0) {
-      const proxyKeys = await prisma.proxyKey.findMany({
-        select: { id: true, allowedChannelIds: true, allowedModelIds: true },
+    // 在事务内完成：查询模型ID → 删除渠道（级联删除模型） → 清理 ProxyKey 引用
+    await prisma.$transaction(async (tx) => {
+      // 先查询关联的模型 ID，删除后就查不到了
+      const channelModels = await tx.model.findMany({
+        where: { channelId: id },
+        select: { id: true },
       });
-      const deletedModelIdSet = new Set(deletedModelIds);
-      for (const pk of proxyKeys) {
-        const updates: Record<string, unknown> = {};
-        if (Array.isArray(pk.allowedChannelIds) && (pk.allowedChannelIds as string[]).includes(id)) {
-          updates.allowedChannelIds = (pk.allowedChannelIds as string[]).filter(cid => cid !== id);
-        }
-        if (Array.isArray(pk.allowedModelIds) && (pk.allowedModelIds as string[]).some(mid => deletedModelIdSet.has(mid))) {
-          updates.allowedModelIds = (pk.allowedModelIds as string[]).filter(mid => !deletedModelIdSet.has(mid));
-        }
-        if (Object.keys(updates).length > 0) {
-          await prisma.proxyKey.update({ where: { id: pk.id }, data: updates });
+      const deletedModelIds = channelModels.map(m => m.id);
+
+      // 删除渠道（级联删除 models、channelKeys 等）
+      await tx.channel.delete({
+        where: { id },
+      });
+
+      // 清理 ProxyKey 中对该渠道和模型的 JSON 引用
+      if (deletedModelIds.length > 0) {
+        const proxyKeys = await tx.proxyKey.findMany({
+          select: { id: true, allowedChannelIds: true, allowedModelIds: true },
+        });
+        const deletedModelIdSet = new Set(deletedModelIds);
+        for (const pk of proxyKeys) {
+          const updates: Record<string, unknown> = {};
+          if (Array.isArray(pk.allowedChannelIds) && (pk.allowedChannelIds as string[]).includes(id)) {
+            updates.allowedChannelIds = (pk.allowedChannelIds as string[]).filter(cid => cid !== id);
+          }
+          if (Array.isArray(pk.allowedModelIds) && (pk.allowedModelIds as string[]).some(mid => deletedModelIdSet.has(mid))) {
+            updates.allowedModelIds = (pk.allowedModelIds as string[]).filter(mid => !deletedModelIdSet.has(mid));
+          }
+          if (Object.keys(updates).length > 0) {
+            await tx.proxyKey.update({ where: { id: pk.id }, data: updates });
+          }
         }
       }
-    }
+    });
 
     return NextResponse.json({ success: true });
   } catch {

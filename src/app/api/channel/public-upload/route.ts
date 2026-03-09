@@ -6,6 +6,7 @@ import net from "node:net";
 import prisma from "@/lib/prisma";
 import { fetchModels } from "@/lib/detection";
 import { isAuthenticated } from "@/lib/middleware/auth";
+import { redis } from "@/lib/redis";
 
 interface PublicUploadBody {
   name?: string;
@@ -80,6 +81,24 @@ async function isUnsafeBaseUrl(url: URL): Promise<boolean> {
 // POST /api/channel/public-upload - Submit channel for review (unauthenticated)
 export async function POST(request: NextRequest) {
   try {
+    // IP 速率限制：每个 IP 每分钟最多 5 次请求
+    const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+      || request.headers.get("x-real-ip")
+      || "unknown";
+    if (redis) {
+      const rateLimitKey = `rate_limit:public_upload:${ip}`;
+      const count = await redis.incr(rateLimitKey);
+      if (count === 1) {
+        await redis.expire(rateLimitKey, 60); // 60 秒窗口
+      }
+      if (count > 5) {
+        return NextResponse.json(
+          { error: "请求过于频繁，请稍后再试", code: "RATE_LIMITED" },
+          { status: 429 }
+        );
+      }
+    }
+
     const body = await request.json() as PublicUploadBody;
     const name = body.name?.trim() || "";
     const baseUrl = body.baseUrl?.trim() || "";

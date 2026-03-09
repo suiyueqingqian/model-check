@@ -201,8 +201,7 @@ export async function triggerChannelDetection(
   jobIds: string[];
 }> {
 
-  // Clear stopped flag from previous detection stop
-  await clearStoppedFlag();
+  // 单渠道检测不清除全局 stopped 标志，避免影响正在进行的全量检测
   await saveProgressBaseline();
 
   const channel = await prisma.channel.findUnique({
@@ -264,8 +263,7 @@ export async function triggerModelDetection(modelId: string): Promise<{
   jobIds: string[];
 }> {
 
-  // Clear stopped flag from previous detection stop
-  await clearStoppedFlag();
+  // 单模型检测不清除全局 stopped 标志，避免影响正在进行的全量检测
   await saveProgressBaseline();
 
   const model = await prisma.model.findUnique({

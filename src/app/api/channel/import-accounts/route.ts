@@ -240,6 +240,7 @@ export async function POST(request: NextRequest) {
         controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
       }
 
+      try {
       let imported = 0;
       let skipped = 0;
       let merged = 0;
@@ -433,6 +434,11 @@ export async function POST(request: NextRequest) {
       });
 
       controller.close();
+      } catch (error) {
+        // 外层兜底：异常时发送错误事件并关闭流，防止流挂起
+        send("error", { message: error instanceof Error ? error.message : "导入过程发生未知错误" });
+        controller.close();
+      }
     },
   });
 

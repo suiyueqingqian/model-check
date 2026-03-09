@@ -39,6 +39,10 @@ export function KeywordManager({ className }: { className?: string }) {
   // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Delete state
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Toggling state
   const [togglingAll, setTogglingAll] = useState(false);
@@ -48,10 +52,10 @@ export function KeywordManager({ className }: { className?: string }) {
     Authorization: `Bearer ${token}`,
   };
 
-  const fetchKeywords = useCallback(async () => {
+  const fetchKeywords = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/model-keywords", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch("/api/model-keywords", { headers: { Authorization: `Bearer ${token}` }, signal });
       if (!res.ok) throw new Error();
       const data = await res.json();
       setKeywords(data.keywords || []);
@@ -64,7 +68,9 @@ export function KeywordManager({ className }: { className?: string }) {
 
   useEffect(() => {
     if (isExpanded && token) {
-      fetchKeywords();
+      const controller = new AbortController();
+      fetchKeywords(controller.signal);
+      return () => controller.abort();
     }
   }, [isExpanded, token, fetchKeywords]);
 
@@ -88,6 +94,8 @@ export function KeywordManager({ className }: { className?: string }) {
   };
 
   const handleDelete = async (id: string) => {
+    if (deletingId === id) return;
+    setDeletingId(id);
     try {
       const res = await fetch(`/api/model-keywords?id=${id}`, {
         method: "DELETE",
@@ -97,6 +105,8 @@ export function KeywordManager({ className }: { className?: string }) {
       setKeywords((prev) => prev.filter((k) => k.id !== id));
     } catch {
       toast("删除失败", "error");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -137,7 +147,8 @@ export function KeywordManager({ className }: { className?: string }) {
   };
 
   const handleEditSave = async (id: string) => {
-    if (!editValue.trim()) return;
+    if (!editValue.trim() || saving) return;
+    setSaving(true);
     try {
       const res = await fetch("/api/model-keywords", {
         method: "PUT",
@@ -151,6 +162,8 @@ export function KeywordManager({ className }: { className?: string }) {
       setEditingId(null);
     } catch {
       toast("更新失败", "error");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -274,10 +287,11 @@ export function KeywordManager({ className }: { className?: string }) {
                       value={editValue}
                       onChange={(e) => setEditValue(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") handleEditSave(kw.id);
+                        if (e.key === "Enter" && !saving) handleEditSave(kw.id);
                         if (e.key === "Escape") setEditingId(null);
                       }}
-                      className="w-20 px-1 py-0 border border-input rounded text-sm bg-background"
+                      disabled={saving}
+                      className="w-20 px-1 py-0 border border-input rounded text-sm bg-background disabled:opacity-50"
                       autoFocus
                     />
                   ) : (
@@ -287,8 +301,8 @@ export function KeywordManager({ className }: { className?: string }) {
                   {/* Action buttons */}
                   {editingId === kw.id ? (
                     <>
-                      <button onClick={() => handleEditSave(kw.id)} className="shrink-0 hover:text-primary">
-                        <Check className="h-3.5 w-3.5" />
+                      <button onClick={() => handleEditSave(kw.id)} disabled={saving} className="shrink-0 hover:text-primary disabled:opacity-50">
+                        {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                       </button>
                       <button onClick={() => setEditingId(null)} className="shrink-0 hover:text-destructive">
                         <X className="h-3.5 w-3.5" />
@@ -308,10 +322,11 @@ export function KeywordManager({ className }: { className?: string }) {
                       </button>
                       <button
                         onClick={() => handleDelete(kw.id)}
-                        className="shrink-0 hover:text-destructive"
+                        disabled={deletingId === kw.id}
+                        className="shrink-0 hover:text-destructive disabled:opacity-50"
                         title="删除"
                       >
-                        <X className="h-3.5 w-3.5" />
+                        {deletingId === kw.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
                       </button>
                     </>
                   )}

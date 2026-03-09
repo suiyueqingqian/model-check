@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useEffect, useRef, FormEvent } from "react";
+import { useState, useEffect, useRef, useCallback, FormEvent } from "react";
 import Link from "next/link";
 import { Sun, Moon, LogIn, LogOut, Activity, Play, Square, Loader2, Wifi, WifiOff, Clock, Zap, Timer, Search, Filter, X, Github, FileText, Settings, Upload, ArrowUpCircle } from "lucide-react";
 import { useTheme } from "@/components/providers/theme-provider";
@@ -109,7 +109,7 @@ export function Header({
   }, [showFilters]);
 
   // Fetch scheduler status
-  const fetchSchedulerStatus = async () => {
+  const fetchSchedulerStatus = useCallback(async () => {
     try {
       const response = await fetch("/api/scheduler");
       if (response.ok) {
@@ -118,7 +118,7 @@ export function Header({
       }
     } catch {
     }
-  };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -135,7 +135,7 @@ export function Header({
       isMounted = false;
       clearInterval(interval);
     };
-  }, []);
+  }, [fetchSchedulerStatus]);
 
   // Check version update (admin only, on login)
   useEffect(() => {

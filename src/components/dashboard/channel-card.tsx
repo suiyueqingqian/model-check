@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 import { StatusIndicator } from "@/components/ui/status-indicator";
 import { Heatmap } from "@/components/ui/heatmap";
 import { useAuth } from "@/components/providers/auth-provider";
+
+const EMPTY_SET = new Set<string>();
 import { useToast } from "@/components/ui/toast";
 import { getDisplayEndpoints, isResponsesCompatibleChatModel, supportsDisplayEndpoint } from "@/lib/utils/model-name";
 
@@ -138,11 +140,12 @@ function isModelAvailable(model: Model): boolean {
   return model.lastStatus === true;
 }
 
-export function ChannelCard({ channel, onDelete, className, onEndpointFilterChange, activeEndpointFilter, testingModelIds = new Set(), onTestModels, onStopModels }: ChannelCardProps) {
+export function ChannelCard({ channel, onDelete, className, onEndpointFilterChange, activeEndpointFilter, testingModelIds = EMPTY_SET, onTestModels, onStopModels }: ChannelCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [localEndpointFilter, setLocalEndpointFilter] = useState<string | null>(null);
   const [hoveringChannelStop, setHoveringChannelStop] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
   const { isAuthenticated, token } = useAuth();
   const { toast, update } = useToast();
 
@@ -209,35 +212,97 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
   // Test or stop channel
   const handleChannelAction = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (actionLoading) return;
     const modelIds = displayedModels.map((m) => m.id);
 
     if (!isAuthenticated) return;
 
-    if (isChannelTesting) {
-      // Stop testing
-      onStopModels?.(modelIds);
-      const toastId = toast("正在停止渠道测试...", "loading");
-      try {
-        const response = await fetch("/api/detect", {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ modelIds }),
-        });
-        if (response.ok) {
-          update(toastId, `渠道 ${channel.name} 测试已停止`, "success");
-        } else {
-          update(toastId, "停止失败", "error");
+    setActionLoading(true);
+    try {
+      if (isChannelTesting) {
+        // Stop testing
+        onStopModels?.(modelIds);
+        const toastId = toast("正在停止渠道测试...", "loading");
+        try {
+          const response = await fetch("/api/detect", {
+            method: "DELETE",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ modelIds }),
+          });
+          if (response.ok) {
+            update(toastId, `渠道 ${channel.name} 测试已停止`, "success");
+          } else {
+            update(toastId, "停止失败", "error");
+          }
+        } catch {
+          update(toastId, "网络错误", "error");
         }
-      } catch {
-        update(toastId, "网络错误", "error");
+      } else {
+        // Start testing
+        onTestModels?.(modelIds);
+        const toastId = toast(`正在测试 ${modelIds.length} 个模型...`, "loading");
+        try {
+          const response = await fetch("/api/detect", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ channelId: channel.id, modelIds }),
+          });
+
+          if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.error || "检测失败");
+          }
+
+          update(toastId, `渠道 ${channel.name} 测试已启动`, "success");
+        } catch {
+          update(toastId, `渠道 ${channel.name} 测试失败`, "error");
+        }
       }
-    } else {
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  // Test single model
+  const handleTestModel = async (modelId: string, modelName: string) => {
+    if (!isAuthenticated || actionLoading) return;
+
+    setActionLoading(true);
+    try {
+      if (testingModelIds.has(modelId)) {
+        // Stop testing
+        onStopModels?.([modelId]);
+        const toastId = toast(`正在停止模型 ${modelName}...`, "loading");
+        try {
+          const response = await fetch("/api/detect", {
+            method: "DELETE",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ modelIds: [modelId] }),
+          });
+          if (response.ok) {
+            update(toastId, `模型 ${modelName} 测试已停止`, "success");
+          } else {
+            update(toastId, "停止失败", "error");
+          }
+        } catch {
+          update(toastId, "网络错误", "error");
+        }
+        return;
+      }
+
       // Start testing
-      onTestModels?.(modelIds);
-      const toastId = toast(`正在测试 ${modelIds.length} 个模型...`, "loading");
+      onTestModels?.([modelId]);
+      const toastId = toast(`正在测试模型 ${modelName}...`, "loading");
+
       try {
         const response = await fetch("/api/detect", {
           method: "POST",
@@ -245,7 +310,7 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ channelId: channel.id, modelIds }),
+          body: JSON.stringify({ modelId }),
         });
 
         if (!response.ok) {
@@ -253,63 +318,12 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
           throw new Error(data.error || "检测失败");
         }
 
-        update(toastId, `渠道 ${channel.name} 测试已启动`, "success");
+        update(toastId, `模型 ${modelName} 测试已启动`, "success");
       } catch {
-        update(toastId, `渠道 ${channel.name} 测试失败`, "error");
+        update(toastId, `模型 ${modelName} 测试失败`, "error");
       }
-    }
-  };
-
-  // Test single model
-  const handleTestModel = async (modelId: string, modelName: string) => {
-    if (!isAuthenticated) return;
-
-    if (testingModelIds.has(modelId)) {
-      // Stop testing
-      onStopModels?.([modelId]);
-      const toastId = toast(`正在停止模型 ${modelName}...`, "loading");
-      try {
-        const response = await fetch("/api/detect", {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ modelIds: [modelId] }),
-        });
-        if (response.ok) {
-          update(toastId, `模型 ${modelName} 测试已停止`, "success");
-        } else {
-          update(toastId, "停止失败", "error");
-        }
-      } catch {
-        update(toastId, "网络错误", "error");
-      }
-      return;
-    }
-
-    // Start testing
-    onTestModels?.([modelId]);
-    const toastId = toast(`正在测试模型 ${modelName}...`, "loading");
-
-    try {
-      const response = await fetch("/api/detect", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ modelId }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "检测失败");
-      }
-
-      update(toastId, `模型 ${modelName} 测试已启动`, "success");
-    } catch {
-      update(toastId, `模型 ${modelName} 测试失败`, "error");
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -399,10 +413,11 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
         {isAuthenticated && (
           <button
             onClick={handleChannelAction}
+            disabled={actionLoading}
             onMouseEnter={() => setHoveringChannelStop(true)}
             onMouseLeave={() => setHoveringChannelStop(false)}
             className={cn(
-              "p-4 transition-colors border-l border-border shrink-0",
+              "p-4 transition-colors border-l border-border shrink-0 disabled:opacity-50",
               isChannelTesting && hoveringChannelStop
                 ? "bg-red-500/10 hover:bg-red-500/20"
                 : "hover:bg-accent/50"

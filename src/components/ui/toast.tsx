@@ -2,7 +2,7 @@
 
 "use client";
 
-import { createContext, useContext, useState, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useRef, useEffect, ReactNode } from "react";
 import { X, CheckCircle, XCircle, Loader2, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +26,26 @@ let toastCounter = 0;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // 组件卸载时清理所有 timer
+  useEffect(() => {
+    return () => {
+      timersRef.current.forEach((timer) => clearTimeout(timer));
+      timersRef.current.clear();
+    };
+  }, []);
+
+  const setAutoDismiss = useCallback((id: string) => {
+    // 先清理该 id 已有的 timer
+    const existing = timersRef.current.get(id);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+      timersRef.current.delete(id);
+    }, 3000);
+    timersRef.current.set(id, timer);
+  }, []);
 
   const toast = useCallback((message: string, type: ToastType = "success") => {
     const id = String(++toastCounter);
@@ -33,15 +53,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
     // Auto dismiss non-loading toasts after 3s
     if (type !== "loading") {
-      setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== id));
-      }, 3000);
+      setAutoDismiss(id);
     }
 
     return id;
-  }, []);
+  }, [setAutoDismiss]);
 
   const dismiss = useCallback((id: string) => {
+    const timer = timersRef.current.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      timersRef.current.delete(id);
+    }
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
@@ -52,11 +75,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
     // Auto dismiss after update if not loading
     if (type !== "loading") {
-      setTimeout(() => {
-        setToasts((prev) => prev.filter((t) => t.id !== id));
-      }, 3000);
+      setAutoDismiss(id);
     }
-  }, []);
+  }, [setAutoDismiss]);
 
   return (
     <ToastContext.Provider value={{ toast, dismiss, update }}>

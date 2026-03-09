@@ -340,19 +340,15 @@ export async function removeJobsByModelIds(modelIds: string[]): Promise<number> 
     queue.getJobs(["delayed"], 0, 5000),
   ]);
 
-  let removed = 0;
-  const removePromises = [...waitingJobs, ...delayedJobs]
-    .filter(job => job.data?.modelId && modelIdSet.has(job.data.modelId))
-    .map(async (job) => {
-      try {
+  const removeResults = await Promise.allSettled(
+    [...waitingJobs, ...delayedJobs]
+      .filter(job => job.data?.modelId && modelIdSet.has(job.data.modelId))
+      .map(async (job) => {
         await job.remove();
-        removed++;
-      } catch {
-        // Job may have been processed already
-      }
-    });
+      })
+  );
 
-  await Promise.allSettled(removePromises);
+  const removed = removeResults.filter(r => r.status === "fulfilled").length;
 
   // Mark models as cancelled so active jobs skip DB writes
   await markModelsCancelled(modelIds);

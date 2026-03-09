@@ -206,9 +206,12 @@ async function processDetectionJob(
   }
 
   // Acquire concurrency slots (both global and per-channel)
-  await acquireSlots(data.channelId, runtimeConfig);
+  // 信号量获取放在 try 内部，用标志位确保只在成功获取后才释放
+  let slotsAcquired = false;
 
   try {
+    await acquireSlots(data.channelId, runtimeConfig);
+    slotsAcquired = true;
     // Check again after acquiring slot (in case stop was triggered during wait)
     if (await isDetectionStopped()) {
       await decrementRemaining(data.modelId);
@@ -229,63 +232,59 @@ async function processDetectionJob(
 
     // Check if this model was selectively cancelled while job was active
     const { isModelCancelled, clearModelCancelled, decrementModelRemaining } = await import("./queue");
-    if (await isModelCancelled(data.modelId)) {
-      const isComplete = await decrementModelRemaining(data.modelId);
-      if (isComplete) await clearModelCancelled(data.modelId);
-      return {
-        status: "FAIL",
-        latency: 0,
-        endpointType: data.endpointType,
-        errorMsg: "Model detection cancelled by user",
-      };
+    const modelCancelled = await isModelCancelled(data.modelId);
+
+    if (!modelCancelled) {
+      // Use atomic operations to avoid race conditions when updating detectedEndpoints
+      // Multiple detection jobs for the same model can run in parallel
+      await prisma.$transaction(async (tx) => {
+        if (result.status === "SUCCESS") {
+          // Atomically add endpoint to array if not already present (PostgreSQL array operation)
+          // Use result.endpointType (may differ from job's when CHAT falls back to CODEX)
+          await tx.$executeRaw`
+            UPDATE "models"
+            SET "detected_endpoints" =
+              CASE
+                WHEN ${result.endpointType} = ANY("detected_endpoints") THEN "detected_endpoints"
+                ELSE COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY[${result.endpointType}]
+              END,
+              "last_status" = true,
+              "last_latency" = ${result.latency},
+              "last_checked_at" = ${new Date()}
+            WHERE id = ${data.modelId}
+          `;
+        } else {
+          // Atomically remove endpoint from array (PostgreSQL array_remove)
+          await tx.$executeRaw`
+            UPDATE "models"
+            SET "detected_endpoints" = array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}),
+              "last_status" = COALESCE(array_length(array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}), 1), 0) > 0,
+              "last_checked_at" = ${new Date()}
+            WHERE id = ${data.modelId}
+          `;
+        }
+
+        // Create check log entry
+        await tx.checkLog.create({
+          data: {
+            modelId: data.modelId,
+            endpointType: result.endpointType,
+            status: result.status,
+            latency: result.latency,
+            statusCode: result.statusCode,
+            errorMsg: result.errorMsg,
+            responseContent: result.responseContent,
+          },
+        });
+
+      });
     }
 
-    // Use atomic operations to avoid race conditions when updating detectedEndpoints
-    // Multiple detection jobs for the same model can run in parallel
-    await prisma.$transaction(async (tx) => {
-      if (result.status === "SUCCESS") {
-        // Atomically add endpoint to array if not already present (PostgreSQL array operation)
-        // Use result.endpointType (may differ from job's when CHAT falls back to CODEX)
-        await tx.$executeRaw`
-          UPDATE "models"
-          SET "detected_endpoints" =
-            CASE
-              WHEN ${result.endpointType} = ANY("detected_endpoints") THEN "detected_endpoints"
-              ELSE COALESCE("detected_endpoints", ARRAY[]::text[]) || ARRAY[${result.endpointType}]
-            END,
-            "last_status" = true,
-            "last_latency" = ${result.latency},
-            "last_checked_at" = ${new Date()}
-          WHERE id = ${data.modelId}
-        `;
-      } else {
-        // Atomically remove endpoint from array (PostgreSQL array_remove)
-        await tx.$executeRaw`
-          UPDATE "models"
-          SET "detected_endpoints" = array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}),
-            "last_status" = COALESCE(array_length(array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}), 1), 0) > 0,
-            "last_checked_at" = ${new Date()}
-          WHERE id = ${data.modelId}
-        `;
-      }
-
-      // Create check log entry
-      await tx.checkLog.create({
-        data: {
-          modelId: data.modelId,
-          endpointType: result.endpointType,
-          status: result.status,
-          latency: result.latency,
-          statusCode: result.statusCode,
-          errorMsg: result.errorMsg,
-          responseContent: result.responseContent,
-        },
-      });
-
-    });
-
-    // Check if this model has completed all detection jobs (O(1) Redis counter)
+    // 统一在一个地方递减 remaining 计数器，避免取消路径和正常路径重复递减
     const isModelComplete = await decrementModelRemaining(data.modelId);
+    if (modelCancelled && isModelComplete) {
+      await clearModelCancelled(data.modelId);
+    }
 
     // Publish progress update for SSE (with error handling to not affect detection result)
     const progressData = {
@@ -293,8 +292,8 @@ async function processDetectionJob(
       modelId: data.modelId,
       modelName: data.modelName,
       endpointType: data.endpointType,
-      status: result.status,
-      latency: result.latency,
+      status: modelCancelled ? "FAIL" : result.status,
+      latency: modelCancelled ? 0 : result.latency,
       timestamp: Date.now(),
       isModelComplete, // true when all endpoints for this model are done
     };
@@ -305,10 +304,21 @@ async function processDetectionJob(
       // Redis publish failure should not affect the detection result
     }
 
+    if (modelCancelled) {
+      return {
+        status: "FAIL",
+        latency: 0,
+        endpointType: data.endpointType,
+        errorMsg: "Model detection cancelled by user",
+      };
+    }
+
     return result;
   } finally {
-    // Always release slots, even on error
-    await releaseSlots(data.channelId);
+    // 只在成功获取信号量后才释放，避免多余的 decr
+    if (slotsAcquired) {
+      await releaseSlots(data.channelId);
+    }
   }
 }
 

@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback, FormEvent } from "react";
+import { useState, useEffect, useCallback, useRef, FormEvent } from "react";
 import {
   Plus,
   Pencil,
@@ -107,6 +107,7 @@ function getChannelBorderClass(channel: Channel): string {
 export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const { token } = useAuth();
   const { toast } = useToast();
+  const importAbortRef = useRef<AbortController | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(false);
@@ -584,22 +585,29 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     const invalidKeys = channelKeysInfo.filter((k) => k.lastValid === false);
     if (invalidKeys.length === 0) return;
     setBatchDeleting(true);
-    let deleted = 0;
-    for (const k of invalidKeys) {
-      try {
-        await fetch(`/api/channel/${editingChannel.id}/keys?keyId=${k.id}`, {
-          method: "DELETE",
-          headers,
-        });
-        deleted++;
-      } catch {
-        // continue
+    try {
+      const deletedIds = new Set<string>();
+      for (const k of invalidKeys) {
+        try {
+          await fetch(`/api/channel/${editingChannel.id}/keys?keyId=${k.id}`, {
+            method: "DELETE",
+            headers,
+          });
+          deletedIds.add(k.id);
+        } catch {
+          // continue
+        }
       }
+      setChannelKeysInfo((prev) => prev.filter((k) => !deletedIds.has(k.id)));
+      const failedCount = invalidKeys.length - deletedIds.size;
+      if (failedCount > 0) {
+        toast(`已删除 ${deletedIds.size} 个无效 Key，${failedCount} 个删除失败`, "warning");
+      } else {
+        toast(`已删除 ${deletedIds.size} 个无效 Key`, "success");
+      }
+    } finally {
+      setBatchDeleting(false);
     }
-    const deletedIds = new Set(invalidKeys.map((k) => k.id));
-    setChannelKeysInfo((prev) => prev.filter((k) => !deletedIds.has(k.id)));
-    toast(`已删除 ${deleted} 个无效 Key`, "success");
-    setBatchDeleting(false);
   };
 
   // Save inline key edit
@@ -792,6 +800,9 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     setImporting(true);
     setError(null);
     setImportProgress(null);
+    const controller = new AbortController();
+    const signal = controller.signal;
+    importAbortRef.current = controller;
     try {
       const data = JSON.parse(importText);
 
@@ -804,6 +815,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
           method: "POST",
           headers,
           body: JSON.stringify(data),
+          signal,
         });
         if (!response.ok) {
           const result = await response.json();
@@ -819,6 +831,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         let finalResult: { imported?: number; merged?: number; skipped?: number; importedChannels?: { id: string; name: string }[]; errors?: { name: string; reason: string }[] } | null = null;
 
         while (true) {
+          if (signal.aborted) break;
           const { done, value } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
@@ -845,6 +858,8 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
             }
           }
         }
+
+        if (signal.aborted) return;
 
         setImportProgress(null);
         setShowImportModal(false);
@@ -881,6 +896,7 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
           method: "POST",
           headers,
           body: JSON.stringify({ ...data, mode: importMode }),
+          signal,
         });
         if (!response.ok) {
           const result = await response.json();
@@ -901,9 +917,11 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
         }
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       setImportProgress(null);
       toast(err instanceof Error ? err.message : "导入失败", "error");
     } finally {
+      importAbortRef.current = null;
       setImporting(false);
     }
   };
@@ -915,7 +933,14 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     setImportFileName(file.name);
     const reader = new FileReader();
     reader.onload = (event) => {
-      setImportText(event.target?.result as string);
+      const content = event.target?.result as string;
+      try {
+        JSON.parse(content);
+        setImportText(content);
+      } catch {
+        toast("文件内容不是有效的 JSON 格式", "error");
+        setImportFileName("");
+      }
     };
     reader.readAsText(file);
   };

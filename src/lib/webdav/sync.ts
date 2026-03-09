@@ -1,6 +1,15 @@
 // WebDAV incremental sync utilities
 // Handles append/delete operations for individual channels
 
+// 内存互斥锁，串行化 WebDAV 写操作，防止并发读-改-写导致数据丢失
+let webdavLock: Promise<void> = Promise.resolve();
+function withWebDAVLock<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = webdavLock;
+  let resolve: () => void;
+  webdavLock = new Promise(r => { resolve = r; });
+  return prev.then(fn).finally(() => resolve!());
+}
+
 interface WebDAVConfig {
   url: string;
   username?: string;
@@ -172,6 +181,7 @@ function generateUniqueName(baseName: string, existingNames: Set<string>): strin
  * If a channel with same baseUrl+apiKey exists, overwrite it
  */
 export async function appendChannelToWebDAV(channel: ChannelData): Promise<void> {
+  return withWebDAVLock(async () => {
   const config = getWebDAVConfig();
   if (!config) {
     return;
@@ -225,13 +235,14 @@ export async function appendChannelToWebDAV(channel: ChannelData): Promise<void>
   if (!success) {
     throw new Error("Failed to write channel data to WebDAV");
   }
+  });
 }
 
 /**
- * Remove a channel from WebDAV (called after channel deletion)
  * Removes by matching name (primary) or baseUrl+apiKey (fallback)
  */
 export async function removeChannelFromWebDAV(channel: ChannelData): Promise<void> {
+  return withWebDAVLock(async () => {
   const config = getWebDAVConfig();
   if (!config) {
     return;
@@ -265,6 +276,7 @@ export async function removeChannelFromWebDAV(channel: ChannelData): Promise<voi
   if (!success) {
     throw new Error("Failed to write channel data to WebDAV");
   }
+  });
 }
 
 /**
@@ -272,6 +284,7 @@ export async function removeChannelFromWebDAV(channel: ChannelData): Promise<voi
  * Updates by matching name (primary) or baseUrl+apiKey (fallback)
  */
 export async function updateChannelInWebDAV(channel: ChannelData): Promise<void> {
+  return withWebDAVLock(async () => {
   const config = getWebDAVConfig();
   if (!config) {
     return;
@@ -330,6 +343,7 @@ export async function updateChannelInWebDAV(channel: ChannelData): Promise<void>
   if (!success) {
     throw new Error("Failed to write channel data to WebDAV");
   }
+  });
 }
 
 /**
@@ -337,6 +351,7 @@ export async function updateChannelInWebDAV(channel: ChannelData): Promise<void>
  * Used after batch import to ensure WebDAV matches local state
  */
 export async function syncAllChannelsToWebDAV(channels: ChannelData[]): Promise<void> {
+  return withWebDAVLock(async () => {
   const config = getWebDAVConfig();
   if (!config) {
     return;
@@ -367,4 +382,5 @@ export async function syncAllChannelsToWebDAV(channels: ChannelData[]): Promise<
   if (!success) {
     throw new Error("Failed to sync all channels to WebDAV");
   }
+  });
 }

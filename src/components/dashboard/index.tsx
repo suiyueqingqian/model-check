@@ -241,7 +241,7 @@ export function Dashboard({
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
         <p className="text-destructive">{error}</p>
         <button
-          onClick={() => fetchData(undefined, currentPage)}
+          onClick={() => fetchData(undefined, currentPage, search, endpointFilter, statusFilter)}
           className="px-4 py-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
         >
           重试

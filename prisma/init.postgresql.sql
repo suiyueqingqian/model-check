@@ -275,6 +275,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- DROP + ADD 在同一个 DO 块中执行，PL/pgSQL DO 块具有隐式事务保护，确保原子性
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'models_channel_id_model_name_channel_key_id_key'
@@ -295,3 +296,4 @@ CREATE INDEX IF NOT EXISTS "check_logs_created_at_idx" ON "check_logs"("created_
 CREATE INDEX IF NOT EXISTS "channel_keys_channel_id_idx" ON "channel_keys"("channel_id");
 CREATE INDEX IF NOT EXISTS "models_channel_key_id_idx" ON "models"("channel_key_id");
 CREATE UNIQUE INDEX IF NOT EXISTS "channels_name_key" ON "channels"("name");
+CREATE UNIQUE INDEX IF NOT EXISTS "model_keywords_keyword_key" ON "model_keywords"("keyword");

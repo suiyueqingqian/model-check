@@ -42,6 +42,8 @@ model Model {
   channel           Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
   channelKey        ChannelKey? @relation(fields: [channelKeyId], references: [id], onDelete: SetNull)
 
+  // 注意: channelKeyId 为可空字段，Prisma db push 不会生成 NULLS NOT DISTINCT，
+  // 需通过 init.postgresql.sql 手动创建带 NULLS NOT DISTINCT 的唯一约束来确保 NULL 值也参与唯一性判断
   @@unique([channelId, modelName, channelKeyId])
   @@index([channelKeyId])
   @@map("models")
@@ -117,7 +119,7 @@ model ChannelKey {
 
 model ModelKeyword {
   id        String   @id @default(cuid())
-  keyword   String   @db.VarChar(100)
+  keyword   String   @unique @db.VarChar(100)
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")

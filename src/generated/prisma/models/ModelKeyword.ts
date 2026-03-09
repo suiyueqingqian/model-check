@@ -194,14 +194,14 @@ export type ModelKeywordOrderByWithRelationInput = {
 
 export type ModelKeywordWhereUniqueInput = Prisma.AtLeast<{
   id?: string
+  keyword?: string
   AND?: Prisma.ModelKeywordWhereInput | Prisma.ModelKeywordWhereInput[]
   OR?: Prisma.ModelKeywordWhereInput[]
   NOT?: Prisma.ModelKeywordWhereInput | Prisma.ModelKeywordWhereInput[]
-  keyword?: Prisma.StringFilter<"ModelKeyword"> | string
   enabled?: Prisma.BoolFilter<"ModelKeyword"> | boolean
   createdAt?: Prisma.DateTimeFilter<"ModelKeyword"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"ModelKeyword"> | Date | string
-}, "id">
+}, "id" | "keyword">
 
 export type ModelKeywordOrderByWithAggregationInput = {
   id?: Prisma.SortOrder

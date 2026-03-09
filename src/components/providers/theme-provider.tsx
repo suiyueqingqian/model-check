@@ -23,32 +23,32 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return stored || "dark";
   });
 
+  const [systemTheme, setSystemTheme] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "dark";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
+
+  // 监听系统主题变化
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = (e: MediaQueryListEvent) => {
+      setSystemTheme(e.matches ? "dark" : "light");
+    };
+    mediaQuery.addEventListener("change", handler);
+    return () => mediaQuery.removeEventListener("change", handler);
+  }, []);
+
   const resolvedTheme = useMemo<"light" | "dark">(() => {
     if (theme === "system") {
-      if (typeof window === "undefined") {
-        return "dark";
-      }
-      return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      return systemTheme;
     }
     return theme;
-  }, [theme]);
+  }, [theme, systemTheme]);
 
   useEffect(() => {
     localStorage.setItem("theme", theme);
     document.documentElement.classList.toggle("dark", resolvedTheme === "dark");
   }, [theme, resolvedTheme]);
-
-  useEffect(() => {
-    if (theme !== "system") return;
-
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = (e: MediaQueryListEvent) => {
-      document.documentElement.classList.toggle("dark", e.matches);
-    };
-
-    mediaQuery.addEventListener("change", handler);
-    return () => mediaQuery.removeEventListener("change", handler);
-  }, [theme]);
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, resolvedTheme }}>
