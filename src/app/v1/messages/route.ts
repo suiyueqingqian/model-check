@@ -19,6 +19,11 @@ import {
   type ProxyRequestAttemptLog,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
+import {
+  buildClaudeMessageFromText,
+  extractTextFromClaudeSse,
+  looksLikeSsePayload,
+} from "@/lib/proxy/compat";
 import { createAsyncErrorHandler } from "@/lib/utils/error";
 
 type ProxyAttemptFailure = {
@@ -35,6 +40,18 @@ function getActualModelName(modelName: string): string {
 
 function isClaudeModelName(modelName: string): boolean {
   return getActualModelName(modelName).toLowerCase().includes("claude");
+}
+
+async function readUpstreamTextPayload(response: Response): Promise<{
+  text: string;
+  isSse: boolean;
+}> {
+  const text = await response.text();
+  const contentType = response.headers.get("content-type") || "";
+  return {
+    text,
+    isSse: contentType.includes("text/event-stream") || looksLikeSsePayload(text),
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -174,7 +191,7 @@ export async function POST(request: NextRequest) {
       const startedAt = Date.now();
 
       try {
-        const upstreamBody = { ...body, model: channel.actualModelName };
+        const upstreamBody = { ...body, model: channel.actualModelName, stream: true };
         const baseUrl = normalizeBaseUrl(channel.baseUrl);
         const url = `${baseUrl}/v1/messages`;
         const extraHeaders: Record<string, string> = {
@@ -308,7 +325,11 @@ export async function POST(request: NextRequest) {
           });
         }
 
-        const data = await response.json();
+        const { text, isSse } = await readUpstreamTextPayload(response);
+        const responseModelName = typeof modelName === "string" ? modelName : channel.actualModelName;
+        const data = isSse
+          ? buildClaudeMessageFromText(responseModelName, extractTextFromClaudeSse(text))
+          : JSON.parse(text);
 
         if (isUnifiedRouting && channel.modelId) {
           await recordModelResult(channel.modelId, "CLAUDE", true, {

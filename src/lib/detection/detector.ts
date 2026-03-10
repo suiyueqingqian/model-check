@@ -184,6 +184,10 @@ function parseLastSSEEvent(sseText: string): unknown {
   return undefined;
 }
 
+function looksLikeSsePayload(text: string): boolean {
+  return /^\s*data:\s*/m.test(text);
+}
+
 /**
  * Extract response content from API response based on endpoint type
  */
@@ -412,14 +416,14 @@ export async function executeDetection(
       let responseBody: unknown;
       try {
         const contentType = response.headers.get("content-type") || "";
-        if (contentType.includes("text/event-stream")) {
+        const responseText = await response.text();
+        if (contentType.includes("text/event-stream") || looksLikeSsePayload(responseText)) {
           // SSE stream response (CHAT / CLAUDE / CODEX with stream: true)
-          const sseText = await response.text();
-          responseContent = extractStreamContent(sseText, job.endpointType);
-          responseBody = parseLastSSEEvent(sseText);
+          responseContent = extractStreamContent(responseText, job.endpointType);
+          responseBody = parseLastSSEEvent(responseText);
         } else {
           // JSON response (non-streaming fallback, Gemini, Image, etc.)
-          responseBody = await response.json();
+          responseBody = JSON.parse(responseText);
           responseContent = extractResponseContent(responseBody, job.endpointType);
         }
       } catch {
@@ -550,12 +554,12 @@ async function retryClaudeWithThinking(
       let responseBody: unknown;
       try {
         const contentType = response.headers.get("content-type") || "";
-        if (contentType.includes("text/event-stream")) {
-          const sseText = await response.text();
-          responseContent = extractStreamContent(sseText, EndpointType.CLAUDE);
-          responseBody = parseLastSSEEvent(sseText);
+        const responseText = await response.text();
+        if (contentType.includes("text/event-stream") || looksLikeSsePayload(responseText)) {
+          responseContent = extractStreamContent(responseText, EndpointType.CLAUDE);
+          responseBody = parseLastSSEEvent(responseText);
         } else {
-          responseBody = await response.json();
+          responseBody = JSON.parse(responseText);
           responseContent = extractResponseContent(responseBody, EndpointType.CLAUDE);
         }
       } catch {

@@ -311,6 +311,23 @@ function buildResponses(modelName: string, text: string, usage?: {
   };
 }
 
+function buildClaudeMessage(modelName: string, text: string) {
+  return {
+    id: `msg_${Date.now()}`,
+    type: "message",
+    role: "assistant",
+    model: modelName,
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    content: [
+      {
+        type: "text",
+        text,
+      },
+    ],
+  };
+}
+
 function createChatCompletionChunk(
   modelName: string,
   delta: Record<string, unknown>,
@@ -461,6 +478,10 @@ export function buildChatCompletionFromClaude(payload: unknown, modelName: strin
   return buildChatCompletion(modelName, extractClaudeText(payload), buildUsageFromClaude(payload));
 }
 
+export function buildChatCompletionFromText(modelName: string, text: string) {
+  return buildChatCompletion(modelName, text);
+}
+
 export function buildChatCompletionFromGemini(payload: unknown, modelName: string) {
   return buildChatCompletion(modelName, extractGeminiText(payload), buildUsageFromGemini(payload));
 }
@@ -469,8 +490,120 @@ export function buildResponsesFromClaude(payload: unknown, modelName: string) {
   return buildResponses(modelName, extractClaudeText(payload), buildUsageFromClaude(payload));
 }
 
+export function buildResponsesFromText(modelName: string, text: string) {
+  return buildResponses(modelName, text);
+}
+
 export function buildResponsesFromGemini(payload: unknown, modelName: string) {
   return buildResponses(modelName, extractGeminiText(payload), buildUsageFromGemini(payload));
+}
+
+export function buildClaudeMessageFromText(modelName: string, text: string) {
+  return buildClaudeMessage(modelName, text);
+}
+
+export function looksLikeSsePayload(text: string): boolean {
+  return /^\s*data:\s*/m.test(text);
+}
+
+function parseSseEvents(sseText: string): Record<string, unknown>[] {
+  const events: Record<string, unknown>[] = [];
+
+  for (const line of sseText.split(/\r?\n/)) {
+    if (!line.startsWith("data: ")) {
+      continue;
+    }
+
+    const raw = line.slice(6).trim();
+    if (!raw || raw === "[DONE]") {
+      continue;
+    }
+
+    try {
+      const event = JSON.parse(raw) as Record<string, unknown>;
+      events.push(event);
+    } catch {
+    }
+  }
+
+  return events;
+}
+
+export function extractTextFromChatSse(sseText: string): string {
+  let text = "";
+
+  for (const event of parseSseEvents(sseText)) {
+    const choices = Array.isArray(event.choices) ? event.choices : [];
+    const firstChoice = choices[0];
+    if (!firstChoice || typeof firstChoice !== "object") {
+      continue;
+    }
+
+    const choice = firstChoice as Record<string, unknown>;
+    const delta = choice.delta;
+    if (delta && typeof delta === "object" && typeof (delta as Record<string, unknown>).content === "string") {
+      text += (delta as Record<string, unknown>).content as string;
+      continue;
+    }
+
+    const message = choice.message;
+    if (message && typeof message === "object" && typeof (message as Record<string, unknown>).content === "string") {
+      text = (message as Record<string, unknown>).content as string;
+      continue;
+    }
+
+    if (typeof choice.text === "string" && choice.text.length > 0) {
+      text = choice.text;
+    }
+  }
+
+  return text;
+}
+
+export function extractTextFromResponsesSse(sseText: string): string {
+  let text = "";
+
+  for (const event of parseSseEvents(sseText)) {
+    if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+      text += event.delta;
+      continue;
+    }
+
+    if (event.type === "response.output_text.done" && typeof event.text === "string") {
+      text = event.text;
+      continue;
+    }
+
+    const response = event.response;
+    if (
+      event.type === "response.completed" &&
+      response &&
+      typeof response === "object" &&
+      typeof (response as Record<string, unknown>).output_text === "string"
+    ) {
+      text = (response as Record<string, unknown>).output_text as string;
+    }
+  }
+
+  return text;
+}
+
+export function extractTextFromClaudeSse(sseText: string): string {
+  let text = "";
+
+  for (const event of parseSseEvents(sseText)) {
+    if (
+      event.type === "content_block_delta" &&
+      event.delta &&
+      typeof event.delta === "object" &&
+      (event.delta as Record<string, unknown>).type === "text_delta" &&
+      typeof (event.delta as Record<string, unknown>).text === "string"
+    ) {
+      text += (event.delta as Record<string, unknown>).text as string;
+    }
+  }
+
+  return text;
 }
 
 export function convertClaudeStreamToChatStream(upstream: Response, modelName: string): Response {

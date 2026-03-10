@@ -24,13 +24,18 @@ import {
 import {
   buildChatCompletionFromClaude,
   buildChatCompletionFromGemini,
+  buildChatCompletionFromText,
   buildClaudeBodyFromChatRequest,
   buildGeminiBodyFromChatRequest,
   convertClaudeStreamToChatStream,
   createSyntheticChatStreamResponse,
+  extractTextFromChatSse,
+  extractTextFromClaudeSse,
   extractTextFromGemini,
+  extractTextFromResponsesSse,
   isClaudeModelName,
   isGeminiModelName,
+  looksLikeSsePayload,
 } from "@/lib/proxy/compat";
 import {
   getOpenAIEndpointOrder,
@@ -143,7 +148,7 @@ function buildResponsesFallbackBody(
   const fallbackBody: Record<string, unknown> = {
     ...rest,
     model: modelName,
-    stream: body.stream === true,
+    stream: true,
   };
 
   if (typeof max_completion_tokens === "number") {
@@ -425,6 +430,18 @@ function convertResponsesStreamToChatStream(
   });
 }
 
+async function readUpstreamTextPayload(response: Response): Promise<{
+  text: string;
+  isSse: boolean;
+}> {
+  const text = await response.text();
+  const contentType = response.headers.get("content-type") || "";
+  return {
+    text,
+    isSse: contentType.includes("text/event-stream") || looksLikeSsePayload(text),
+  };
+}
+
 function buildAttemptList(
   requestedBody: Record<string, unknown>,
   baseUrl: string,
@@ -437,7 +454,7 @@ function buildAttemptList(
     return [{
       endpointType: "CLAUDE",
       url: `${baseUrl}/v1/messages`,
-      body: buildClaudeBodyFromChatRequest(requestedBody, actualModelName),
+      body: buildClaudeBodyFromChatRequest({ ...requestedBody, stream: true }, actualModelName),
       apiType: "anthropic",
     }];
   }
@@ -461,6 +478,7 @@ function buildAttemptList(
       body: {
         ...requestedBody,
         model: actualModelName,
+        stream: true,
         messages: normalizeMessagesForGeminiCli(requestedBody.messages),
       },
       apiType: "openai" as const,
@@ -877,7 +895,9 @@ export async function POST(request: NextRequest) {
               });
             }
 
-            const data = await response.json();
+            const { text, isSse } = await readUpstreamTextPayload(response);
+            const responseModelName = typeof modelName === "string" ? modelName : channel.actualModelName;
+            const data = isSse ? buildChatCompletionFromText(responseModelName, extractTextFromChatSse(text)) : JSON.parse(text);
 
             if (channel.modelId && !isUnifiedRouting) {
               await savePreferredProxyEndpoint(
@@ -995,8 +1015,11 @@ export async function POST(request: NextRequest) {
               );
             }
 
-            const data = await response.json();
-            const convertedPayload = buildChatCompletionFromClaude(data, modelName);
+            const { text, isSse } = await readUpstreamTextPayload(response);
+            const responseModelName = typeof modelName === "string" ? modelName : channel.actualModelName;
+            const convertedPayload = isSse
+              ? buildChatCompletionFromText(responseModelName, extractTextFromClaudeSse(text))
+              : buildChatCompletionFromClaude(JSON.parse(text), responseModelName);
 
             if (isUnifiedRouting && channel.modelId) {
               await recordModelResult(channel.modelId, attempt.endpointType, true, {
@@ -1263,8 +1286,11 @@ export async function POST(request: NextRequest) {
             );
           }
 
-          const data = await response.json();
-          const convertedPayload = buildChatCompletionFromResponses(data, modelName);
+          const { text, isSse } = await readUpstreamTextPayload(response);
+          const responseModelName = typeof modelName === "string" ? modelName : channel.actualModelName;
+          const convertedPayload = isSse
+            ? buildChatCompletionFromText(responseModelName, extractTextFromResponsesSse(text))
+            : buildChatCompletionFromResponses(JSON.parse(text), responseModelName);
 
           if (channel.modelId && !isUnifiedRouting) {
             await savePreferredProxyEndpoint(

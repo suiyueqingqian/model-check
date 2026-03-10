@@ -26,11 +26,16 @@ import {
   buildGeminiBodyFromResponsesRequest,
   buildResponsesFromClaude,
   buildResponsesFromGemini,
+  buildResponsesFromText,
   convertClaudeStreamToResponsesStream,
   createSyntheticResponsesStreamResponse,
+  extractTextFromChatSse,
+  extractTextFromClaudeSse,
   extractTextFromGemini,
+  extractTextFromResponsesSse,
   isClaudeModelName,
   isGeminiModelName,
+  looksLikeSsePayload,
 } from "@/lib/proxy/compat";
 import {
   getOpenAIEndpointOrder,
@@ -139,7 +144,7 @@ function buildChatFallbackBody(
   const fallbackBody: Record<string, unknown> = {
     ...rest,
     model: modelName,
-    stream: body.stream !== false,
+    stream: true,
     messages: buildChatMessagesFromResponsesInput(input),
   };
 
@@ -443,6 +448,18 @@ function convertChatStreamToResponsesStream(
   });
 }
 
+async function readUpstreamTextPayload(response: Response): Promise<{
+  text: string;
+  isSse: boolean;
+}> {
+  const text = await response.text();
+  const contentType = response.headers.get("content-type") || "";
+  return {
+    text,
+    isSse: contentType.includes("text/event-stream") || looksLikeSsePayload(text),
+  };
+}
+
 function buildAttemptList(
   requestedBody: Record<string, unknown>,
   baseUrl: string,
@@ -456,7 +473,7 @@ function buildAttemptList(
     return [{
       endpointType: "CLAUDE",
       url: `${baseUrl}/v1/messages`,
-      body: buildClaudeBodyFromResponsesRequest(requestedBody, actualModelName),
+      body: buildClaudeBodyFromResponsesRequest({ ...requestedBody, stream: true }, actualModelName),
       apiType: "anthropic",
     }];
   }
@@ -483,7 +500,7 @@ function buildAttemptList(
     CODEX: {
       endpointType: "CODEX" as const,
       url: `${baseUrl}/v1/responses`,
-      body: { ...requestedBody, model: actualModelName, stream: requestedBody.stream !== false },
+      body: { ...requestedBody, model: actualModelName, stream: true },
       apiType: "openai" as const,
       extraHeaders: RESPONSES_HEADERS,
     },
@@ -906,7 +923,9 @@ export async function POST(request: NextRequest) {
               });
             }
 
-            const data = await response.json();
+            const { text, isSse } = await readUpstreamTextPayload(response);
+            const responseModelName = typeof modelName === "string" ? modelName : channel.actualModelName;
+            const data = isSse ? buildResponsesFromText(responseModelName, extractTextFromChatSse(text)) : JSON.parse(text);
 
             if (channel.modelId && !isUnifiedRouting) {
               await savePreferredProxyEndpoint(
@@ -1024,8 +1043,11 @@ export async function POST(request: NextRequest) {
               );
             }
 
-            const data = await response.json();
-            const convertedPayload = buildResponsesFromClaude(data, modelName);
+            const { text, isSse } = await readUpstreamTextPayload(response);
+            const responseModelName = typeof modelName === "string" ? modelName : channel.actualModelName;
+            const convertedPayload = isSse
+              ? buildResponsesFromText(responseModelName, extractTextFromClaudeSse(text))
+              : buildResponsesFromClaude(JSON.parse(text), responseModelName);
 
             if (isUnifiedRouting && channel.modelId) {
               await recordModelResult(channel.modelId, attempt.endpointType, true, {
@@ -1292,8 +1314,11 @@ export async function POST(request: NextRequest) {
             );
           }
 
-          const data = await response.json();
-          const convertedPayload = buildResponsesFromChatCompletion(data, modelName);
+          const { text, isSse } = await readUpstreamTextPayload(response);
+          const responseModelName = typeof modelName === "string" ? modelName : channel.actualModelName;
+          const convertedPayload = isSse
+            ? buildResponsesFromText(responseModelName, extractTextFromResponsesSse(text))
+            : buildResponsesFromChatCompletion(JSON.parse(text), responseModelName);
 
           if (channel.modelId && !isUnifiedRouting) {
             await savePreferredProxyEndpoint(
