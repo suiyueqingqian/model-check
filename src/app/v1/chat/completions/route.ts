@@ -474,7 +474,11 @@ function buildAttemptList(
     },
   };
 
-  if (!shouldTryResponsesFallback) {
+  const allowResponsesFallback =
+    shouldTryResponsesFallback ||
+    detectedEndpoints.includes("CODEX");
+
+  if (!allowResponsesFallback) {
     return [attempts.CHAT];
   }
 

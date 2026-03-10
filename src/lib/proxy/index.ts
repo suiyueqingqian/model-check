@@ -21,8 +21,7 @@ import {
   type ValidateKeyResult,
 } from "@/lib/utils/proxy-key";
 import {
-  isResponsesCompatibleChatModel,
-  shouldPreferChatCompletionsForModel,
+  supportsOpenAIEndpointFallback,
 } from "@/lib/utils/model-name";
 
 // Round-robin counter: 优先使用 Redis INCR（多实例安全），无 Redis 时退回内存 Map
@@ -502,7 +501,7 @@ function supportsPreferredEndpoint(
   }
 
   if (
-    shouldPreferChatCompletionsForModel(modelName) &&
+    supportsOpenAIEndpointFallback(modelName) &&
     (preferredEndpoint === "CHAT" || preferredEndpoint === "CODEX")
   ) {
     return (
@@ -1013,13 +1012,26 @@ function groupCandidatesByChannel(candidates: ProxyChannelCandidate[]): ProxyCha
 }
 
 function shouldDisableChannelCredential(statusCode?: number, errorMsg?: string): boolean {
+  return classifyProxyFailure(statusCode, errorMsg) === "AUTH_INVALID";
+}
+
+type ProxyFailureCategory =
+  | "AUTH_INVALID"
+  | "RATE_LIMIT"
+  | "MODEL_UNAVAILABLE"
+  | "ENDPOINT_UNAVAILABLE"
+  | "MODEL_PERMISSION"
+  | "TRANSIENT"
+  | "UNKNOWN";
+
+function classifyProxyFailure(statusCode?: number, errorMsg?: string): ProxyFailureCategory {
   const normalizedMessage = normalizeProxyErrorMessage(errorMsg);
 
-  if (statusCode === 401 || statusCode === 402) {
-    return true;
+  if (statusCode === 401) {
+    return "AUTH_INVALID";
   }
 
-  const keyErrorPatterns = [
+  const authErrorPatterns = [
     "invalid api key",
     "incorrect api key",
     "api key disabled",
@@ -1079,7 +1091,6 @@ function shouldDisableChannelCredential(statusCode?: number, errorMsg?: string):
     "认证失败",
     "鉴权失败",
     "未认证",
-    "未授权",
     "令牌无效",
     "token 无效",
     "token已过期",
@@ -1091,6 +1102,20 @@ function shouldDisableChannelCredential(statusCode?: number, errorMsg?: string):
     "密钥不存在",
     "apikey无效",
     "apikey 不存在",
+  ];
+
+  if (includesAnyPattern(normalizedMessage, authErrorPatterns)) {
+    return "AUTH_INVALID";
+  }
+
+  if (statusCode === 402 || statusCode === 429) {
+    return "RATE_LIMIT";
+  }
+
+  const rateLimitPatterns = [
+    "rate limit",
+    "rate_limit",
+    "too many requests",
     "quota exceeded",
     "insufficient_quota",
     "insufficient quota",
@@ -1098,27 +1123,30 @@ function shouldDisableChannelCredential(statusCode?: number, errorMsg?: string):
     "credits exhausted",
     "credit balance is too low",
     "account balance is insufficient",
+    "overloaded",
+    "overloaded_error",
+    "requests are too frequent",
     "余额不足",
     "配额不足",
     "额度不足",
+    "请求过多",
+    "频率过高",
+    "限流",
   ];
 
-  if (includesAnyPattern(normalizedMessage, keyErrorPatterns)) {
-    return true;
+  if (includesAnyPattern(normalizedMessage, rateLimitPatterns)) {
+    return "RATE_LIMIT";
   }
 
-  return false;
-}
+  const endpointNotFoundPatterns = [
+    "endpoint not found",
+    "method not found",
+    "接口不存在",
+    "方法不存在",
+  ];
 
-function shouldMarkModelUnavailable(statusCode?: number, errorMsg?: string): boolean {
-  const normalizedMessage = normalizeProxyErrorMessage(errorMsg);
-
-  if (shouldDisableChannelCredential(statusCode, errorMsg)) {
-    return false;
-  }
-
-  if (statusCode === 404) {
-    return true;
+  if (includesAnyPattern(normalizedMessage, endpointNotFoundPatterns)) {
+    return "ENDPOINT_UNAVAILABLE";
   }
 
   const modelNotFoundPatterns = [
@@ -1133,8 +1161,6 @@ function shouldMarkModelUnavailable(statusCode?: number, errorMsg?: string): boo
     "requested resource could not be found",
     "resource not found",
     "not found for api version",
-    "endpoint not found",
-    "method not found",
     "does not exist",
     "publisher model is not enabled",
     "publisher model is disabled",
@@ -1148,7 +1174,6 @@ function shouldMarkModelUnavailable(statusCode?: number, errorMsg?: string): boo
     "模型已下线",
     "模型已弃用",
     "资源不存在",
-    "接口不存在",
   ];
 
   if (
@@ -1157,7 +1182,11 @@ function shouldMarkModelUnavailable(statusCode?: number, errorMsg?: string): boo
     (normalizedMessage.includes("model ") && normalizedMessage.includes(" not found")) ||
     (normalizedMessage.includes("resource ") && normalizedMessage.includes(" not found"))
   ) {
-    return true;
+    return "MODEL_UNAVAILABLE";
+  }
+
+  if (statusCode === 404) {
+    return "ENDPOINT_UNAVAILABLE";
   }
 
   const modelPermissionPatterns = [
@@ -1189,33 +1218,18 @@ function shouldMarkModelUnavailable(statusCode?: number, errorMsg?: string): boo
   ];
 
   if (includesAnyPattern(normalizedMessage, modelPermissionPatterns)) {
-    return true;
+    return "MODEL_PERMISSION";
   }
 
-  return false;
-}
-
-function isTransientProxyFailure(statusCode?: number, errorMsg?: string): boolean {
-  const normalizedMessage = normalizeProxyErrorMessage(errorMsg);
-
-  if (statusCode === 429 || statusCode === 408 || statusCode === 409 || statusCode === 425 || statusCode === 499 || statusCode === 502 || statusCode === 503 || statusCode === 504 || statusCode === 529) {
-    return true;
+  if (statusCode === 408 || statusCode === 409 || statusCode === 425 || statusCode === 499 || statusCode === 502 || statusCode === 503 || statusCode === 504 || statusCode === 529) {
+    return "TRANSIENT";
   }
 
   if (statusCode !== undefined && statusCode >= 500) {
-    return true;
+    return "TRANSIENT";
   }
 
   const transientPatterns = [
-    "rate limit",
-    "rate_limit",
-    "too many requests",
-    "quota exceeded",
-    "insufficient_quota",
-    "insufficient quota",
-    "exceeded your current quota",
-    "overloaded",
-    "overloaded_error",
     "temporarily unavailable",
     "please try again later",
     "upstream 429",
@@ -1243,17 +1257,33 @@ function isTransientProxyFailure(statusCode?: number, errorMsg?: string): boolea
     "bad gateway",
     "service unavailable",
     "gateway timeout",
-    "requests are too frequent",
-    "请求过多",
-    "额度不足",
-    "配额不足",
     "服务繁忙",
     "暂时不可用",
     "网络错误",
     "超时",
   ];
 
-  return includesAnyPattern(normalizedMessage, transientPatterns);
+  if (includesAnyPattern(normalizedMessage, transientPatterns)) {
+    return "TRANSIENT";
+  }
+
+  return "UNKNOWN";
+}
+
+function shouldMarkModelUnavailable(statusCode?: number, errorMsg?: string): boolean {
+  const category = classifyProxyFailure(statusCode, errorMsg);
+  return category === "MODEL_UNAVAILABLE" ||
+    category === "ENDPOINT_UNAVAILABLE" ||
+    category === "MODEL_PERMISSION";
+}
+
+function isTransientProxyFailure(statusCode?: number, errorMsg?: string): boolean {
+  const category = classifyProxyFailure(statusCode, errorMsg);
+  return category === "RATE_LIMIT" || category === "TRANSIENT";
+}
+
+function isRateLimitProxyFailure(statusCode?: number, errorMsg?: string): boolean {
+  return classifyProxyFailure(statusCode, errorMsg) === "RATE_LIMIT";
 }
 
 function shouldUpdateModelAvailability(success: boolean, statusCode?: number, errorMsg?: string): boolean {
@@ -1270,7 +1300,7 @@ function shouldUpdateModelAvailability(success: boolean, statusCode?: number, er
   }
 
   if (isTransientProxyFailure(statusCode, errorMsg)) {
-    return false;
+    return true;
   }
 
   return false;
@@ -1547,9 +1577,7 @@ export async function recordProxyModelResult(
     options?.temporaryStopValue,
     options?.temporaryStopUnit
   );
-  const shouldTemporaryStop = !success &&
-    temporaryStopDurationMs > 0 &&
-    isTransientProxyFailure(options?.statusCode, options?.errorMsg);
+  let shouldTemporaryStop = false;
 
   await prisma.$transaction(async (tx) => {
     const currentModel = await tx.model.findUnique({
@@ -1563,18 +1591,10 @@ export async function recordProxyModelResult(
     });
 
     const currentDetectedEndpoints = currentModel?.detectedEndpoints ?? [];
-    const isGptDualEndpointModel =
-      !!currentModel?.modelName &&
-      isResponsesCompatibleChatModel(currentModel.modelName) &&
-      (endpointType === "CHAT" || endpointType === "CODEX");
-
-    const alternateDetectedEndpoints = isGptDualEndpointModel
-      ? currentDetectedEndpoints.filter(
-          (endpoint) =>
-            (endpoint === "CHAT" || endpoint === "CODEX") &&
-            endpoint !== endpointType
-        )
-      : [];
+    const alternateDetectedEndpoints = currentDetectedEndpoints.filter(
+      (endpoint) => endpoint !== endpointType
+    );
+    const hasAlternateDetectedEndpoints = alternateDetectedEndpoints.length > 0;
 
     const shouldUpdateStatus = shouldUpdateModelAvailability(
       success,
@@ -1596,9 +1616,14 @@ export async function recordProxyModelResult(
 
     const nextLastStatus = success
       ? true
-      : isGptDualEndpointModel && alternateDetectedEndpoints.length > 0
+      : hasAlternateDetectedEndpoints
         ? true
         : false;
+
+    shouldTemporaryStop = !success &&
+      temporaryStopDurationMs > 0 &&
+      !hasAlternateDetectedEndpoints &&
+      isRateLimitProxyFailure(options?.statusCode, options?.errorMsg);
 
     await tx.model.update({
       where: { id: modelId },

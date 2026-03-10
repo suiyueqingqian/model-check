@@ -35,6 +35,7 @@ import {
 import {
   getOpenAIEndpointOrder,
   shouldPreferChatCompletionsForModel,
+  shouldTryChatFallbackForResponsesModel,
 } from "@/lib/utils/model-name";
 import { createAsyncErrorHandler, isExpectedCloseError, logWarn } from "@/lib/utils/error";
 
@@ -498,7 +499,11 @@ function buildAttemptList(
     }).map((endpoint) => attempts[endpoint]);
   }
 
-  if (!shouldTryChatFallback) {
+  const allowChatFallback =
+    shouldTryChatFallback ||
+    detectedEndpoints.includes("CHAT");
+
+  if (!allowChatFallback) {
     return [attempts.CODEX];
   }
 
@@ -695,7 +700,8 @@ export async function POST(request: NextRequest) {
     }
 
     const isStream = body.stream !== false;
-    const shouldTryChatFallback = preferChatCompletions;
+    const shouldTryChatFallback =
+      typeof modelName === "string" && shouldTryChatFallbackForResponsesModel(modelName);
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
     let finalFailureLog: {

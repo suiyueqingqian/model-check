@@ -3,7 +3,7 @@
 
 import { EndpointType } from "@/generated/prisma";
 import type { EndpointDetection } from "./types";
-import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
+import { getModelFamily, isGptFiveOrNewerModel, isResponsesCompatibleChatModel } from "@/lib/utils/model-name";
 
 // Default detection prompt
 const DETECT_PROMPT = process.env.DETECT_PROMPT || "1+1=2? yes or no";
@@ -13,24 +13,27 @@ const DETECT_PROMPT = process.env.DETECT_PROMPT || "1+1=2? yes or no";
  * Returns null if the model only supports CHAT
  */
 export function detectCliEndpointType(modelName: string): EndpointType | null {
-  const name = modelName.toLowerCase();
+  const family = getModelFamily(modelName);
 
-  // Models containing "codex" must use Responses API only
-  if (name.includes("codex")) {
+  if (family === "CODEX") {
     return EndpointType.CODEX;
   }
 
-  if (name.includes("claude")) {
+  if (family === "CLAUDE") {
     return EndpointType.CLAUDE;
   }
 
-  if (name.includes("gemini")) {
+  if (family === "GEMINI") {
     return EndpointType.GEMINI;
+  }
+
+  if (family === "GROK" || family === "QWEN") {
+    return EndpointType.CODEX;
   }
 
   // OpenAI Responses API (2025+):
   // gpt-5 及之后版本使用 Responses API，gpt-4o/o1/o3 等仍用 Chat Completions
-  if (isGptFiveOrNewerModel(name)) {
+  if (family === "GPT" && isGptFiveOrNewerModel(modelName)) {
     return EndpointType.CODEX;
   }
 
@@ -62,23 +65,26 @@ export function isImageModel(modelName: string): boolean {
  * Image models only test IMAGE endpoint, others test CHAT plus CLI endpoint if applicable
  */
 export function getEndpointsToTest(modelName: string): EndpointType[] {
-  const name = modelName.toLowerCase();
+  const family = getModelFamily(modelName);
 
-  // Any model containing "codex" should only test Responses endpoint
-  if (name.includes("codex")) {
+  if (family === "CODEX") {
     return [EndpointType.CODEX];
   }
 
-  if (name.includes("claude")) {
+  if (family === "CLAUDE") {
     return [EndpointType.CLAUDE];
   }
 
-  if (name.includes("gemini")) {
+  if (family === "GEMINI") {
     return [EndpointType.GEMINI];
   }
 
+  if (family === "GROK" || family === "QWEN") {
+    return [EndpointType.CHAT, EndpointType.CODEX];
+  }
+
   // gpt-5 及之后版本先测 Responses，再测 Chat
-  if (isGptFiveOrNewerModel(name)) {
+  if (family === "GPT" && isResponsesCompatibleChatModel(modelName)) {
     return [EndpointType.CODEX, EndpointType.CHAT];
   }
 

@@ -1,6 +1,7 @@
 const GPT_VERSION_REGEX = /gpt-?(\d+(?:\.\d+)?)/i;
 
 export type OpenAIProxyEndpoint = "CHAT" | "CODEX";
+export type ModelFamily = "CLAUDE" | "GEMINI" | "CODEX" | "GPT" | "GROK" | "QWEN" | "DEEPSEEK" | "GLM" | "OTHER";
 
 function getNormalizedModelName(modelName: string): string {
   const slashIndex = modelName.indexOf("/");
@@ -8,16 +9,79 @@ function getNormalizedModelName(modelName: string): string {
   return actualModelName.toLowerCase();
 }
 
+export function getModelFamily(modelName: string): ModelFamily {
+  const normalizedModelName = getNormalizedModelName(modelName);
+
+  if (normalizedModelName.includes("claude")) {
+    return "CLAUDE";
+  }
+
+  if (normalizedModelName.includes("gemini")) {
+    return "GEMINI";
+  }
+
+  if (normalizedModelName.includes("codex")) {
+    return "CODEX";
+  }
+
+  if (normalizedModelName.includes("grok")) {
+    return "GROK";
+  }
+
+  if (
+    normalizedModelName.includes("deepseek") ||
+    normalizedModelName.startsWith("ds-")
+  ) {
+    return "DEEPSEEK";
+  }
+
+  if (
+    normalizedModelName.startsWith("qwen") ||
+    normalizedModelName.startsWith("qwq") ||
+    normalizedModelName.startsWith("qvq")
+  ) {
+    return "QWEN";
+  }
+
+  if (
+    normalizedModelName.includes("chatglm") ||
+    normalizedModelName.startsWith("glm")
+  ) {
+    return "GLM";
+  }
+
+  if (
+    normalizedModelName.startsWith("gpt") ||
+    normalizedModelName.startsWith("o1") ||
+    normalizedModelName.startsWith("o3") ||
+    normalizedModelName.startsWith("o4")
+  ) {
+    return "GPT";
+  }
+
+  return "OTHER";
+}
+
 export function isCodexNamedModel(modelName: string): boolean {
-  return getNormalizedModelName(modelName).includes("codex");
+  return getModelFamily(modelName) === "CODEX";
 }
 
 export function shouldPreferChatCompletionsForModel(modelName: string): boolean {
-  const normalizedModelName = getNormalizedModelName(modelName);
-  return (
-    !normalizedModelName.includes("claude") &&
-    !normalizedModelName.includes("gemini")
-  );
+  const family = getModelFamily(modelName);
+
+  if (family === "CLAUDE" || family === "GEMINI" || family === "CODEX") {
+    return false;
+  }
+
+  if (family === "GROK" || family === "QWEN") {
+    return false;
+  }
+
+  if (family === "GPT") {
+    return !isGptFiveOrNewerModel(modelName);
+  }
+
+  return true;
 }
 
 export function getGptVersion(modelName: string): number | null {
@@ -40,16 +104,38 @@ export function isGptFiveOrNewerModel(modelName: string): boolean {
 }
 
 export function isResponsesCompatibleChatModel(modelName: string): boolean {
-  return isGptFiveOrNewerModel(modelName) && !isCodexNamedModel(modelName);
+  const family = getModelFamily(modelName);
+
+  return family === "GROK" ||
+    family === "QWEN" ||
+    (family === "GPT" && isGptFiveOrNewerModel(modelName));
 }
 
 export function shouldTryResponsesFallbackForChatModel(modelName: string): boolean {
-  return shouldPreferChatCompletionsForModel(modelName);
+  return isResponsesCompatibleChatModel(modelName);
 }
 
 export function shouldUseResponsesOnlyForChatModel(modelName: string): boolean {
-  void modelName;
-  return false;
+  return getModelFamily(modelName) === "CODEX";
+}
+
+export function shouldTryChatFallbackForResponsesModel(modelName: string): boolean {
+  const family = getModelFamily(modelName);
+  return family !== "CLAUDE" && family !== "GEMINI" && family !== "CODEX";
+}
+
+export function supportsOpenAIEndpointFallback(modelName: string): boolean {
+  const family = getModelFamily(modelName);
+  return family !== "CLAUDE" && family !== "GEMINI";
+}
+
+function getDetectedOpenAIEndpoints(detectedEndpoints: string[]): OpenAIProxyEndpoint[] {
+  const endpoints = detectedEndpoints.filter(
+    (endpoint): endpoint is OpenAIProxyEndpoint =>
+      endpoint === "CHAT" || endpoint === "CODEX"
+  );
+
+  return Array.from(new Set(endpoints));
 }
 
 export function getOpenAIEndpointOrder(options: {
@@ -73,37 +159,44 @@ export function getOpenAIEndpointOrder(options: {
     return [requestedEndpoint];
   }
 
-  if (shouldPreferChatCompletionsForModel(modelName)) {
-    return ["CHAT", "CODEX"];
-  }
-
   const alternateEndpoint: OpenAIProxyEndpoint =
     requestedEndpoint === "CHAT" ? "CODEX" : "CHAT";
+
+  const availableEndpoints = getDetectedOpenAIEndpoints(detectedEndpoints);
+  if (availableEndpoints.length > 0) {
+    const hasRequestedEndpoint = availableEndpoints.includes(requestedEndpoint);
+    const hasAlternateEndpoint = availableEndpoints.includes(alternateEndpoint);
+
+    if (forceRequestedFirst && hasRequestedEndpoint) {
+      return hasAlternateEndpoint
+        ? [requestedEndpoint, alternateEndpoint]
+        : [requestedEndpoint];
+    }
+
+    if (hasRequestedEndpoint && hasAlternateEndpoint) {
+      if (preferredEndpoint === alternateEndpoint) {
+        return [alternateEndpoint, requestedEndpoint];
+      }
+      return [requestedEndpoint, alternateEndpoint];
+    }
+
+    if (hasRequestedEndpoint) {
+      return [requestedEndpoint];
+    }
+
+    if (hasAlternateEndpoint) {
+      return [alternateEndpoint];
+    }
+
+    return [];
+  }
 
   if (forceRequestedFirst) {
     return [requestedEndpoint, alternateEndpoint];
   }
 
-  const availableEndpoints = new Set(
-    detectedEndpoints.filter(
-      (endpoint): endpoint is OpenAIProxyEndpoint =>
-        endpoint === "CHAT" || endpoint === "CODEX"
-    )
-  );
-
-  if (
-    availableEndpoints.has("CHAT") &&
-    availableEndpoints.has("CODEX")
-  ) {
-    return [requestedEndpoint, alternateEndpoint];
-  }
-
-  if (availableEndpoints.has(requestedEndpoint)) {
-    return [requestedEndpoint, alternateEndpoint];
-  }
-
-  if (availableEndpoints.has(alternateEndpoint)) {
-    return [alternateEndpoint, requestedEndpoint];
+  if (shouldPreferChatCompletionsForModel(modelName)) {
+    return ["CHAT", "CODEX"];
   }
 
   if (preferredEndpoint === alternateEndpoint) {

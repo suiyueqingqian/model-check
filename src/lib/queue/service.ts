@@ -3,7 +3,11 @@
 import prisma from "@/lib/prisma";
 import { getEndpointsToTest, fetchModels } from "@/lib/detection";
 import { EndpointType } from "@/generated/prisma";
-import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
+import {
+  getModelFamily,
+  isResponsesCompatibleChatModel,
+  shouldUseResponsesOnlyForChatModel,
+} from "@/lib/utils/model-name";
 import {
   addDetectionJobsBulk,
   createDetectionSession,
@@ -78,7 +82,6 @@ async function buildJobsForModels(
   }
 
   for (const model of models) {
-    const normalizedModelName = model.modelName.toLowerCase();
     const apiKey = model.channelKeyId && keyMap.has(model.channelKeyId)
       ? keyMap.get(model.channelKeyId)!
       : channel.apiKey;
@@ -86,15 +89,12 @@ async function buildJobsForModels(
     // 已有成功端点时只重新验证这些端点，不再尝试其他端点（节省资源）
     const detectedEndpoints = getValidDetectedEndpoints(model.detectedEndpoints);
     const defaultEndpointsToTest = getEndpointsToTest(model.modelName);
+    const family = getModelFamily(model.modelName);
     const shouldIgnoreDetectedEndpoints =
-      normalizedModelName.includes("claude") ||
-      normalizedModelName.includes("gemini") ||
-      (isGptFiveOrNewerModel(model.modelName) && !model.modelName.toLowerCase().includes("codex")) ||
-      (
-        defaultEndpointsToTest.length === 1 &&
-        defaultEndpointsToTest[0] === EndpointType.CODEX &&
-        normalizedModelName.includes("codex")
-      );
+      family === "CLAUDE" ||
+      family === "GEMINI" ||
+      isResponsesCompatibleChatModel(model.modelName) ||
+      shouldUseResponsesOnlyForChatModel(model.modelName);
     const endpointsToTest =
       detectedEndpoints.length > 0 && !shouldIgnoreDetectedEndpoints
         ? detectedEndpoints
