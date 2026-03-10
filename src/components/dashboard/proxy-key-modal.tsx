@@ -358,7 +358,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
 
         {/* Form */}
         <form onSubmit={handleSave} className="p-4 space-y-4">
-          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr),minmax(0,1.1fr)] gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-6">
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-1">
