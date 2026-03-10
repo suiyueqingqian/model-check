@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getProxyChannelCandidatesWithPermission,
   buildUpstreamHeaders,
+  markProxyChannelKeyUnavailable,
   proxyRequest,
   recordProxyModelResult,
   recordProxyRequestLog,
@@ -71,8 +72,16 @@ export async function POST(
       ...options,
     }).catch(handleWriteRequestLogError);
     const recordModelResult = (
-      ...args: Parameters<typeof recordProxyModelResult>
-    ) => recordProxyModelResult(...args).catch(handleRecordModelResultError);
+      modelId: Parameters<typeof recordProxyModelResult>[0],
+      endpointType: Parameters<typeof recordProxyModelResult>[1],
+      success: Parameters<typeof recordProxyModelResult>[2],
+      options?: Parameters<typeof recordProxyModelResult>[3],
+    ) => recordProxyModelResult(modelId, endpointType, success, {
+      ...options,
+      proxyKeyId: keyResult?.keyRecord?.id,
+      temporaryStopValue: keyResult?.keyRecord?.temporaryStopValue,
+      temporaryStopUnit: keyResult?.keyRecord?.temporaryStopUnit,
+    }).catch(handleRecordModelResultError);
 
     // Reconstruct the path from catch-all segments
     const { path } = await params;
@@ -186,17 +195,17 @@ export async function POST(
             errorMsg: lastErrorMessage,
           };
 
-          if (isUnifiedRouting && channel.modelId) {
+          if (channel.modelId) {
+            await markProxyChannelKeyUnavailable(channel.modelId, response.status, lastErrorMessage);
             pendingFailures.push({
               modelId: channel.modelId,
               latency,
               statusCode: response.status,
               errorMsg: lastErrorMessage,
             });
-            continue;
           }
 
-          return errorResponse(lastErrorMessage, lastStatus);
+          continue;
         }
 
         if (isStream) {
@@ -306,21 +315,20 @@ export async function POST(
           errorMsg: lastErrorMessage,
         };
 
-        if (isUnifiedRouting && channel.modelId) {
+        if (channel.modelId) {
           pendingFailures.push({
             modelId: channel.modelId,
             latency: Date.now() - startedAt,
             statusCode: 502,
             errorMsg: lastErrorMessage,
           });
-          continue;
         }
 
-        return errorResponse(lastErrorMessage, lastStatus);
+        continue;
       }
     }
 
-    if (isUnifiedRouting && pendingFailures.length > 0) {
+    if (pendingFailures.length > 0) {
       await Promise.all(
         pendingFailures.map((failure) =>
           recordModelResult(failure.modelId, "GEMINI", false, {
@@ -384,8 +392,16 @@ export async function GET(
       ...options,
     }).catch(handleWriteRequestLogError);
     const recordModelResult = (
-      ...args: Parameters<typeof recordProxyModelResult>
-    ) => recordProxyModelResult(...args).catch(handleRecordModelResultError);
+      modelId: Parameters<typeof recordProxyModelResult>[0],
+      endpointType: Parameters<typeof recordProxyModelResult>[1],
+      success: Parameters<typeof recordProxyModelResult>[2],
+      options?: Parameters<typeof recordProxyModelResult>[3],
+    ) => recordProxyModelResult(modelId, endpointType, success, {
+      ...options,
+      proxyKeyId: keyResult?.keyRecord?.id,
+      temporaryStopValue: keyResult?.keyRecord?.temporaryStopValue,
+      temporaryStopUnit: keyResult?.keyRecord?.temporaryStopUnit,
+    }).catch(handleRecordModelResultError);
 
     const { path } = await params;
     const modelName = path.join("/");
@@ -475,17 +491,17 @@ export async function GET(
             errorMsg: lastErrorMessage,
           };
 
-          if (isUnifiedRouting && channel.modelId) {
+          if (channel.modelId) {
+            await markProxyChannelKeyUnavailable(channel.modelId, response.status, lastErrorMessage);
             pendingFailures.push({
               modelId: channel.modelId,
               latency,
               statusCode: response.status,
               errorMsg: lastErrorMessage,
             });
-            continue;
           }
 
-          return errorResponse(lastErrorMessage, lastStatus);
+          continue;
         }
 
         const data = await response.json();
@@ -524,21 +540,20 @@ export async function GET(
           errorMsg: lastErrorMessage,
         };
 
-        if (isUnifiedRouting && channel.modelId) {
+        if (channel.modelId) {
           pendingFailures.push({
             modelId: channel.modelId,
             latency: Date.now() - startedAt,
             statusCode: 502,
             errorMsg: lastErrorMessage,
           });
-          continue;
         }
 
-        return errorResponse(lastErrorMessage, lastStatus);
+        continue;
       }
     }
 
-    if (isUnifiedRouting && pendingFailures.length > 0) {
+    if (pendingFailures.length > 0) {
       await Promise.all(
         pendingFailures.map((failure) =>
           recordModelResult(failure.modelId, "GEMINI", false, {

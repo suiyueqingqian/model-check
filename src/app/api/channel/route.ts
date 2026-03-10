@@ -289,8 +289,16 @@ export async function PUT(request: NextRequest) {
     // Build update data
     const updateData: Record<string, unknown> = {};
     if (name !== undefined) updateData.name = name;
-    if (baseUrl !== undefined) updateData.baseUrl = baseUrl.replace(/\/$/, "");
-    if (apiKey !== undefined) updateData.apiKey = apiKey;
+    if (baseUrl !== undefined) {
+      updateData.baseUrl = baseUrl.replace(/\/$/, "");
+      updateData.mainKeyLastValid = null;
+      updateData.mainKeyLastCheckedAt = null;
+    }
+    if (apiKey !== undefined) {
+      updateData.apiKey = apiKey;
+      updateData.mainKeyLastValid = null;
+      updateData.mainKeyLastCheckedAt = null;
+    }
     if (proxy !== undefined) updateData.proxy = proxy || null;
     if (enabled !== undefined) updateData.enabled = Boolean(enabled);
     if (keyMode !== undefined) updateData.keyMode = keyMode;
@@ -301,6 +309,16 @@ export async function PUT(request: NextRequest) {
         where: { id },
         data: updateData,
       });
+
+      if (baseUrl !== undefined) {
+        await tx.channelKey.updateMany({
+          where: { channelId: id },
+          data: {
+            lastValid: null,
+            lastCheckedAt: null,
+          },
+        });
+      }
 
       // Update keys for multi-key mode
       if (keyMode === "multi" && keys !== undefined && typeof keys === "string") {

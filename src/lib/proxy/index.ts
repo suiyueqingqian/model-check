@@ -30,6 +30,16 @@ const ROUND_ROBIN_MAX_KEYS = 10000;
 const ROUND_ROBIN_REDIS_PREFIX = "rr:";
 const ROUND_ROBIN_REDIS_TTL = 3600;
 let hasLoggedRoundRobinRedisFallback = false;
+const temporaryStopFallback = new Map<string, number>();
+const TEMPORARY_STOP_MAX_KEYS = 10000;
+const TEMPORARY_STOP_REDIS_PREFIX = "proxy-temp-stop:";
+let hasLoggedTemporaryStopRedisFallback = false;
+const TEMPORARY_STOP_UNIT_MS: Record<string, number> = {
+  second: 1000,
+  minute: 60_000,
+  hour: 3_600_000,
+  day: 86_400_000,
+};
 
 function evictRoundRobinCounters(): void {
   if (roundRobinCounters.size < ROUND_ROBIN_MAX_KEYS) return;
@@ -38,6 +48,23 @@ function evictRoundRobinCounters(): void {
   for (const key of roundRobinCounters.keys()) {
     if (i++ >= evictCount) break;
     roundRobinCounters.delete(key);
+  }
+}
+
+function evictTemporaryStopFallback(): void {
+  if (temporaryStopFallback.size < TEMPORARY_STOP_MAX_KEYS) return;
+  const now = Date.now();
+  for (const [key, expiresAt] of temporaryStopFallback.entries()) {
+    if (expiresAt <= now) {
+      temporaryStopFallback.delete(key);
+    }
+  }
+  if (temporaryStopFallback.size < TEMPORARY_STOP_MAX_KEYS) return;
+  const evictCount = Math.floor(temporaryStopFallback.size / 2);
+  let i = 0;
+  for (const key of temporaryStopFallback.keys()) {
+    if (i++ >= evictCount) break;
+    temporaryStopFallback.delete(key);
   }
 }
 
@@ -63,6 +90,92 @@ async function nextRoundRobin(counterKey: string): Promise<number> {
   const current = roundRobinCounters.get(counterKey) || 0;
   roundRobinCounters.set(counterKey, current + 1);
   return current;
+}
+
+function buildTemporaryStopKey(proxyKeyId: string, modelId: string): string {
+  return `${proxyKeyId}:${modelId}`;
+}
+
+function getTemporaryStopDurationMs(
+  temporaryStopValue?: number | null,
+  temporaryStopUnit?: string | null
+): number {
+  if (!temporaryStopValue || temporaryStopValue <= 0) {
+    return 0;
+  }
+  const unitMs = TEMPORARY_STOP_UNIT_MS[temporaryStopUnit || "minute"] ?? TEMPORARY_STOP_UNIT_MS.minute;
+  return temporaryStopValue * unitMs;
+}
+
+function getKeyTemporaryStopDurationMs(keyResult: ValidateKeyResult): number {
+  return getTemporaryStopDurationMs(
+    keyResult.keyRecord?.temporaryStopValue,
+    keyResult.keyRecord?.temporaryStopUnit
+  );
+}
+
+async function rememberTemporaryStoppedCandidate(
+  proxyKeyId: string,
+  modelId: string,
+  durationMs: number
+): Promise<void> {
+  if (durationMs <= 0) {
+    return;
+  }
+
+  const cacheKey = buildTemporaryStopKey(proxyKeyId, modelId);
+  const expiresAt = Date.now() + durationMs;
+
+  try {
+    const redis = getRedisClient();
+    const ttlSeconds = Math.max(1, Math.ceil(durationMs / 1000));
+    await redis.set(
+      `${TEMPORARY_STOP_REDIS_PREFIX}${cacheKey}`,
+      String(expiresAt),
+      "EX",
+      ttlSeconds
+    );
+    return;
+  } catch (error) {
+    if (!hasLoggedTemporaryStopRedisFallback) {
+      hasLoggedTemporaryStopRedisFallback = true;
+      logWarn("[Proxy] Redis 临时停用缓存不可用，已退回内存模式", error);
+    }
+  }
+
+  if (temporaryStopFallback.size >= TEMPORARY_STOP_MAX_KEYS) {
+    evictTemporaryStopFallback();
+  }
+  temporaryStopFallback.set(cacheKey, expiresAt);
+}
+
+async function isCandidateTemporarilyStopped(proxyKeyId: string, modelId: string): Promise<boolean> {
+  const cacheKey = buildTemporaryStopKey(proxyKeyId, modelId);
+
+  try {
+    const redis = getRedisClient();
+    const rawValue = await redis.get(`${TEMPORARY_STOP_REDIS_PREFIX}${cacheKey}`);
+    if (!rawValue) {
+      return false;
+    }
+    const expiresAt = Number(rawValue);
+    return Number.isFinite(expiresAt) && expiresAt > Date.now();
+  } catch (error) {
+    if (!hasLoggedTemporaryStopRedisFallback) {
+      hasLoggedTemporaryStopRedisFallback = true;
+      logWarn("[Proxy] Redis 临时停用缓存不可用，已退回内存模式", error);
+    }
+  }
+
+  const expiresAt = temporaryStopFallback.get(cacheKey);
+  if (!expiresAt) {
+    return false;
+  }
+  if (expiresAt <= Date.now()) {
+    temporaryStopFallback.delete(cacheKey);
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -161,6 +274,28 @@ export interface ProxyChannelCandidateResult {
   isUnifiedRouting: boolean;
   candidates: ProxyChannelCandidate[];
 }
+
+type RoutedModelRecord = {
+  id: string;
+  modelName: string;
+  detectedEndpoints: string[];
+  lastStatus: boolean | null;
+  preferredProxyEndpoint: string | null;
+  channel: {
+    id: string;
+    name: string;
+    baseUrl: string;
+    apiKey: string;
+    proxy: string | null;
+    mainKeyLastValid: boolean | null;
+    keyMode: string;
+    routeStrategy: string;
+  };
+  channelKey: {
+    apiKey: string;
+    lastValid: boolean | null;
+  } | null;
+};
 
 /**
  * Verify proxy API key from request (legacy sync version)
@@ -270,58 +405,115 @@ export async function recordProxyRequestLog(input: ProxyRequestLogInput): Promis
   });
 }
 
-/**
- * Find channel by model name
- * Supports both "modelName" and "channelName/modelName" formats
- * Returns the channel that contains the specified model
- * Supports multi-key routing (round_robin / random) and filters out invalid keys
- */
-export async function findChannelByModel(modelName: string, preferredEndpoint?: string): Promise<ProxyChannelCandidate | null> {
+const routedModelSelect = {
+  id: true,
+  modelName: true,
+  detectedEndpoints: true,
+  lastStatus: true,
+  preferredProxyEndpoint: true,
+  channel: {
+    select: {
+      id: true,
+      name: true,
+      baseUrl: true,
+      apiKey: true,
+      proxy: true,
+      mainKeyLastValid: true,
+      enabled: true,
+      sortOrder: true,
+      createdAt: true,
+      keyMode: true,
+      routeStrategy: true,
+    },
+  },
+  channelKey: {
+    select: {
+      apiKey: true,
+      lastValid: true,
+    },
+  },
+} satisfies Prisma.ModelSelect;
+
+function shuffleArray<T>(items: T[]): T[] {
+  const shuffled = [...items];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+function buildProxyChannelCandidate(
+  model: RoutedModelRecord,
+  actualModelName: string
+): ProxyChannelCandidate {
+  return {
+    channelId: model.channel.id,
+    channelName: model.channel.name,
+    baseUrl: model.channel.baseUrl.replace(/\/$/, ""),
+    apiKey: model.channelKey?.apiKey ?? model.channel.apiKey,
+    proxy: model.channel.proxy,
+    actualModelName,
+    modelId: model.id,
+    modelStatus: model.lastStatus,
+    detectedEndpoints: model.detectedEndpoints,
+    preferredProxyEndpoint:
+      model.preferredProxyEndpoint === "CHAT" || model.preferredProxyEndpoint === "CODEX"
+        ? model.preferredProxyEndpoint
+        : null,
+  };
+}
+
+function isCandidateKeyAvailable(model: RoutedModelRecord): boolean {
+  if (model.channelKey) {
+    return model.channelKey.lastValid !== false;
+  }
+  return model.channel.mainKeyLastValid !== false;
+}
+
+async function orderModelsWithinChannel(
+  counterKey: string,
+  group: RoutedModelRecord[]
+): Promise<RoutedModelRecord[]> {
+  if (group.length <= 1) {
+    return group;
+  }
+
+  if (group[0].channel.routeStrategy === "random") {
+    return shuffleArray(group);
+  }
+
+  const current = await nextRoundRobin(counterKey);
+  const startIndex = current % group.length;
+  return [
+    ...group.slice(startIndex),
+    ...group.slice(0, startIndex),
+  ];
+}
+
+async function fetchModelCandidatesByName(
+  modelName: string,
+  preferredEndpoint?: string
+): Promise<{
+  actualModelName: string;
+  validModels: RoutedModelRecord[];
+}> {
   let actualModelName = modelName;
 
-  // First, try exact match with full model name
-  // This handles models with "/" in their name (e.g., "meta-llama/Llama-3-70b")
   let models = await prisma.model.findMany({
     where: {
       modelName,
       channel: { enabled: true },
     },
-    select: {
-      id: true,
-      modelName: true,
-      detectedEndpoints: true,
-      lastStatus: true,
-      preferredProxyEndpoint: true,
-      channel: {
-        select: {
-          id: true,
-          name: true,
-          baseUrl: true,
-          apiKey: true,
-          proxy: true,
-          enabled: true,
-          sortOrder: true,
-          createdAt: true,
-          keyMode: true,
-          routeStrategy: true,
-        },
-      },
-      channelKey: {
-        select: {
-          apiKey: true,
-          lastValid: true,
-        },
-      },
-    },
+    select: routedModelSelect,
     orderBy: [
       { channel: { sortOrder: "asc" } },
       { channel: { createdAt: "desc" } },
       { id: "asc" },
     ],
     take: 200,
-  });
+  }) as RoutedModelRecord[];
 
-  // If no match and name contains "/", try "channelName/modelName" prefix format
   if (models.length === 0) {
     const slashIndex = modelName.indexOf("/");
     if (slashIndex > 0) {
@@ -334,111 +526,415 @@ export async function findChannelByModel(modelName: string, preferredEndpoint?: 
             name: modelName.slice(0, slashIndex),
           },
         },
-        select: {
-          id: true,
-          modelName: true,
-          detectedEndpoints: true,
-          lastStatus: true,
-          preferredProxyEndpoint: true,
-          channel: {
-            select: {
-              id: true,
-              name: true,
-              baseUrl: true,
-              apiKey: true,
-              proxy: true,
-              enabled: true,
-              sortOrder: true,
-              createdAt: true,
-              keyMode: true,
-              routeStrategy: true,
-            },
-          },
-          channelKey: {
-            select: {
-              apiKey: true,
-              lastValid: true,
-            },
-          },
-        },
+        select: routedModelSelect,
         orderBy: [
           { channel: { sortOrder: "asc" } },
           { channel: { createdAt: "desc" } },
           { id: "asc" },
         ],
         take: 200,
-      });
+      }) as RoutedModelRecord[];
     }
   }
 
   if (models.length === 0) {
-    return null;
+    return { actualModelName, validModels: [] };
   }
 
-  // Filter out models whose channelKey is explicitly invalid
-  // or model is not explicitly healthy.
   let validModels = models.filter((m) => {
-    if (m.channelKey && m.channelKey.lastValid === false) return false;
+    if (!isCandidateKeyAvailable(m)) return false;
     if (m.lastStatus !== true) return false;
     return true;
   });
 
-  if (validModels.length === 0) {
-    return null;
-  }
-
-  // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型
   if (preferredEndpoint && validModels.length > 0) {
     validModels = validModels.filter((m) =>
       supportsPreferredEndpoint(m.modelName, m.detectedEndpoints, preferredEndpoint)
     );
-    if (validModels.length === 0) {
-      return null;
-    }
   }
 
+  return { actualModelName, validModels };
+}
+
+async function getOrderedChannelCandidatesByModel(
+  modelName: string,
+  preferredEndpoint?: string
+): Promise<ProxyChannelCandidate[]> {
+  const { actualModelName, validModels } = await fetchModelCandidatesByName(modelName, preferredEndpoint);
   if (validModels.length === 0) {
-    return null;
+    return [];
   }
 
-  // Route within one channel only.
-  // If multiple channels have same model name, pick the first channel by configured order.
-  let selected;
   const primaryChannelId = validModels[0].channel.id;
   const sameChannelModels = validModels.filter((m) => m.channel.id === primaryChannelId);
-  const channel = sameChannelModels[0].channel;
+  const orderedModels = await orderModelsWithinChannel(
+    `${primaryChannelId}:${actualModelName}`,
+    sameChannelModels
+  );
 
-  if (channel.keyMode === "multi" && sameChannelModels.length > 1) {
-    if (channel.routeStrategy === "random") {
-      selected = sameChannelModels[Math.floor(Math.random() * sameChannelModels.length)];
-    } else {
-      // round_robin
-      const counterKey = `${channel.id}:${actualModelName}`;
-      const current = await nextRoundRobin(counterKey);
-      selected = sameChannelModels[current % sameChannelModels.length];
-    }
-  } else {
-    selected = sameChannelModels[0];
+  return orderedModels.map((model) => buildProxyChannelCandidate(model, actualModelName));
+}
+
+export async function markProxyChannelKeyUnavailable(
+  modelId: string,
+  statusCode?: number,
+  errorMsg?: string
+): Promise<void> {
+  if (!shouldDisableChannelCredential(statusCode, errorMsg)) {
+    return;
   }
 
-  // Use channelKey's apiKey if available, otherwise fall back to channel's default
-  const apiKey = selected.channelKey?.apiKey ?? selected.channel.apiKey;
+  try {
+    const model = await prisma.model.findUnique({
+      where: { id: modelId },
+      select: {
+        channelId: true,
+        channelKeyId: true,
+      },
+    });
 
-  return {
-    channelId: selected.channel.id,
-    channelName: selected.channel.name,
-    baseUrl: selected.channel.baseUrl.replace(/\/$/, ""),
-    apiKey,
-    proxy: selected.channel.proxy,
-    actualModelName,
-    modelId: selected.id,
-    modelStatus: selected.lastStatus,
-    detectedEndpoints: selected.detectedEndpoints,
-    preferredProxyEndpoint:
-      selected.preferredProxyEndpoint === "CHAT" || selected.preferredProxyEndpoint === "CODEX"
-        ? selected.preferredProxyEndpoint
-        : null,
-  };
+    if (!model) {
+      return;
+    }
+
+    const now = new Date();
+    if (model.channelKeyId) {
+      await prisma.channelKey.update({
+        where: { id: model.channelKeyId },
+        data: {
+          lastValid: false,
+          lastCheckedAt: now,
+        },
+      });
+      return;
+    }
+
+    await prisma.channel.update({
+      where: { id: model.channelId },
+      data: {
+        mainKeyLastValid: false,
+        mainKeyLastCheckedAt: now,
+      },
+    });
+  } catch (error) {
+    logWarn("[Proxy] 标记渠道 key 不可用失败", error);
+  }
+}
+
+function normalizeProxyErrorMessage(errorMsg?: string): string {
+  return (errorMsg || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function includesAnyPattern(message: string, patterns: string[]): boolean {
+  return patterns.some((pattern) => message.includes(pattern));
+}
+
+async function filterTemporarilyStoppedCandidates(
+  candidates: ProxyChannelCandidate[],
+  keyResult: ValidateKeyResult
+): Promise<ProxyChannelCandidate[]> {
+  const proxyKeyId = keyResult.keyRecord?.id;
+  const temporaryStopDurationMs = getKeyTemporaryStopDurationMs(keyResult);
+  if (!proxyKeyId || temporaryStopDurationMs <= 0 || candidates.length === 0) {
+    return candidates;
+  }
+
+  const filtered: ProxyChannelCandidate[] = [];
+  for (const candidate of candidates) {
+    if (!(await isCandidateTemporarilyStopped(proxyKeyId, candidate.modelId))) {
+      filtered.push(candidate);
+    }
+  }
+  return filtered;
+}
+
+function groupCandidatesByChannel(candidates: ProxyChannelCandidate[]): ProxyChannelCandidate[][] {
+  const channelGroups = new Map<string, ProxyChannelCandidate[]>();
+  for (const candidate of candidates) {
+    const group = channelGroups.get(candidate.channelId);
+    if (group) {
+      group.push(candidate);
+    } else {
+      channelGroups.set(candidate.channelId, [candidate]);
+    }
+  }
+  return Array.from(channelGroups.values());
+}
+
+function shouldDisableChannelCredential(statusCode?: number, errorMsg?: string): boolean {
+  const normalizedMessage = normalizeProxyErrorMessage(errorMsg);
+
+  if (statusCode === 401) {
+    return true;
+  }
+
+  const keyErrorPatterns = [
+    "invalid api key",
+    "incorrect api key",
+    "api key disabled",
+    "api key revoked",
+    "api key invalid",
+    "api key not found",
+    "api key has expired",
+    "api key expired",
+    "expired api key",
+    "expired api token",
+    "invalid x-api-key",
+    "invalid x-goog-api-key",
+    "invalid bearer token",
+    "invalid authorization",
+    "authentication failed",
+    "invalid authentication",
+    "invalid credentials",
+    "authentication credentials were not provided",
+    "authentication token is invalid",
+    "authentication token has expired",
+    "authentication token expired",
+    "invalid auth token",
+    "invalid access token",
+    "access token invalid",
+    "access token expired",
+    "token expired",
+    "token has expired",
+    "token is expired",
+    "invalid token",
+    "key has been compromised",
+    "api key has been blocked",
+    "api key is blocked",
+    "api key has been disabled",
+    "api key has been revoked",
+    "provided api key is invalid",
+    "provided api key has expired",
+    "provided api key is incorrect",
+    "api key is invalid",
+    "api key not valid",
+    "permission denied due to invalid api key",
+    "forbidden due to invalid api key",
+    "unauthenticated",
+    "not authenticated",
+    "authentication required",
+    "missing api key",
+    "missing authentication",
+    "missing access token",
+    "no api key found",
+    "revoked",
+    "invalid or missing api key",
+    "authentication_error",
+    "reported as leaked",
+    "leaked",
+    "invalid key",
+    "密钥无效",
+    "api 密钥无效",
+    "认证失败",
+    "鉴权失败",
+    "未认证",
+    "未授权",
+    "令牌无效",
+    "token 无效",
+    "token已过期",
+    "token 已过期",
+    "访问令牌无效",
+    "访问令牌已过期",
+    "密钥已过期",
+    "密钥已失效",
+    "密钥不存在",
+    "apikey无效",
+    "apikey 不存在",
+  ];
+
+  if (includesAnyPattern(normalizedMessage, keyErrorPatterns)) {
+    return true;
+  }
+
+  return false;
+}
+
+function shouldMarkModelUnavailable(statusCode?: number, errorMsg?: string): boolean {
+  const normalizedMessage = normalizeProxyErrorMessage(errorMsg);
+
+  if (shouldDisableChannelCredential(statusCode, errorMsg)) {
+    return false;
+  }
+
+  if (statusCode === 404) {
+    return true;
+  }
+
+  const modelNotFoundPatterns = [
+    "model not found",
+    "model_not_found",
+    "model not find",
+    "no such model",
+    "unknown model",
+    "unsupported model",
+    "model is not supported",
+    "model does not exist",
+    "requested resource could not be found",
+    "resource not found",
+    "not found for api version",
+    "endpoint not found",
+    "method not found",
+    "does not exist",
+    "publisher model is not enabled",
+    "publisher model is disabled",
+    "model has been deprecated",
+    "model is deprecated",
+    "model has been retired",
+    "model retired",
+    "模型不存在",
+    "模型未找到",
+    "模型不支持",
+    "模型已下线",
+    "模型已弃用",
+    "资源不存在",
+    "接口不存在",
+  ];
+
+  if (
+    includesAnyPattern(normalizedMessage, modelNotFoundPatterns) ||
+    (normalizedMessage.includes("models/") && normalizedMessage.includes("is not found")) ||
+    (normalizedMessage.includes("model ") && normalizedMessage.includes(" not found")) ||
+    (normalizedMessage.includes("resource ") && normalizedMessage.includes(" not found"))
+  ) {
+    return true;
+  }
+
+  const modelPermissionPatterns = [
+    "permission_error",
+    "does not have permission to use the specified resource",
+    "you do not have permission to access the requested resource",
+    "you do not have access to this model",
+    "you do not have access to the model",
+    "not allowed to use this model",
+    "not allowed to access this model",
+    "model is not available for your account",
+    "model is not available in your region",
+    "model is unavailable in your region",
+    "project is not allowed to use model",
+    "project does not have access to model",
+    "must be a member of an organization to use the api",
+    "ip not authorized",
+    "country, region, or territory not supported",
+    "unsupported country",
+    "unsupported region",
+    "free tier is not available in your country",
+    "user location is not supported for the api use",
+    "access denied for model",
+    "没有权限访问该模型",
+    "没有权限使用该模型",
+    "模型无权限",
+    "地区不可用",
+    "区域不可用",
+  ];
+
+  if (includesAnyPattern(normalizedMessage, modelPermissionPatterns)) {
+    return true;
+  }
+
+  return false;
+}
+
+function isTransientProxyFailure(statusCode?: number, errorMsg?: string): boolean {
+  const normalizedMessage = normalizeProxyErrorMessage(errorMsg);
+
+  if (statusCode === 429 || statusCode === 408 || statusCode === 409 || statusCode === 425 || statusCode === 499 || statusCode === 502 || statusCode === 503 || statusCode === 504 || statusCode === 529) {
+    return true;
+  }
+
+  if (statusCode !== undefined && statusCode >= 500) {
+    return true;
+  }
+
+  const transientPatterns = [
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "quota exceeded",
+    "insufficient_quota",
+    "insufficient quota",
+    "exceeded your current quota",
+    "overloaded",
+    "overloaded_error",
+    "temporarily unavailable",
+    "please try again later",
+    "upstream 429",
+    "upstream error: 429",
+    "upstream error: 500",
+    "upstream error: 502",
+    "upstream error: 503",
+    "upstream error: 504",
+    "proxy error:",
+    "fetch failed",
+    "socket hang up",
+    "econnreset",
+    "etimedout",
+    "timeout",
+    "timed out",
+    "network error",
+    "connection reset",
+    "connection aborted",
+    "connection refused",
+    "temporarily blocked",
+    "cloudflare",
+    "cf-ray",
+    "<html",
+    "<!doctype html",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "requests are too frequent",
+    "请求过多",
+    "额度不足",
+    "配额不足",
+    "服务繁忙",
+    "暂时不可用",
+    "网络错误",
+    "超时",
+  ];
+
+  return includesAnyPattern(normalizedMessage, transientPatterns);
+}
+
+function shouldUpdateModelAvailability(success: boolean, statusCode?: number, errorMsg?: string): boolean {
+  if (success) {
+    return true;
+  }
+
+  if (shouldDisableChannelCredential(statusCode, errorMsg)) {
+    return false;
+  }
+
+  if (shouldMarkModelUnavailable(statusCode, errorMsg)) {
+    return true;
+  }
+
+  if (isTransientProxyFailure(statusCode, errorMsg)) {
+    return false;
+  }
+
+  return false;
+}
+
+function shouldRemoveModelEndpoint(success: boolean, endpointType: ProxyEndpointType, detectedEndpoints: string[], statusCode?: number, errorMsg?: string): boolean {
+  if (success || !detectedEndpoints.includes(endpointType)) {
+    return false;
+  }
+
+  return shouldMarkModelUnavailable(statusCode, errorMsg);
+}
+
+/**
+ * Find channel by model name
+ * Supports both "modelName" and "channelName/modelName" formats
+ * Returns the channel that contains the specified model
+ * Supports multi-key routing (round_robin / random) and filters out invalid keys
+ */
+export async function findChannelByModel(modelName: string, preferredEndpoint?: string): Promise<ProxyChannelCandidate | null> {
+  const candidates = await getOrderedChannelCandidatesByModel(modelName, preferredEndpoint);
+  return candidates[0] ?? null;
 }
 
 /**
@@ -456,33 +952,7 @@ async function getUnifiedModelCandidates(
       channel: { enabled: true },
       lastStatus: true,
     },
-    select: {
-      id: true,
-      modelName: true,
-      detectedEndpoints: true,
-      lastStatus: true,
-      preferredProxyEndpoint: true,
-      channel: {
-        select: {
-          id: true,
-          name: true,
-          baseUrl: true,
-          apiKey: true,
-          proxy: true,
-          enabled: true,
-          sortOrder: true,
-          createdAt: true,
-          keyMode: true,
-          routeStrategy: true,
-        },
-      },
-      channelKey: {
-        select: {
-          apiKey: true,
-          lastValid: true,
-        },
-      },
-    },
+    select: routedModelSelect,
     orderBy: [
       { channel: { sortOrder: "asc" } },
       { channel: { createdAt: "desc" } },
@@ -492,10 +962,7 @@ async function getUnifiedModelCandidates(
   });
 
   // 过滤掉 channelKey 明确无效的
-  const validModels = models.filter((m) => {
-    if (m.channelKey && m.channelKey.lastValid === false) return false;
-    return true;
-  });
+  const validModels = models.filter((m) => isCandidateKeyAvailable(m));
 
   // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型（有回退）
   let endpointFiltered = validModels;
@@ -538,7 +1005,7 @@ async function getUnifiedModelCandidates(
     }
   }
 
-  // 同渠道多 key 按 routeStrategy 做组内负载均衡，每个渠道只出一个候选
+  // 同渠道多 key 全部进入候选列表，组内顺序按 routeStrategy 排
   const channelGroups = new Map<string, typeof permittedModels>();
   for (const m of permittedModels) {
     const group = channelGroups.get(m.channel.id);
@@ -549,37 +1016,15 @@ async function getUnifiedModelCandidates(
     }
   }
 
-  const balancedModels: typeof permittedModels = [];
+  const orderedCandidates: ProxyChannelCandidate[] = [];
   for (const [channelId, group] of channelGroups) {
-    if (group.length <= 1) {
-      balancedModels.push(...group);
-    } else {
-      const strategy = group[0].channel.routeStrategy;
-      if (strategy === "random") {
-        balancedModels.push(group[Math.floor(Math.random() * group.length)]);
-      } else {
-        const rrKey = `unified:${channelId}:${modelName}`;
-        const idx = await nextRoundRobin(rrKey);
-        balancedModels.push(group[idx % group.length]);
-      }
-    }
+    const orderedModels = await orderModelsWithinChannel(`unified:${channelId}:${modelName}`, group);
+    orderedCandidates.push(
+      ...orderedModels.map((selected) => buildProxyChannelCandidate(selected, modelName))
+    );
   }
 
-  return balancedModels.map((selected) => ({
-    channelId: selected.channel.id,
-    channelName: selected.channel.name,
-    baseUrl: selected.channel.baseUrl.replace(/\/$/, ""),
-    apiKey: selected.channelKey?.apiKey ?? selected.channel.apiKey,
-    proxy: selected.channel.proxy,
-    actualModelName: modelName,
-    modelId: selected.id,
-    modelStatus: selected.lastStatus,
-    detectedEndpoints: selected.detectedEndpoints,
-    preferredProxyEndpoint:
-      selected.preferredProxyEndpoint === "CHAT" || selected.preferredProxyEndpoint === "CODEX"
-        ? selected.preferredProxyEndpoint
-        : null,
-  }));
+  return orderedCandidates;
 }
 
 async function orderUnifiedCandidatesRoundRobin(
@@ -593,12 +1038,31 @@ async function orderUnifiedCandidatesRoundRobin(
 
   const counterKey = `unified:${preferredEndpoint || "ANY"}:${modelName}`;
   const current = await nextRoundRobin(counterKey);
-  const startIndex = current % candidates.length;
-
+  const groupedCandidates = groupCandidatesByChannel(candidates);
+  const startIndex = current % groupedCandidates.length;
   return [
-    ...candidates.slice(startIndex),
-    ...candidates.slice(0, startIndex),
-  ];
+    ...groupedCandidates.slice(startIndex),
+    ...groupedCandidates.slice(0, startIndex),
+  ].flat();
+}
+
+function orderUnifiedCandidatesRandom(candidates: ProxyChannelCandidate[]): ProxyChannelCandidate[] {
+  if (candidates.length <= 1) {
+    return candidates;
+  }
+  return shuffleArray(groupCandidatesByChannel(candidates)).flat();
+}
+
+async function orderUnifiedCandidates(
+  modelName: string,
+  preferredEndpoint: string | undefined,
+  candidates: ProxyChannelCandidate[],
+  strategy: string | undefined
+): Promise<ProxyChannelCandidate[]> {
+  if ((strategy || "round_robin") === "random") {
+    return orderUnifiedCandidatesRandom(candidates);
+  }
+  return orderUnifiedCandidatesRoundRobin(modelName, preferredEndpoint, candidates);
 }
 
 async function findChannelByUnifiedModel(
@@ -606,12 +1070,22 @@ async function findChannelByUnifiedModel(
   keyResult: ValidateKeyResult,
   preferredEndpoint?: string
 ): Promise<ProxyChannelCandidate | null> {
-  const candidates = await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint);
+  const candidates = await filterTemporarilyStoppedCandidates(
+    await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint),
+    keyResult
+  );
   if (candidates.length === 0) {
     return null;
   }
 
-  return (await orderUnifiedCandidatesRoundRobin(modelName, preferredEndpoint, candidates))[0];
+  return (
+    await orderUnifiedCandidates(
+      modelName,
+      preferredEndpoint,
+      candidates,
+      keyResult.keyRecord?.unifiedRouteStrategy
+    )
+  )[0];
 }
 
 /**
@@ -629,27 +1103,30 @@ export async function findChannelByModelWithPermission(
     return findChannelByUnifiedModel(modelName, keyResult, preferredEndpoint);
   }
 
-  const channel = await findChannelByModel(modelName, preferredEndpoint);
-
-  if (!channel) {
-    return null;
-  }
-
-  // Check permission
-  const hasPermission = await canAccessModel(
-    keyResult.keyRecord,
-    keyResult.isEnvKey,
-    channel.channelId,
-    channel.modelId,
-    channel.modelStatus,
-    channel.actualModelName
+  const candidates = await filterTemporarilyStoppedCandidates(
+    await getOrderedChannelCandidatesByModel(modelName, preferredEndpoint),
+    keyResult
   );
-
-  if (!hasPermission) {
+  if (candidates.length === 0) {
     return null;
   }
 
-  return channel;
+  for (const candidate of candidates) {
+    const hasPermission = await canAccessModel(
+      keyResult.keyRecord,
+      keyResult.isEnvKey,
+      candidate.channelId,
+      candidate.modelId,
+      candidate.modelStatus,
+      candidate.actualModelName
+    );
+
+    if (hasPermission) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 export async function getProxyChannelCandidatesWithPermission(
@@ -660,17 +1137,41 @@ export async function getProxyChannelCandidatesWithPermission(
   const isUnifiedRouting = keyResult.keyRecord?.unifiedMode === true && !modelName.includes("/");
 
   if (isUnifiedRouting) {
-    const candidates = await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint);
+    const candidates = await filterTemporarilyStoppedCandidates(
+      await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint),
+      keyResult
+    );
     return {
       isUnifiedRouting: true,
-      candidates: await orderUnifiedCandidatesRoundRobin(modelName, preferredEndpoint, candidates),
+      candidates: await orderUnifiedCandidates(
+        modelName,
+        preferredEndpoint,
+        candidates,
+        keyResult.keyRecord?.unifiedRouteStrategy
+      ),
     };
   }
 
-  const channel = await findChannelByModelWithPermission(modelName, keyResult, preferredEndpoint);
+  const candidates = await getOrderedChannelCandidatesByModel(modelName, preferredEndpoint);
+  const permittedCandidates: ProxyChannelCandidate[] = [];
+  for (const candidate of candidates) {
+    const hasPermission = await canAccessModel(
+      keyResult.keyRecord,
+      keyResult.isEnvKey,
+      candidate.channelId,
+      candidate.modelId,
+      candidate.modelStatus,
+      candidate.actualModelName
+    );
+
+    if (hasPermission) {
+      permittedCandidates.push(candidate);
+    }
+  }
+
   return {
     isUnifiedRouting: false,
-    candidates: channel ? [channel] : [],
+    candidates: await filterTemporarilyStoppedCandidates(permittedCandidates, keyResult),
   };
 }
 
@@ -685,14 +1186,27 @@ export async function recordProxyModelResult(
     statusCode?: number;
     errorMsg?: string;
     responseContent?: string;
+    proxyKeyId?: string;
+    temporaryStopValue?: number;
+    temporaryStopUnit?: string;
   }
 ): Promise<void> {
   const now = new Date();
+  const temporaryStopDurationMs = getTemporaryStopDurationMs(
+    options?.temporaryStopValue,
+    options?.temporaryStopUnit
+  );
+  const shouldTemporaryStop = !success &&
+    !!options?.proxyKeyId &&
+    temporaryStopDurationMs > 0 &&
+    isTransientProxyFailure(options?.statusCode, options?.errorMsg);
 
   await prisma.$transaction(async (tx) => {
     const currentModel = await tx.model.findUnique({
       where: { id: modelId },
       select: {
+        channelId: true,
+        channelKeyId: true,
         modelName: true,
         detectedEndpoints: true,
       },
@@ -712,16 +1226,19 @@ export async function recordProxyModelResult(
         )
       : [];
 
-    // 按状态码分级决定是否更新 lastStatus：
-    // 成功 / 5xx / 401/403/404 → 更新（模型或渠道真有问题）
-    // 400/422/429 等其他 4xx → 可能是用户侧问题，不更新
-    const shouldUpdateStatus = success || !options?.statusCode ||
-      (options.statusCode >= 500) ||
-      [401, 403, 404].includes(options.statusCode);
+    const shouldUpdateStatus = shouldUpdateModelAvailability(
+      success,
+      options?.statusCode,
+      options?.errorMsg
+    );
 
-    const shouldRemoveFailedEndpoint = !success &&
-      [401, 403, 404].includes(options?.statusCode ?? 0) &&
-      currentDetectedEndpoints.includes(endpointType);
+    const shouldRemoveFailedEndpoint = shouldRemoveModelEndpoint(
+      success,
+      endpointType,
+      currentDetectedEndpoints,
+      options?.statusCode,
+      options?.errorMsg
+    );
 
     const nextDetectedEndpoints = shouldRemoveFailedEndpoint
       ? currentDetectedEndpoints.filter((endpoint) => endpoint !== endpointType)
@@ -732,6 +1249,26 @@ export async function recordProxyModelResult(
       : isGptDualEndpointModel && alternateDetectedEndpoints.length > 0
         ? true
         : false;
+
+    if (!success && shouldDisableChannelCredential(options?.statusCode, options?.errorMsg) && currentModel) {
+      if (currentModel.channelKeyId) {
+        await tx.channelKey.update({
+          where: { id: currentModel.channelKeyId },
+          data: {
+            lastValid: false,
+            lastCheckedAt: now,
+          },
+        });
+      } else {
+        await tx.channel.update({
+          where: { id: currentModel.channelId },
+          data: {
+            mainKeyLastValid: false,
+            mainKeyLastCheckedAt: now,
+          },
+        });
+      }
+    }
 
     await tx.model.update({
       where: { id: modelId },
@@ -780,6 +1317,14 @@ export async function recordProxyModelResult(
       },
     });
   });
+
+  if (shouldTemporaryStop) {
+    await rememberTemporaryStoppedCandidate(
+      options!.proxyKeyId!,
+      modelId,
+      temporaryStopDurationMs
+    );
+  }
 }
 
 export async function rememberPreferredProxyEndpoint(
@@ -813,7 +1358,12 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
     { lastStatus: true },
     {
       OR: [
-        { channelKeyId: null },
+        {
+          AND: [
+            { channelKeyId: null },
+            { channel: { mainKeyLastValid: { not: false } } },
+          ],
+        },
         { channelKey: { is: { lastValid: { not: false } } } },
       ],
     },

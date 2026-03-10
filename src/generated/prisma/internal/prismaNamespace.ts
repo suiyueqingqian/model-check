@@ -1048,6 +1048,8 @@ export const ChannelScalarFieldEnum = {
   baseUrl: 'baseUrl',
   apiKey: 'apiKey',
   proxy: 'proxy',
+  mainKeyLastValid: 'mainKeyLastValid',
+  mainKeyLastCheckedAt: 'mainKeyLastCheckedAt',
   enabled: 'enabled',
   sortOrder: 'sortOrder',
   keyMode: 'keyMode',
@@ -1119,6 +1121,9 @@ export const ProxyKeyScalarFieldEnum = {
   allowedModelIds: 'allowedModelIds',
   unifiedMode: 'unifiedMode',
   allowedUnifiedModels: 'allowedUnifiedModels',
+  temporaryStopValue: 'temporaryStopValue',
+  temporaryStopUnit: 'temporaryStopUnit',
+  unifiedRouteStrategy: 'unifiedRouteStrategy',
   lastUsedAt: 'lastUsedAt',
   usageCount: 'usageCount',
   createdAt: 'createdAt',
@@ -1245,20 +1250,6 @@ export type BooleanFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel,
 
 
 /**
- * Reference to a field of type 'Int'
- */
-export type IntFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Int'>
-    
-
-
-/**
- * Reference to a field of type 'Int[]'
- */
-export type ListIntFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Int[]'>
-    
-
-
-/**
  * Reference to a field of type 'DateTime'
  */
 export type DateTimeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'DateTime'>
@@ -1269,6 +1260,20 @@ export type DateTimeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel
  * Reference to a field of type 'DateTime[]'
  */
 export type ListDateTimeFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'DateTime[]'>
+    
+
+
+/**
+ * Reference to a field of type 'Int'
+ */
+export type IntFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Int'>
+    
+
+
+/**
+ * Reference to a field of type 'Int[]'
+ */
+export type ListIntFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'Int[]'>
     
 
 

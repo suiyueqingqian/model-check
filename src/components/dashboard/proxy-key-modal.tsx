@@ -19,6 +19,9 @@ interface ProxyKeyData {
   allowedModelIds: string[] | null;
   unifiedMode?: boolean;
   allowedUnifiedModels?: string[] | null;
+  temporaryStopValue?: number;
+  temporaryStopUnit?: "second" | "minute" | "hour" | "day";
+  unifiedRouteStrategy?: "round_robin" | "random";
   source?: "database" | "builtin" | "env" | "auto";
 }
 
@@ -51,6 +54,9 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
   const [selectedUnifiedModels, setSelectedUnifiedModels] = useState<string[]>([]);
   const [loadingUnifiedModels, setLoadingUnifiedModels] = useState(false);
   const [unifiedSearchQuery, setUnifiedSearchQuery] = useState("");
+  const [temporaryStopValue, setTemporaryStopValue] = useState(10);
+  const [temporaryStopUnit, setTemporaryStopUnit] = useState<"second" | "minute" | "hour" | "day">("minute");
+  const [unifiedRouteStrategy, setUnifiedRouteStrategy] = useState<"round_robin" | "random">("round_robin");
 
   // Copy state
   const [copied, setCopied] = useState(false);
@@ -145,6 +151,9 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
       setSelectedUnifiedModels(
         Array.isArray(editingKey.allowedUnifiedModels) ? editingKey.allowedUnifiedModels : []
       );
+      setTemporaryStopValue(editingKey.temporaryStopValue ?? 10);
+      setTemporaryStopUnit(editingKey.temporaryStopUnit ?? "minute");
+      setUnifiedRouteStrategy(editingKey.unifiedRouteStrategy ?? "round_robin");
     } else {
       setName("");
       setEnabled(true);
@@ -153,6 +162,9 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
       setSelectedModelIds({});
       setUnifiedMode(true);
       setSelectedUnifiedModels([]);
+      setTemporaryStopValue(10);
+      setTemporaryStopUnit("minute");
+      setUnifiedRouteStrategy("round_robin");
       // Auto-generate a key
       handleGenerateKey();
     }
@@ -246,6 +258,9 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
                   allowedModelIds: allowAllModels ? null : (effectiveModelIds.length > 0 ? effectiveModelIds : null),
                   unifiedMode,
                   allowedUnifiedModels: unifiedMode && !allowAllModels ? (selectedUnifiedModels.length > 0 ? selectedUnifiedModels : null) : null,
+                  temporaryStopValue,
+                  temporaryStopUnit,
+                  unifiedRouteStrategy,
                 }
               : {
                   enabled,
@@ -254,6 +269,9 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
                   allowedModelIds: allowAllModels ? null : (effectiveModelIds.length > 0 ? effectiveModelIds : null),
                   unifiedMode,
                   allowedUnifiedModels: unifiedMode && !allowAllModels ? (selectedUnifiedModels.length > 0 ? selectedUnifiedModels : null) : null,
+                  temporaryStopValue,
+                  temporaryStopUnit,
+                  unifiedRouteStrategy,
                 }),
           }),
         });
@@ -280,6 +298,9 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
             allowedModelIds: allowAllModels ? null : (effectiveModelIds.length > 0 ? effectiveModelIds : null),
             unifiedMode,
             allowedUnifiedModels: unifiedMode && !allowAllModels ? (selectedUnifiedModels.length > 0 ? selectedUnifiedModels : null) : null,
+            temporaryStopValue,
+            temporaryStopUnit,
+            unifiedRouteStrategy,
           }),
         });
 
@@ -406,6 +427,34 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
               />
             </button>
           </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-1">临时停止时长</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={temporaryStopValue}
+                onChange={(e) => setTemporaryStopValue(Math.max(0, Number.parseInt(e.target.value || "0", 10) || 0))}
+                className="min-w-0 flex-1 px-3 py-2 rounded-md border border-input bg-background text-sm"
+                placeholder="0 表示关闭"
+              />
+              <select
+                value={temporaryStopUnit}
+                onChange={(e) => setTemporaryStopUnit(e.target.value as "second" | "minute" | "hour" | "day")}
+                className="w-28 shrink-0 px-3 py-2 rounded-md border border-input bg-background text-sm"
+              >
+                <option value="second">秒</option>
+                <option value="minute">分钟</option>
+                <option value="hour">小时</option>
+                <option value="day">天</option>
+              </select>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground -mt-2">
+            临时异常命中后，当前代理 key 下的候选会暂停这么久；填 0 就是不启用临时停止
+          </p>
 
           <div>
             <label className="block text-sm font-medium mb-2">访问权限</label>
@@ -542,6 +591,39 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
                 )}
               />
             </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">统一模式渠道策略</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setUnifiedRouteStrategy("round_robin")}
+                className={cn(
+                  "px-3 py-2 rounded-md border text-sm transition-colors",
+                  unifiedRouteStrategy === "round_robin"
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-input hover:bg-accent"
+                )}
+              >
+                轮询
+              </button>
+              <button
+                type="button"
+                onClick={() => setUnifiedRouteStrategy("random")}
+                className={cn(
+                  "px-3 py-2 rounded-md border text-sm transition-colors",
+                  unifiedRouteStrategy === "random"
+                    ? "border-primary bg-primary/10 text-primary"
+                    : "border-input hover:bg-accent"
+                )}
+              >
+                随机
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              只影响统一模型模式下，同名模型跨渠道时的候选顺序
+            </p>
           </div>
 
           {/* Actions */}

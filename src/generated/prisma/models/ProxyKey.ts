@@ -27,10 +27,12 @@ export type AggregateProxyKey = {
 }
 
 export type ProxyKeyAvgAggregateOutputType = {
+  temporaryStopValue: number | null
   usageCount: number | null
 }
 
 export type ProxyKeySumAggregateOutputType = {
+  temporaryStopValue: number | null
   usageCount: number | null
 }
 
@@ -41,6 +43,9 @@ export type ProxyKeyMinAggregateOutputType = {
   enabled: boolean | null
   allowAllModels: boolean | null
   unifiedMode: boolean | null
+  temporaryStopValue: number | null
+  temporaryStopUnit: string | null
+  unifiedRouteStrategy: string | null
   lastUsedAt: Date | null
   usageCount: number | null
   createdAt: Date | null
@@ -54,6 +59,9 @@ export type ProxyKeyMaxAggregateOutputType = {
   enabled: boolean | null
   allowAllModels: boolean | null
   unifiedMode: boolean | null
+  temporaryStopValue: number | null
+  temporaryStopUnit: string | null
+  unifiedRouteStrategy: string | null
   lastUsedAt: Date | null
   usageCount: number | null
   createdAt: Date | null
@@ -70,6 +78,9 @@ export type ProxyKeyCountAggregateOutputType = {
   allowedModelIds: number
   unifiedMode: number
   allowedUnifiedModels: number
+  temporaryStopValue: number
+  temporaryStopUnit: number
+  unifiedRouteStrategy: number
   lastUsedAt: number
   usageCount: number
   createdAt: number
@@ -79,10 +90,12 @@ export type ProxyKeyCountAggregateOutputType = {
 
 
 export type ProxyKeyAvgAggregateInputType = {
+  temporaryStopValue?: true
   usageCount?: true
 }
 
 export type ProxyKeySumAggregateInputType = {
+  temporaryStopValue?: true
   usageCount?: true
 }
 
@@ -93,6 +106,9 @@ export type ProxyKeyMinAggregateInputType = {
   enabled?: true
   allowAllModels?: true
   unifiedMode?: true
+  temporaryStopValue?: true
+  temporaryStopUnit?: true
+  unifiedRouteStrategy?: true
   lastUsedAt?: true
   usageCount?: true
   createdAt?: true
@@ -106,6 +122,9 @@ export type ProxyKeyMaxAggregateInputType = {
   enabled?: true
   allowAllModels?: true
   unifiedMode?: true
+  temporaryStopValue?: true
+  temporaryStopUnit?: true
+  unifiedRouteStrategy?: true
   lastUsedAt?: true
   usageCount?: true
   createdAt?: true
@@ -122,6 +141,9 @@ export type ProxyKeyCountAggregateInputType = {
   allowedModelIds?: true
   unifiedMode?: true
   allowedUnifiedModels?: true
+  temporaryStopValue?: true
+  temporaryStopUnit?: true
+  unifiedRouteStrategy?: true
   lastUsedAt?: true
   usageCount?: true
   createdAt?: true
@@ -225,6 +247,9 @@ export type ProxyKeyGroupByOutputType = {
   allowedModelIds: runtime.JsonValue | null
   unifiedMode: boolean
   allowedUnifiedModels: runtime.JsonValue | null
+  temporaryStopValue: number
+  temporaryStopUnit: string
+  unifiedRouteStrategy: string
   lastUsedAt: Date | null
   usageCount: number
   createdAt: Date
@@ -264,6 +289,9 @@ export type ProxyKeyWhereInput = {
   allowedModelIds?: Prisma.JsonNullableFilter<"ProxyKey">
   unifiedMode?: Prisma.BoolFilter<"ProxyKey"> | boolean
   allowedUnifiedModels?: Prisma.JsonNullableFilter<"ProxyKey">
+  temporaryStopValue?: Prisma.IntFilter<"ProxyKey"> | number
+  temporaryStopUnit?: Prisma.StringFilter<"ProxyKey"> | string
+  unifiedRouteStrategy?: Prisma.StringFilter<"ProxyKey"> | string
   lastUsedAt?: Prisma.DateTimeNullableFilter<"ProxyKey"> | Date | string | null
   usageCount?: Prisma.IntFilter<"ProxyKey"> | number
   createdAt?: Prisma.DateTimeFilter<"ProxyKey"> | Date | string
@@ -281,6 +309,9 @@ export type ProxyKeyOrderByWithRelationInput = {
   allowedModelIds?: Prisma.SortOrderInput | Prisma.SortOrder
   unifiedMode?: Prisma.SortOrder
   allowedUnifiedModels?: Prisma.SortOrderInput | Prisma.SortOrder
+  temporaryStopValue?: Prisma.SortOrder
+  temporaryStopUnit?: Prisma.SortOrder
+  unifiedRouteStrategy?: Prisma.SortOrder
   lastUsedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   usageCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -301,6 +332,9 @@ export type ProxyKeyWhereUniqueInput = Prisma.AtLeast<{
   allowedModelIds?: Prisma.JsonNullableFilter<"ProxyKey">
   unifiedMode?: Prisma.BoolFilter<"ProxyKey"> | boolean
   allowedUnifiedModels?: Prisma.JsonNullableFilter<"ProxyKey">
+  temporaryStopValue?: Prisma.IntFilter<"ProxyKey"> | number
+  temporaryStopUnit?: Prisma.StringFilter<"ProxyKey"> | string
+  unifiedRouteStrategy?: Prisma.StringFilter<"ProxyKey"> | string
   lastUsedAt?: Prisma.DateTimeNullableFilter<"ProxyKey"> | Date | string | null
   usageCount?: Prisma.IntFilter<"ProxyKey"> | number
   createdAt?: Prisma.DateTimeFilter<"ProxyKey"> | Date | string
@@ -318,6 +352,9 @@ export type ProxyKeyOrderByWithAggregationInput = {
   allowedModelIds?: Prisma.SortOrderInput | Prisma.SortOrder
   unifiedMode?: Prisma.SortOrder
   allowedUnifiedModels?: Prisma.SortOrderInput | Prisma.SortOrder
+  temporaryStopValue?: Prisma.SortOrder
+  temporaryStopUnit?: Prisma.SortOrder
+  unifiedRouteStrategy?: Prisma.SortOrder
   lastUsedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   usageCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -342,6 +379,9 @@ export type ProxyKeyScalarWhereWithAggregatesInput = {
   allowedModelIds?: Prisma.JsonNullableWithAggregatesFilter<"ProxyKey">
   unifiedMode?: Prisma.BoolWithAggregatesFilter<"ProxyKey"> | boolean
   allowedUnifiedModels?: Prisma.JsonNullableWithAggregatesFilter<"ProxyKey">
+  temporaryStopValue?: Prisma.IntWithAggregatesFilter<"ProxyKey"> | number
+  temporaryStopUnit?: Prisma.StringWithAggregatesFilter<"ProxyKey"> | string
+  unifiedRouteStrategy?: Prisma.StringWithAggregatesFilter<"ProxyKey"> | string
   lastUsedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"ProxyKey"> | Date | string | null
   usageCount?: Prisma.IntWithAggregatesFilter<"ProxyKey"> | number
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"ProxyKey"> | Date | string
@@ -358,6 +398,9 @@ export type ProxyKeyCreateInput = {
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   unifiedMode?: boolean
   allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  temporaryStopValue?: number
+  temporaryStopUnit?: string
+  unifiedRouteStrategy?: string
   lastUsedAt?: Date | string | null
   usageCount?: number
   createdAt?: Date | string
@@ -375,6 +418,9 @@ export type ProxyKeyUncheckedCreateInput = {
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   unifiedMode?: boolean
   allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  temporaryStopValue?: number
+  temporaryStopUnit?: string
+  unifiedRouteStrategy?: string
   lastUsedAt?: Date | string | null
   usageCount?: number
   createdAt?: Date | string
@@ -392,6 +438,9 @@ export type ProxyKeyUpdateInput = {
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
   allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  temporaryStopValue?: Prisma.IntFieldUpdateOperationsInput | number
+  temporaryStopUnit?: Prisma.StringFieldUpdateOperationsInput | string
+  unifiedRouteStrategy?: Prisma.StringFieldUpdateOperationsInput | string
   lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -409,6 +458,9 @@ export type ProxyKeyUncheckedUpdateInput = {
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
   allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  temporaryStopValue?: Prisma.IntFieldUpdateOperationsInput | number
+  temporaryStopUnit?: Prisma.StringFieldUpdateOperationsInput | string
+  unifiedRouteStrategy?: Prisma.StringFieldUpdateOperationsInput | string
   lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -426,6 +478,9 @@ export type ProxyKeyCreateManyInput = {
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   unifiedMode?: boolean
   allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  temporaryStopValue?: number
+  temporaryStopUnit?: string
+  unifiedRouteStrategy?: string
   lastUsedAt?: Date | string | null
   usageCount?: number
   createdAt?: Date | string
@@ -442,6 +497,9 @@ export type ProxyKeyUpdateManyMutationInput = {
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
   allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  temporaryStopValue?: Prisma.IntFieldUpdateOperationsInput | number
+  temporaryStopUnit?: Prisma.StringFieldUpdateOperationsInput | string
+  unifiedRouteStrategy?: Prisma.StringFieldUpdateOperationsInput | string
   lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -458,6 +516,9 @@ export type ProxyKeyUncheckedUpdateManyInput = {
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
   allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  temporaryStopValue?: Prisma.IntFieldUpdateOperationsInput | number
+  temporaryStopUnit?: Prisma.StringFieldUpdateOperationsInput | string
+  unifiedRouteStrategy?: Prisma.StringFieldUpdateOperationsInput | string
   lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -474,6 +535,9 @@ export type ProxyKeyCountOrderByAggregateInput = {
   allowedModelIds?: Prisma.SortOrder
   unifiedMode?: Prisma.SortOrder
   allowedUnifiedModels?: Prisma.SortOrder
+  temporaryStopValue?: Prisma.SortOrder
+  temporaryStopUnit?: Prisma.SortOrder
+  unifiedRouteStrategy?: Prisma.SortOrder
   lastUsedAt?: Prisma.SortOrder
   usageCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -481,6 +545,7 @@ export type ProxyKeyCountOrderByAggregateInput = {
 }
 
 export type ProxyKeyAvgOrderByAggregateInput = {
+  temporaryStopValue?: Prisma.SortOrder
   usageCount?: Prisma.SortOrder
 }
 
@@ -491,6 +556,9 @@ export type ProxyKeyMaxOrderByAggregateInput = {
   enabled?: Prisma.SortOrder
   allowAllModels?: Prisma.SortOrder
   unifiedMode?: Prisma.SortOrder
+  temporaryStopValue?: Prisma.SortOrder
+  temporaryStopUnit?: Prisma.SortOrder
+  unifiedRouteStrategy?: Prisma.SortOrder
   lastUsedAt?: Prisma.SortOrder
   usageCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -504,6 +572,9 @@ export type ProxyKeyMinOrderByAggregateInput = {
   enabled?: Prisma.SortOrder
   allowAllModels?: Prisma.SortOrder
   unifiedMode?: Prisma.SortOrder
+  temporaryStopValue?: Prisma.SortOrder
+  temporaryStopUnit?: Prisma.SortOrder
+  unifiedRouteStrategy?: Prisma.SortOrder
   lastUsedAt?: Prisma.SortOrder
   usageCount?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
@@ -511,6 +582,7 @@ export type ProxyKeyMinOrderByAggregateInput = {
 }
 
 export type ProxyKeySumOrderByAggregateInput = {
+  temporaryStopValue?: Prisma.SortOrder
   usageCount?: Prisma.SortOrder
 }
 
@@ -545,6 +617,9 @@ export type ProxyKeyCreateWithoutProxyRequestLogsInput = {
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   unifiedMode?: boolean
   allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  temporaryStopValue?: number
+  temporaryStopUnit?: string
+  unifiedRouteStrategy?: string
   lastUsedAt?: Date | string | null
   usageCount?: number
   createdAt?: Date | string
@@ -561,6 +636,9 @@ export type ProxyKeyUncheckedCreateWithoutProxyRequestLogsInput = {
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   unifiedMode?: boolean
   allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  temporaryStopValue?: number
+  temporaryStopUnit?: string
+  unifiedRouteStrategy?: string
   lastUsedAt?: Date | string | null
   usageCount?: number
   createdAt?: Date | string
@@ -593,6 +671,9 @@ export type ProxyKeyUpdateWithoutProxyRequestLogsInput = {
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
   allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  temporaryStopValue?: Prisma.IntFieldUpdateOperationsInput | number
+  temporaryStopUnit?: Prisma.StringFieldUpdateOperationsInput | string
+  unifiedRouteStrategy?: Prisma.StringFieldUpdateOperationsInput | string
   lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -609,6 +690,9 @@ export type ProxyKeyUncheckedUpdateWithoutProxyRequestLogsInput = {
   allowedModelIds?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   unifiedMode?: Prisma.BoolFieldUpdateOperationsInput | boolean
   allowedUnifiedModels?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  temporaryStopValue?: Prisma.IntFieldUpdateOperationsInput | number
+  temporaryStopUnit?: Prisma.StringFieldUpdateOperationsInput | string
+  unifiedRouteStrategy?: Prisma.StringFieldUpdateOperationsInput | string
   lastUsedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   usageCount?: Prisma.IntFieldUpdateOperationsInput | number
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -656,6 +740,9 @@ export type ProxyKeySelect<ExtArgs extends runtime.Types.Extensions.InternalArgs
   allowedModelIds?: boolean
   unifiedMode?: boolean
   allowedUnifiedModels?: boolean
+  temporaryStopValue?: boolean
+  temporaryStopUnit?: boolean
+  unifiedRouteStrategy?: boolean
   lastUsedAt?: boolean
   usageCount?: boolean
   createdAt?: boolean
@@ -674,6 +761,9 @@ export type ProxyKeySelectCreateManyAndReturn<ExtArgs extends runtime.Types.Exte
   allowedModelIds?: boolean
   unifiedMode?: boolean
   allowedUnifiedModels?: boolean
+  temporaryStopValue?: boolean
+  temporaryStopUnit?: boolean
+  unifiedRouteStrategy?: boolean
   lastUsedAt?: boolean
   usageCount?: boolean
   createdAt?: boolean
@@ -690,6 +780,9 @@ export type ProxyKeySelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Exte
   allowedModelIds?: boolean
   unifiedMode?: boolean
   allowedUnifiedModels?: boolean
+  temporaryStopValue?: boolean
+  temporaryStopUnit?: boolean
+  unifiedRouteStrategy?: boolean
   lastUsedAt?: boolean
   usageCount?: boolean
   createdAt?: boolean
@@ -706,13 +799,16 @@ export type ProxyKeySelectScalar = {
   allowedModelIds?: boolean
   unifiedMode?: boolean
   allowedUnifiedModels?: boolean
+  temporaryStopValue?: boolean
+  temporaryStopUnit?: boolean
+  unifiedRouteStrategy?: boolean
   lastUsedAt?: boolean
   usageCount?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }
 
-export type ProxyKeyOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "key" | "enabled" | "allowAllModels" | "allowedChannelIds" | "allowedModelIds" | "unifiedMode" | "allowedUnifiedModels" | "lastUsedAt" | "usageCount" | "createdAt" | "updatedAt", ExtArgs["result"]["proxyKey"]>
+export type ProxyKeyOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "key" | "enabled" | "allowAllModels" | "allowedChannelIds" | "allowedModelIds" | "unifiedMode" | "allowedUnifiedModels" | "temporaryStopValue" | "temporaryStopUnit" | "unifiedRouteStrategy" | "lastUsedAt" | "usageCount" | "createdAt" | "updatedAt", ExtArgs["result"]["proxyKey"]>
 export type ProxyKeyInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   proxyRequestLogs?: boolean | Prisma.ProxyKey$proxyRequestLogsArgs<ExtArgs>
   _count?: boolean | Prisma.ProxyKeyCountOutputTypeDefaultArgs<ExtArgs>
@@ -735,6 +831,9 @@ export type $ProxyKeyPayload<ExtArgs extends runtime.Types.Extensions.InternalAr
     allowedModelIds: runtime.JsonValue | null
     unifiedMode: boolean
     allowedUnifiedModels: runtime.JsonValue | null
+    temporaryStopValue: number
+    temporaryStopUnit: string
+    unifiedRouteStrategy: string
     lastUsedAt: Date | null
     usageCount: number
     createdAt: Date
@@ -1172,6 +1271,9 @@ export interface ProxyKeyFieldRefs {
   readonly allowedModelIds: Prisma.FieldRef<"ProxyKey", 'Json'>
   readonly unifiedMode: Prisma.FieldRef<"ProxyKey", 'Boolean'>
   readonly allowedUnifiedModels: Prisma.FieldRef<"ProxyKey", 'Json'>
+  readonly temporaryStopValue: Prisma.FieldRef<"ProxyKey", 'Int'>
+  readonly temporaryStopUnit: Prisma.FieldRef<"ProxyKey", 'String'>
+  readonly unifiedRouteStrategy: Prisma.FieldRef<"ProxyKey", 'String'>
   readonly lastUsedAt: Prisma.FieldRef<"ProxyKey", 'DateTime'>
   readonly usageCount: Prisma.FieldRef<"ProxyKey", 'Int'>
   readonly createdAt: Prisma.FieldRef<"ProxyKey", 'DateTime'>

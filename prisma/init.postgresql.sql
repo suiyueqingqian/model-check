@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS "channels" (
   "base_url" VARCHAR(500) NOT NULL,
   "api_key" TEXT NOT NULL,
   "proxy" VARCHAR(500),
+  "main_key_last_valid" BOOLEAN,
+  "main_key_last_checked_at" TIMESTAMP(3),
   "enabled" BOOLEAN NOT NULL DEFAULT true,
   "sort_order" INTEGER NOT NULL DEFAULT 0,
   "key_mode" TEXT NOT NULL DEFAULT 'single',
@@ -118,6 +120,9 @@ CREATE TABLE IF NOT EXISTS "proxy_keys" (
   "allowed_model_ids" JSONB,
   "unified_mode" BOOLEAN NOT NULL DEFAULT false,
   "allowed_unified_models" JSONB,
+  "temporary_stop_value" INTEGER NOT NULL DEFAULT 10,
+  "temporary_stop_unit" VARCHAR(20) NOT NULL DEFAULT 'minute',
+  "unified_route_strategy" VARCHAR(20) NOT NULL DEFAULT 'round_robin',
   "last_used_at" TIMESTAMP(3),
   "usage_count" INTEGER NOT NULL DEFAULT 0,
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -165,6 +170,8 @@ CREATE TABLE IF NOT EXISTS "proxy_request_logs" (
 
 -- channels: 后加的排序字段
 ALTER TABLE "channels" ADD COLUMN IF NOT EXISTS "proxy" VARCHAR(500);
+ALTER TABLE "channels" ADD COLUMN IF NOT EXISTS "main_key_last_valid" BOOLEAN;
+ALTER TABLE "channels" ADD COLUMN IF NOT EXISTS "main_key_last_checked_at" TIMESTAMP(3);
 ALTER TABLE "channels" ADD COLUMN IF NOT EXISTS "sort_order" INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE "channels" ADD COLUMN IF NOT EXISTS "key_mode" TEXT NOT NULL DEFAULT 'single';
 ALTER TABLE "channels" ADD COLUMN IF NOT EXISTS "route_strategy" TEXT NOT NULL DEFAULT 'round_robin';
@@ -175,6 +182,11 @@ ALTER TABLE "channel_keys" ADD COLUMN IF NOT EXISTS "last_valid" BOOLEAN;
 ALTER TABLE "channel_keys" ADD COLUMN IF NOT EXISTS "last_checked_at" TIMESTAMP(3);
 ALTER TABLE "channel_keys" ADD COLUMN IF NOT EXISTS "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
 ALTER TABLE "channel_keys" ADD COLUMN IF NOT EXISTS "updated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+-- proxy_keys: 代理 key 路由配置字段
+ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "temporary_stop_value" INTEGER NOT NULL DEFAULT 10;
+ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "temporary_stop_unit" VARCHAR(20) NOT NULL DEFAULT 'minute';
+ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "unified_route_strategy" VARCHAR(20) NOT NULL DEFAULT 'round_robin';
 
 -- models: 后加的检测端点、状态字段
 ALTER TABLE "models" ADD COLUMN IF NOT EXISTS "detected_endpoints" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

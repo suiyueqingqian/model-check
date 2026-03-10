@@ -10,6 +10,9 @@ import {
   maskKey,
 } from "@/lib/utils/proxy-key";
 
+const TEMPORARY_STOP_UNITS = ["second", "minute", "hour", "day"] as const;
+const UNIFIED_ROUTE_STRATEGIES = ["round_robin", "random"] as const;
+
 // GET /api/proxy-keys - List all proxy keys
 export async function GET(request: NextRequest) {
   const authError = requireAuth(request);
@@ -32,6 +35,9 @@ export async function GET(request: NextRequest) {
         allowedModelIds: true,
         unifiedMode: true,
         allowedUnifiedModels: true,
+        temporaryStopValue: true,
+        temporaryStopUnit: true,
+        unifiedRouteStrategy: true,
         lastUsedAt: true,
         usageCount: true,
         createdAt: true,
@@ -61,6 +67,9 @@ export async function GET(request: NextRequest) {
       allowedModelIds: builtInKey.allowedModelIds,
       unifiedMode: builtInKey.unifiedMode,
       allowedUnifiedModels: builtInKey.allowedUnifiedModels,
+      temporaryStopValue: builtInKey.temporaryStopValue,
+      temporaryStopUnit: builtInKey.temporaryStopUnit,
+      unifiedRouteStrategy: builtInKey.unifiedRouteStrategy,
       lastUsedAt: builtInKey.lastUsedAt,
       usageCount: builtInKey.usageCount,
       createdAt: builtInKey.createdAt,
@@ -93,6 +102,9 @@ export async function POST(request: NextRequest) {
       allowedModelIds,
       unifiedMode = true,
       allowedUnifiedModels,
+      temporaryStopValue = 10,
+      temporaryStopUnit = "minute",
+      unifiedRouteStrategy = "round_robin",
     } = body;
 
     if (!name || typeof name !== "string" || name.trim().length === 0) {
@@ -121,6 +133,35 @@ export async function POST(request: NextRequest) {
     if (allowedUnifiedModels != null && !isStringArray(allowedUnifiedModels)) {
       return NextResponse.json(
         { error: "allowedUnifiedModels must be a string array", code: "INVALID_TYPE" },
+        { status: 400 }
+      );
+    }
+    if (
+      typeof temporaryStopValue !== "number" ||
+      !Number.isFinite(temporaryStopValue) ||
+      temporaryStopValue < 0 ||
+      !Number.isInteger(temporaryStopValue)
+    ) {
+      return NextResponse.json(
+        { error: "temporaryStopValue must be a non-negative integer", code: "INVALID_TYPE" },
+        { status: 400 }
+      );
+    }
+    if (
+      typeof temporaryStopUnit !== "string" ||
+      !(TEMPORARY_STOP_UNITS as readonly string[]).includes(temporaryStopUnit)
+    ) {
+      return NextResponse.json(
+        { error: "temporaryStopUnit is invalid", code: "INVALID_ENUM" },
+        { status: 400 }
+      );
+    }
+    if (
+      typeof unifiedRouteStrategy !== "string" ||
+      !(UNIFIED_ROUTE_STRATEGIES as readonly string[]).includes(unifiedRouteStrategy)
+    ) {
+      return NextResponse.json(
+        { error: "unifiedRouteStrategy is invalid", code: "INVALID_ENUM" },
         { status: 400 }
       );
     }
@@ -167,6 +208,9 @@ export async function POST(request: NextRequest) {
         allowedModelIds: allowedModelIds ?? null,
         unifiedMode,
         allowedUnifiedModels: allowedUnifiedModels ?? null,
+        temporaryStopValue,
+        temporaryStopUnit,
+        unifiedRouteStrategy,
       },
     });
 
@@ -182,6 +226,9 @@ export async function POST(request: NextRequest) {
         allowedModelIds: proxyKey.allowedModelIds,
         unifiedMode: proxyKey.unifiedMode,
         allowedUnifiedModels: proxyKey.allowedUnifiedModels,
+        temporaryStopValue: proxyKey.temporaryStopValue,
+        temporaryStopUnit: proxyKey.temporaryStopUnit,
+        unifiedRouteStrategy: proxyKey.unifiedRouteStrategy,
         createdAt: proxyKey.createdAt,
       },
     });

@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getProxyChannelCandidatesWithPermission,
   buildUpstreamHeaders,
+  markProxyChannelKeyUnavailable,
   proxyRequest,
   recordProxyModelResult,
   recordProxyRequestLog,
@@ -567,8 +568,16 @@ export async function POST(request: NextRequest) {
       ...options,
     }).catch(handleWriteRequestLogError);
     const recordModelResult = (
-      ...args: Parameters<typeof recordProxyModelResult>
-    ) => recordProxyModelResult(...args).catch(handleRecordModelResultError);
+      modelId: Parameters<typeof recordProxyModelResult>[0],
+      endpointType: Parameters<typeof recordProxyModelResult>[1],
+      success: Parameters<typeof recordProxyModelResult>[2],
+      options?: Parameters<typeof recordProxyModelResult>[3],
+    ) => recordProxyModelResult(modelId, endpointType, success, {
+      ...options,
+      proxyKeyId: keyResult?.keyRecord?.id,
+      temporaryStopValue: keyResult?.keyRecord?.temporaryStopValue,
+      temporaryStopUnit: keyResult?.keyRecord?.temporaryStopUnit,
+    }).catch(handleRecordModelResultError);
     const savePreferredProxyEndpoint = (
       ...args: Parameters<typeof rememberPreferredProxyEndpoint>
     ) => rememberPreferredProxyEndpoint(...args).catch(handlePreferredEndpointError);
@@ -686,6 +695,7 @@ export async function POST(request: NextRequest) {
           };
 
           if (channel.modelId) {
+            await markProxyChannelKeyUnavailable(channel.modelId, result.data.statusCode, result.data.errorMsg);
             pendingFailures.push({
               modelId: channel.modelId,
               endpointType: attempt.endpointType,

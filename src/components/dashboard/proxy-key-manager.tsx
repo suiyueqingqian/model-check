@@ -34,6 +34,9 @@ interface ProxyKeyData {
   allowedModelIds: string[] | null;
   unifiedMode?: boolean;
   allowedUnifiedModels?: string[] | null;
+  temporaryStopValue?: number;
+  temporaryStopUnit?: "second" | "minute" | "hour" | "day";
+  unifiedRouteStrategy?: "round_robin" | "random";
   lastUsedAt: string | null;
   usageCount: number;
   createdAt: string;
@@ -247,6 +250,18 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
     });
   };
 
+  const formatTemporaryStop = (value?: number, unit?: "second" | "minute" | "hour" | "day"): string => {
+    if (!value) return "关闭";
+    const unitLabel = unit === "second"
+      ? "秒"
+      : unit === "hour"
+        ? "小时"
+        : unit === "day"
+          ? "天"
+          : "分钟";
+    return `${value}${unitLabel}`;
+  };
+
   return (
     <div className={cn("rounded-lg border border-border bg-card", className)}>
       {/* Header */}
@@ -298,20 +313,20 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
               暂无代理密钥，点击上方按钮添加
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {keys.map((key) => {
                 const isBuiltIn = key.source === "builtin" || key.source === "env" || key.source === "auto";
                 return (
                 <div
                   key={key.id}
                   className={cn(
-                    "flex flex-col p-3 rounded-md border bg-background",
+                    "flex h-full flex-col p-3 rounded-md border bg-background",
                     !key.enabled && "border-red-500/30 bg-red-500/5",
                     isBuiltIn && key.enabled && "border-blue-500/30 bg-blue-500/5"
                   )}
                 >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
                       <span className={cn("font-medium truncate", !key.enabled && "text-muted-foreground")}>
                         {key.name}
                       </span>
@@ -360,10 +375,14 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
                     {key.key}
                   </div>
 
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                     <span>
                       {key.allowAllModels ? "所有模型" : "自定义权限"}
                     </span>
+                    <span>临停: {formatTemporaryStop(key.temporaryStopValue, key.temporaryStopUnit)}</span>
+                    {key.unifiedMode && (
+                      <span>统一策略: {key.unifiedRouteStrategy === "random" ? "随机" : "轮询"}</span>
+                    )}
                     {!isBuiltIn && (
                       <>
                         <span>使用 {key.usageCount} 次</span>
@@ -375,7 +394,7 @@ export function ProxyKeyManager({ className }: ProxyKeyManagerProps) {
                     )}
                   </div>
 
-                  <div className="flex items-center gap-1 mt-3 pt-2 border-t border-border">
+                  <div className="flex flex-wrap items-center gap-1 mt-3 pt-2 border-t border-border">
                     <button
                       onClick={() => handleCopy(key.id)}
                       disabled={copyingId === key.id}

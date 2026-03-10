@@ -11,6 +11,9 @@ import {
   maskKey,
 } from "@/lib/utils/proxy-key";
 
+const TEMPORARY_STOP_UNITS = ["second", "minute", "hour", "day"] as const;
+const UNIFIED_ROUTE_STRATEGIES = ["round_robin", "random"] as const;
+
 // GET /api/proxy-keys/[id] - Get a specific proxy key (with full key)
 export async function GET(
   request: NextRequest,
@@ -36,6 +39,9 @@ export async function GET(
           allowedModelIds: builtInKey.allowedModelIds,
           unifiedMode: builtInKey.unifiedMode,
           allowedUnifiedModels: builtInKey.allowedUnifiedModels,
+          temporaryStopValue: builtInKey.temporaryStopValue,
+          temporaryStopUnit: builtInKey.temporaryStopUnit,
+          unifiedRouteStrategy: builtInKey.unifiedRouteStrategy,
           source: builtInKey.source,
         },
       });
@@ -81,12 +87,59 @@ export async function PUT(
       allowedModelIds,
       unifiedMode,
       allowedUnifiedModels,
+      temporaryStopValue,
+      temporaryStopUnit,
+      unifiedRouteStrategy,
     } = body;
+
+    if (
+      temporaryStopValue !== undefined &&
+      (
+        typeof temporaryStopValue !== "number" ||
+        !Number.isFinite(temporaryStopValue) ||
+        temporaryStopValue < 0 ||
+        !Number.isInteger(temporaryStopValue)
+      )
+    ) {
+      return NextResponse.json(
+        { error: "temporaryStopValue must be a non-negative integer", code: "INVALID_TYPE" },
+        { status: 400 }
+      );
+    }
+
+    if (
+      temporaryStopUnit !== undefined &&
+      (
+        typeof temporaryStopUnit !== "string" ||
+        !(TEMPORARY_STOP_UNITS as readonly string[]).includes(temporaryStopUnit)
+      )
+    ) {
+      return NextResponse.json(
+        { error: "temporaryStopUnit is invalid", code: "INVALID_ENUM" },
+        { status: 400 }
+      );
+    }
+
+    if (
+      unifiedRouteStrategy !== undefined &&
+      (
+        typeof unifiedRouteStrategy !== "string" ||
+        !(UNIFIED_ROUTE_STRATEGIES as readonly string[]).includes(unifiedRouteStrategy)
+      )
+    ) {
+      return NextResponse.json(
+        { error: "unifiedRouteStrategy is invalid", code: "INVALID_ENUM" },
+        { status: 400 }
+      );
+    }
 
     if (id === BUILTIN_PROXY_KEY_ROUTE_ID) {
       const normalizedKey = typeof key === "string" ? key.trim() : "";
       const normalizedAllowAllModels = allowAllModels !== undefined ? Boolean(allowAllModels) : true;
       const normalizedUnifiedMode = unifiedMode !== undefined ? Boolean(unifiedMode) : true;
+      const normalizedTemporaryStopValue = temporaryStopValue !== undefined ? temporaryStopValue : 10;
+      const normalizedTemporaryStopUnit = temporaryStopUnit !== undefined ? temporaryStopUnit : "minute";
+      const normalizedUnifiedRouteStrategy = unifiedRouteStrategy !== undefined ? unifiedRouteStrategy : "round_robin";
 
       if (!name || typeof name !== "string" || name.trim().length === 0) {
         return NextResponse.json(
@@ -133,6 +186,9 @@ export async function PUT(
             normalizedUnifiedMode && !normalizedAllowAllModels
               ? (allowedUnifiedModels ?? Prisma.JsonNull)
               : Prisma.JsonNull,
+          temporaryStopValue: normalizedTemporaryStopValue,
+          temporaryStopUnit: normalizedTemporaryStopUnit,
+          unifiedRouteStrategy: normalizedUnifiedRouteStrategy,
         },
         create: {
           id: BUILTIN_PROXY_KEY_DB_ID,
@@ -147,6 +203,9 @@ export async function PUT(
             normalizedUnifiedMode && !normalizedAllowAllModels
               ? (allowedUnifiedModels ?? Prisma.JsonNull)
               : Prisma.JsonNull,
+          temporaryStopValue: normalizedTemporaryStopValue,
+          temporaryStopUnit: normalizedTemporaryStopUnit,
+          unifiedRouteStrategy: normalizedUnifiedRouteStrategy,
         },
       });
 
@@ -162,6 +221,9 @@ export async function PUT(
           allowedModelIds: builtInKey.allowedModelIds,
           unifiedMode: builtInKey.unifiedMode,
           allowedUnifiedModels: builtInKey.allowedUnifiedModels,
+          temporaryStopValue: builtInKey.temporaryStopValue,
+          temporaryStopUnit: builtInKey.temporaryStopUnit,
+          unifiedRouteStrategy: builtInKey.unifiedRouteStrategy,
           source: "builtin",
           updatedAt: builtInKey.updatedAt,
         },
@@ -189,6 +251,9 @@ export async function PUT(
     if (allowedModelIds !== undefined) updateData.allowedModelIds = allowedModelIds === null ? Prisma.JsonNull : allowedModelIds;
     if (unifiedMode !== undefined) updateData.unifiedMode = unifiedMode;
     if (allowedUnifiedModels !== undefined) updateData.allowedUnifiedModels = allowedUnifiedModels === null ? Prisma.JsonNull : allowedUnifiedModels;
+    if (temporaryStopValue !== undefined) updateData.temporaryStopValue = temporaryStopValue;
+    if (temporaryStopUnit !== undefined) updateData.temporaryStopUnit = temporaryStopUnit;
+    if (unifiedRouteStrategy !== undefined) updateData.unifiedRouteStrategy = unifiedRouteStrategy;
 
     // Handle key regeneration
     if (key !== undefined && typeof key === "string" && key.trim()) {
@@ -228,6 +293,9 @@ export async function PUT(
         allowedModelIds: updatedKey.allowedModelIds,
         unifiedMode: updatedKey.unifiedMode,
         allowedUnifiedModels: updatedKey.allowedUnifiedModels,
+        temporaryStopValue: updatedKey.temporaryStopValue,
+        temporaryStopUnit: updatedKey.temporaryStopUnit,
+        unifiedRouteStrategy: updatedKey.unifiedRouteStrategy,
         updatedAt: updatedKey.updatedAt,
       },
     });

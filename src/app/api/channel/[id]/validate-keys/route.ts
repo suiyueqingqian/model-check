@@ -10,6 +10,22 @@ function maskKey(key: string): string {
   return "***";
 }
 
+async function updateKeyStatus(channelId: string, keyId: string | null, valid: boolean): Promise<void> {
+  const now = new Date();
+  if (keyId) {
+    await prisma.channelKey.update({
+      where: { id: keyId },
+      data: { lastValid: valid, lastCheckedAt: now },
+    });
+    return;
+  }
+
+  await prisma.channel.update({
+    where: { id: channelId },
+    data: { mainKeyLastValid: valid, mainKeyLastCheckedAt: now },
+  });
+}
+
 // POST /api/channel/[id]/validate-keys - Validate all keys and return model lists
 export async function POST(
   request: NextRequest,
@@ -51,13 +67,7 @@ export async function POST(
           const valid = !result.error;
           const models = result.models || [];
 
-          // Update ChannelKey status if it's a channel key
-          if (keyId) {
-            await prisma.channelKey.update({
-              where: { id: keyId },
-              data: { lastValid: valid, lastCheckedAt: new Date() },
-            });
-          }
+          await updateKeyStatus(id, keyId, valid);
 
           return {
             keyId,
@@ -68,12 +78,7 @@ export async function POST(
             error: result.error || undefined,
           };
         } catch (err) {
-          if (keyId) {
-            await prisma.channelKey.update({
-              where: { id: keyId },
-              data: { lastValid: false, lastCheckedAt: new Date() },
-            });
-          }
+          await updateKeyStatus(id, keyId, false);
           return {
             keyId,
             maskedKey: maskKey(apiKey),

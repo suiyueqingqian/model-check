@@ -40,6 +40,8 @@ export type ChannelMinAggregateOutputType = {
   baseUrl: string | null
   apiKey: string | null
   proxy: string | null
+  mainKeyLastValid: boolean | null
+  mainKeyLastCheckedAt: Date | null
   enabled: boolean | null
   sortOrder: number | null
   keyMode: string | null
@@ -54,6 +56,8 @@ export type ChannelMaxAggregateOutputType = {
   baseUrl: string | null
   apiKey: string | null
   proxy: string | null
+  mainKeyLastValid: boolean | null
+  mainKeyLastCheckedAt: Date | null
   enabled: boolean | null
   sortOrder: number | null
   keyMode: string | null
@@ -68,6 +72,8 @@ export type ChannelCountAggregateOutputType = {
   baseUrl: number
   apiKey: number
   proxy: number
+  mainKeyLastValid: number
+  mainKeyLastCheckedAt: number
   enabled: number
   sortOrder: number
   keyMode: number
@@ -92,6 +98,8 @@ export type ChannelMinAggregateInputType = {
   baseUrl?: true
   apiKey?: true
   proxy?: true
+  mainKeyLastValid?: true
+  mainKeyLastCheckedAt?: true
   enabled?: true
   sortOrder?: true
   keyMode?: true
@@ -106,6 +114,8 @@ export type ChannelMaxAggregateInputType = {
   baseUrl?: true
   apiKey?: true
   proxy?: true
+  mainKeyLastValid?: true
+  mainKeyLastCheckedAt?: true
   enabled?: true
   sortOrder?: true
   keyMode?: true
@@ -120,6 +130,8 @@ export type ChannelCountAggregateInputType = {
   baseUrl?: true
   apiKey?: true
   proxy?: true
+  mainKeyLastValid?: true
+  mainKeyLastCheckedAt?: true
   enabled?: true
   sortOrder?: true
   keyMode?: true
@@ -221,6 +233,8 @@ export type ChannelGroupByOutputType = {
   baseUrl: string
   apiKey: string
   proxy: string | null
+  mainKeyLastValid: boolean | null
+  mainKeyLastCheckedAt: Date | null
   enabled: boolean
   sortOrder: number
   keyMode: string
@@ -258,6 +272,8 @@ export type ChannelWhereInput = {
   baseUrl?: Prisma.StringFilter<"Channel"> | string
   apiKey?: Prisma.StringFilter<"Channel"> | string
   proxy?: Prisma.StringNullableFilter<"Channel"> | string | null
+  mainKeyLastValid?: Prisma.BoolNullableFilter<"Channel"> | boolean | null
+  mainKeyLastCheckedAt?: Prisma.DateTimeNullableFilter<"Channel"> | Date | string | null
   enabled?: Prisma.BoolFilter<"Channel"> | boolean
   sortOrder?: Prisma.IntFilter<"Channel"> | number
   keyMode?: Prisma.StringFilter<"Channel"> | string
@@ -275,6 +291,8 @@ export type ChannelOrderByWithRelationInput = {
   baseUrl?: Prisma.SortOrder
   apiKey?: Prisma.SortOrder
   proxy?: Prisma.SortOrderInput | Prisma.SortOrder
+  mainKeyLastValid?: Prisma.SortOrderInput | Prisma.SortOrder
+  mainKeyLastCheckedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   enabled?: Prisma.SortOrder
   sortOrder?: Prisma.SortOrder
   keyMode?: Prisma.SortOrder
@@ -295,6 +313,8 @@ export type ChannelWhereUniqueInput = Prisma.AtLeast<{
   baseUrl?: Prisma.StringFilter<"Channel"> | string
   apiKey?: Prisma.StringFilter<"Channel"> | string
   proxy?: Prisma.StringNullableFilter<"Channel"> | string | null
+  mainKeyLastValid?: Prisma.BoolNullableFilter<"Channel"> | boolean | null
+  mainKeyLastCheckedAt?: Prisma.DateTimeNullableFilter<"Channel"> | Date | string | null
   enabled?: Prisma.BoolFilter<"Channel"> | boolean
   sortOrder?: Prisma.IntFilter<"Channel"> | number
   keyMode?: Prisma.StringFilter<"Channel"> | string
@@ -312,6 +332,8 @@ export type ChannelOrderByWithAggregationInput = {
   baseUrl?: Prisma.SortOrder
   apiKey?: Prisma.SortOrder
   proxy?: Prisma.SortOrderInput | Prisma.SortOrder
+  mainKeyLastValid?: Prisma.SortOrderInput | Prisma.SortOrder
+  mainKeyLastCheckedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   enabled?: Prisma.SortOrder
   sortOrder?: Prisma.SortOrder
   keyMode?: Prisma.SortOrder
@@ -334,6 +356,8 @@ export type ChannelScalarWhereWithAggregatesInput = {
   baseUrl?: Prisma.StringWithAggregatesFilter<"Channel"> | string
   apiKey?: Prisma.StringWithAggregatesFilter<"Channel"> | string
   proxy?: Prisma.StringNullableWithAggregatesFilter<"Channel"> | string | null
+  mainKeyLastValid?: Prisma.BoolNullableWithAggregatesFilter<"Channel"> | boolean | null
+  mainKeyLastCheckedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"Channel"> | Date | string | null
   enabled?: Prisma.BoolWithAggregatesFilter<"Channel"> | boolean
   sortOrder?: Prisma.IntWithAggregatesFilter<"Channel"> | number
   keyMode?: Prisma.StringWithAggregatesFilter<"Channel"> | string
@@ -348,6 +372,8 @@ export type ChannelCreateInput = {
   baseUrl: string
   apiKey: string
   proxy?: string | null
+  mainKeyLastValid?: boolean | null
+  mainKeyLastCheckedAt?: Date | string | null
   enabled?: boolean
   sortOrder?: number
   keyMode?: string
@@ -365,6 +391,8 @@ export type ChannelUncheckedCreateInput = {
   baseUrl: string
   apiKey: string
   proxy?: string | null
+  mainKeyLastValid?: boolean | null
+  mainKeyLastCheckedAt?: Date | string | null
   enabled?: boolean
   sortOrder?: number
   keyMode?: string
@@ -382,6 +410,8 @@ export type ChannelUpdateInput = {
   baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
   apiKey?: Prisma.StringFieldUpdateOperationsInput | string
   proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  mainKeyLastValid?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
+  mainKeyLastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
   keyMode?: Prisma.StringFieldUpdateOperationsInput | string
@@ -399,6 +429,8 @@ export type ChannelUncheckedUpdateInput = {
   baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
   apiKey?: Prisma.StringFieldUpdateOperationsInput | string
   proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  mainKeyLastValid?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
+  mainKeyLastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
   keyMode?: Prisma.StringFieldUpdateOperationsInput | string
@@ -416,6 +448,8 @@ export type ChannelCreateManyInput = {
   baseUrl: string
   apiKey: string
   proxy?: string | null
+  mainKeyLastValid?: boolean | null
+  mainKeyLastCheckedAt?: Date | string | null
   enabled?: boolean
   sortOrder?: number
   keyMode?: string
@@ -430,6 +464,8 @@ export type ChannelUpdateManyMutationInput = {
   baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
   apiKey?: Prisma.StringFieldUpdateOperationsInput | string
   proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  mainKeyLastValid?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
+  mainKeyLastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
   keyMode?: Prisma.StringFieldUpdateOperationsInput | string
@@ -444,6 +480,8 @@ export type ChannelUncheckedUpdateManyInput = {
   baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
   apiKey?: Prisma.StringFieldUpdateOperationsInput | string
   proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  mainKeyLastValid?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
+  mainKeyLastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
   keyMode?: Prisma.StringFieldUpdateOperationsInput | string
@@ -458,6 +496,8 @@ export type ChannelCountOrderByAggregateInput = {
   baseUrl?: Prisma.SortOrder
   apiKey?: Prisma.SortOrder
   proxy?: Prisma.SortOrder
+  mainKeyLastValid?: Prisma.SortOrder
+  mainKeyLastCheckedAt?: Prisma.SortOrder
   enabled?: Prisma.SortOrder
   sortOrder?: Prisma.SortOrder
   keyMode?: Prisma.SortOrder
@@ -476,6 +516,8 @@ export type ChannelMaxOrderByAggregateInput = {
   baseUrl?: Prisma.SortOrder
   apiKey?: Prisma.SortOrder
   proxy?: Prisma.SortOrder
+  mainKeyLastValid?: Prisma.SortOrder
+  mainKeyLastCheckedAt?: Prisma.SortOrder
   enabled?: Prisma.SortOrder
   sortOrder?: Prisma.SortOrder
   keyMode?: Prisma.SortOrder
@@ -490,6 +532,8 @@ export type ChannelMinOrderByAggregateInput = {
   baseUrl?: Prisma.SortOrder
   apiKey?: Prisma.SortOrder
   proxy?: Prisma.SortOrder
+  mainKeyLastValid?: Prisma.SortOrder
+  mainKeyLastCheckedAt?: Prisma.SortOrder
   enabled?: Prisma.SortOrder
   sortOrder?: Prisma.SortOrder
   keyMode?: Prisma.SortOrder
@@ -518,6 +562,14 @@ export type StringFieldUpdateOperationsInput = {
 
 export type NullableStringFieldUpdateOperationsInput = {
   set?: string | null
+}
+
+export type NullableBoolFieldUpdateOperationsInput = {
+  set?: boolean | null
+}
+
+export type NullableDateTimeFieldUpdateOperationsInput = {
+  set?: Date | string | null
 }
 
 export type BoolFieldUpdateOperationsInput = {
@@ -586,6 +638,8 @@ export type ChannelCreateWithoutModelsInput = {
   baseUrl: string
   apiKey: string
   proxy?: string | null
+  mainKeyLastValid?: boolean | null
+  mainKeyLastCheckedAt?: Date | string | null
   enabled?: boolean
   sortOrder?: number
   keyMode?: string
@@ -602,6 +656,8 @@ export type ChannelUncheckedCreateWithoutModelsInput = {
   baseUrl: string
   apiKey: string
   proxy?: string | null
+  mainKeyLastValid?: boolean | null
+  mainKeyLastCheckedAt?: Date | string | null
   enabled?: boolean
   sortOrder?: number
   keyMode?: string
@@ -634,6 +690,8 @@ export type ChannelUpdateWithoutModelsInput = {
   baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
   apiKey?: Prisma.StringFieldUpdateOperationsInput | string
   proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  mainKeyLastValid?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
+  mainKeyLastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
   keyMode?: Prisma.StringFieldUpdateOperationsInput | string
@@ -650,6 +708,8 @@ export type ChannelUncheckedUpdateWithoutModelsInput = {
   baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
   apiKey?: Prisma.StringFieldUpdateOperationsInput | string
   proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  mainKeyLastValid?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
+  mainKeyLastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
   keyMode?: Prisma.StringFieldUpdateOperationsInput | string
@@ -666,6 +726,8 @@ export type ChannelCreateWithoutProxyRequestLogsInput = {
   baseUrl: string
   apiKey: string
   proxy?: string | null
+  mainKeyLastValid?: boolean | null
+  mainKeyLastCheckedAt?: Date | string | null
   enabled?: boolean
   sortOrder?: number
   keyMode?: string
@@ -682,6 +744,8 @@ export type ChannelUncheckedCreateWithoutProxyRequestLogsInput = {
   baseUrl: string
   apiKey: string
   proxy?: string | null
+  mainKeyLastValid?: boolean | null
+  mainKeyLastCheckedAt?: Date | string | null
   enabled?: boolean
   sortOrder?: number
   keyMode?: string
@@ -714,6 +778,8 @@ export type ChannelUpdateWithoutProxyRequestLogsInput = {
   baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
   apiKey?: Prisma.StringFieldUpdateOperationsInput | string
   proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  mainKeyLastValid?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
+  mainKeyLastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
   keyMode?: Prisma.StringFieldUpdateOperationsInput | string
@@ -730,6 +796,8 @@ export type ChannelUncheckedUpdateWithoutProxyRequestLogsInput = {
   baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
   apiKey?: Prisma.StringFieldUpdateOperationsInput | string
   proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  mainKeyLastValid?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
+  mainKeyLastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
   keyMode?: Prisma.StringFieldUpdateOperationsInput | string
@@ -746,6 +814,8 @@ export type ChannelCreateWithoutChannelKeysInput = {
   baseUrl: string
   apiKey: string
   proxy?: string | null
+  mainKeyLastValid?: boolean | null
+  mainKeyLastCheckedAt?: Date | string | null
   enabled?: boolean
   sortOrder?: number
   keyMode?: string
@@ -762,6 +832,8 @@ export type ChannelUncheckedCreateWithoutChannelKeysInput = {
   baseUrl: string
   apiKey: string
   proxy?: string | null
+  mainKeyLastValid?: boolean | null
+  mainKeyLastCheckedAt?: Date | string | null
   enabled?: boolean
   sortOrder?: number
   keyMode?: string
@@ -794,6 +866,8 @@ export type ChannelUpdateWithoutChannelKeysInput = {
   baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
   apiKey?: Prisma.StringFieldUpdateOperationsInput | string
   proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  mainKeyLastValid?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
+  mainKeyLastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
   keyMode?: Prisma.StringFieldUpdateOperationsInput | string
@@ -810,6 +884,8 @@ export type ChannelUncheckedUpdateWithoutChannelKeysInput = {
   baseUrl?: Prisma.StringFieldUpdateOperationsInput | string
   apiKey?: Prisma.StringFieldUpdateOperationsInput | string
   proxy?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  mainKeyLastValid?: Prisma.NullableBoolFieldUpdateOperationsInput | boolean | null
+  mainKeyLastCheckedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   enabled?: Prisma.BoolFieldUpdateOperationsInput | boolean
   sortOrder?: Prisma.IntFieldUpdateOperationsInput | number
   keyMode?: Prisma.StringFieldUpdateOperationsInput | string
@@ -875,6 +951,8 @@ export type ChannelSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   baseUrl?: boolean
   apiKey?: boolean
   proxy?: boolean
+  mainKeyLastValid?: boolean
+  mainKeyLastCheckedAt?: boolean
   enabled?: boolean
   sortOrder?: boolean
   keyMode?: boolean
@@ -893,6 +971,8 @@ export type ChannelSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Exten
   baseUrl?: boolean
   apiKey?: boolean
   proxy?: boolean
+  mainKeyLastValid?: boolean
+  mainKeyLastCheckedAt?: boolean
   enabled?: boolean
   sortOrder?: boolean
   keyMode?: boolean
@@ -907,6 +987,8 @@ export type ChannelSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Exten
   baseUrl?: boolean
   apiKey?: boolean
   proxy?: boolean
+  mainKeyLastValid?: boolean
+  mainKeyLastCheckedAt?: boolean
   enabled?: boolean
   sortOrder?: boolean
   keyMode?: boolean
@@ -921,6 +1003,8 @@ export type ChannelSelectScalar = {
   baseUrl?: boolean
   apiKey?: boolean
   proxy?: boolean
+  mainKeyLastValid?: boolean
+  mainKeyLastCheckedAt?: boolean
   enabled?: boolean
   sortOrder?: boolean
   keyMode?: boolean
@@ -929,7 +1013,7 @@ export type ChannelSelectScalar = {
   updatedAt?: boolean
 }
 
-export type ChannelOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "baseUrl" | "apiKey" | "proxy" | "enabled" | "sortOrder" | "keyMode" | "routeStrategy" | "createdAt" | "updatedAt", ExtArgs["result"]["channel"]>
+export type ChannelOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "name" | "baseUrl" | "apiKey" | "proxy" | "mainKeyLastValid" | "mainKeyLastCheckedAt" | "enabled" | "sortOrder" | "keyMode" | "routeStrategy" | "createdAt" | "updatedAt", ExtArgs["result"]["channel"]>
 export type ChannelInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   models?: boolean | Prisma.Channel$modelsArgs<ExtArgs>
   channelKeys?: boolean | Prisma.Channel$channelKeysArgs<ExtArgs>
@@ -952,6 +1036,8 @@ export type $ChannelPayload<ExtArgs extends runtime.Types.Extensions.InternalArg
     baseUrl: string
     apiKey: string
     proxy: string | null
+    mainKeyLastValid: boolean | null
+    mainKeyLastCheckedAt: Date | null
     enabled: boolean
     sortOrder: number
     keyMode: string
@@ -1389,6 +1475,8 @@ export interface ChannelFieldRefs {
   readonly baseUrl: Prisma.FieldRef<"Channel", 'String'>
   readonly apiKey: Prisma.FieldRef<"Channel", 'String'>
   readonly proxy: Prisma.FieldRef<"Channel", 'String'>
+  readonly mainKeyLastValid: Prisma.FieldRef<"Channel", 'Boolean'>
+  readonly mainKeyLastCheckedAt: Prisma.FieldRef<"Channel", 'DateTime'>
   readonly enabled: Prisma.FieldRef<"Channel", 'Boolean'>
   readonly sortOrder: Prisma.FieldRef<"Channel", 'Int'>
   readonly keyMode: Prisma.FieldRef<"Channel", 'String'>
