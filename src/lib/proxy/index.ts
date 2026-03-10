@@ -315,13 +315,11 @@ type RoutedModelRecord = {
     baseUrl: string;
     apiKey: string;
     proxy: string | null;
-    mainKeyLastValid: boolean | null;
     keyMode: string;
     routeStrategy: string;
   };
   channelKey: {
     apiKey: string;
-    lastValid: boolean | null;
   } | null;
 };
 
@@ -470,7 +468,6 @@ const routedModelSelect = {
       baseUrl: true,
       apiKey: true,
       proxy: true,
-      mainKeyLastValid: true,
       enabled: true,
       sortOrder: true,
       createdAt: true,
@@ -481,7 +478,6 @@ const routedModelSelect = {
   channelKey: {
     select: {
       apiKey: true,
-      lastValid: true,
     },
   },
 } satisfies Prisma.ModelSelect;
@@ -514,13 +510,6 @@ function buildProxyChannelCandidate(
         ? model.preferredProxyEndpoint
         : null,
   };
-}
-
-function isCandidateKeyAvailable(model: RoutedModelRecord): boolean {
-  if (model.channelKey) {
-    return model.channelKey.lastValid !== false;
-  }
-  return model.channel.mainKeyLastValid !== false;
 }
 
 async function orderModelsWithinChannel(
@@ -594,7 +583,6 @@ async function fetchModelCandidatesByName(
   }
 
   let validModels = models.filter((m) => {
-    if (!isCandidateKeyAvailable(m)) return false;
     if (m.lastStatus !== true) return false;
     return true;
   });
@@ -637,39 +625,12 @@ export async function markProxyChannelKeyUnavailable(
   }
 
   try {
-    const model = await prisma.model.findUnique({
+    await prisma.model.update({
       where: { id: modelId },
-      select: {
-        channelId: true,
-        channelKeyId: true,
-      },
-    });
-
-    if (!model) {
-      return;
-    }
-
-    const now = new Date();
-    if (model.channelKeyId) {
-      await prisma.channelKey.update({
-        where: { id: model.channelKeyId },
-        data: {
-          lastValid: false,
-          lastCheckedAt: now,
-        },
-      });
-      return;
-    }
-
-    await prisma.channel.update({
-      where: { id: model.channelId },
-      data: {
-        mainKeyLastValid: false,
-        mainKeyLastCheckedAt: now,
-      },
+      data: { lastStatus: false },
     });
   } catch (error) {
-    logWarn("[Proxy] 标记渠道 key 不可用失败", error);
+    logWarn("[Proxy] 标记模型不可用失败", error);
   }
 }
 
@@ -1013,13 +974,10 @@ async function getUnifiedModelCandidates(
     take: 200,
   });
 
-  // 过滤掉 channelKey 明确无效的
-  const validModels = models.filter((m) => isCandidateKeyAvailable(m));
-
   // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型（有回退）
-  let endpointFiltered = validModels;
-  if (preferredEndpoint && validModels.length > 0) {
-    endpointFiltered = validModels.filter((m) =>
+  let endpointFiltered = models;
+  if (preferredEndpoint && models.length > 0) {
+    endpointFiltered = models.filter((m: RoutedModelRecord) =>
       supportsPreferredEndpoint(m.modelName, m.detectedEndpoints, preferredEndpoint)
     );
     if (endpointFiltered.length === 0) {
@@ -1302,26 +1260,6 @@ export async function recordProxyModelResult(
         ? true
         : false;
 
-    if (!success && shouldDisableChannelCredential(options?.statusCode, options?.errorMsg) && currentModel) {
-      if (currentModel.channelKeyId) {
-        await tx.channelKey.update({
-          where: { id: currentModel.channelKeyId },
-          data: {
-            lastValid: false,
-            lastCheckedAt: now,
-          },
-        });
-      } else {
-        await tx.channel.update({
-          where: { id: currentModel.channelId },
-          data: {
-            mainKeyLastValid: false,
-            mainKeyLastCheckedAt: now,
-          },
-        });
-      }
-    }
-
     await tx.model.update({
       where: { id: modelId },
       data: {
@@ -1408,17 +1346,6 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
   const whereConditions: Prisma.ModelWhereInput[] = [
     { channel: { enabled: true } },
     { lastStatus: true },
-    {
-      OR: [
-        {
-          AND: [
-            { channelKeyId: null },
-            { channel: { mainKeyLastValid: { not: false } } },
-          ],
-        },
-        { channelKey: { is: { lastValid: { not: false } } } },
-      ],
-    },
   ];
 
   // If key has restricted permissions, filter by allowed channels/models
