@@ -341,7 +341,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
         onClick={onClose}
         aria-hidden="true"
       />
-      <div className="relative w-full max-w-lg mx-4 bg-card rounded-lg shadow-lg border border-border max-h-[90vh] overflow-y-auto">
+      <div className="relative w-full max-w-5xl mx-4 bg-card rounded-lg shadow-lg border border-border max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-border sticky top-0 bg-card z-10">
           <h2 id="proxy-key-modal-title" className="text-lg font-semibold">
@@ -358,272 +358,279 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
 
         {/* Form */}
         <form onSubmit={handleSave} className="p-4 space-y-4">
-          {/* Name */}
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              名称 <span className="text-destructive">*</span>
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
-              placeholder="例如: 开发测试"
-              required
-            />
-          </div>
-
-          {(!editingKey || isBuiltInEdit) && (
-            <div>
-              <label className="block text-sm font-medium mb-1">密钥值</label>
-              <div className="flex items-center gap-2">
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr),minmax(0,1.1fr)] gap-6">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  名称 <span className="text-destructive">*</span>
+                </label>
                 <input
                   type="text"
-                  value={generatedKey}
-                  onChange={(e) => setGeneratedKey(e.target.value)}
-                  className="flex-1 px-3 py-2 rounded-md border border-input bg-background text-sm font-mono"
-                  placeholder="sk-..."
-                  readOnly={false}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
+                  placeholder="例如: 开发测试"
+                  required
                 />
-                <button
-                  type="button"
-                  onClick={handleGenerateKey}
-                  className="p-2 rounded-md border border-input hover:bg-accent transition-colors"
-                  title="生成新密钥"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCopy}
-                  className="p-2 rounded-md border border-input hover:bg-accent transition-colors"
-                  title="复制"
-                >
-                  {copied ? (
-                    <Check className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <Copy className="h-4 w-4" />
-                  )}
-                </button>
               </div>
-            </div>
-          )}
 
-          <div className="flex items-center justify-between">
-            <label className="text-sm font-medium">启用此密钥</label>
-            <button
-              type="button"
-              onClick={() => setEnabled(!enabled)}
-              className={cn(
-                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-                enabled ? "bg-primary" : "bg-muted"
-              )}
-            >
-              <span
-                className={cn(
-                  "inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                  enabled ? "translate-x-6" : "translate-x-1"
-                )}
-              />
-            </button>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-1">临时停止时长</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={temporaryStopValue}
-                onChange={(e) => setTemporaryStopValue(Math.max(0, Number.parseInt(e.target.value || "0", 10) || 0))}
-                className="min-w-0 flex-1 px-3 py-2 rounded-md border border-input bg-background text-sm"
-                placeholder="0 表示关闭"
-              />
-              <select
-                value={temporaryStopUnit}
-                onChange={(e) => setTemporaryStopUnit(e.target.value as "second" | "minute" | "hour" | "day")}
-                className="w-28 shrink-0 px-3 py-2 rounded-md border border-input bg-background text-sm"
-              >
-                <option value="second">秒</option>
-                <option value="minute">分钟</option>
-                <option value="hour">小时</option>
-                <option value="day">天</option>
-              </select>
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground -mt-2">
-            临时异常命中后，当前代理 key 下的候选会暂停这么久；填 0 就是不启用临时停止
-          </p>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">访问权限</label>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="accessMode"
-                  checked={allowAllModels}
-                  onChange={() => setAllowAllModels(true)}
-                  className="w-4 h-4 text-primary"
-                />
-                <span className="text-sm">所有已检测可用模型</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="accessMode"
-                  checked={!allowAllModels}
-                  onChange={() => setAllowAllModels(false)}
-                  className="w-4 h-4 text-primary"
-                />
-                <span className="text-sm">自定义权限</span>
-              </label>
-            </div>
-          </div>
-
-          {!allowAllModels && !unifiedMode && (
-            <div className="border border-border rounded-md p-3">
-              {loadingChannels ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : (
-                <ChannelModelSelector
-                  channels={channels}
-                  selectedChannelIds={selectedChannelIds}
-                  selectedModelIds={selectedModelIds}
-                  onSelectionChange={(channelIds, modelIds) => {
-                    setSelectedChannelIds(channelIds);
-                    setSelectedModelIds(modelIds);
-                  }}
-                  selectAllLabel="全选所有渠道"
-                />
-              )}
-            </div>
-          )}
-
-          {!allowAllModels && unifiedMode && (
-            <div className="border border-border rounded-md p-3">
-              {loadingUnifiedModels ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                </div>
-              ) : unifiedModels.length === 0 ? (
-                <div className="text-sm text-muted-foreground text-center py-4">
-                  暂无可用模型
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium">选择允许的模型</span>
+              {(!editingKey || isBuiltInEdit) && (
+                <div>
+                  <label className="block text-sm font-medium mb-1">密钥值</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={generatedKey}
+                      onChange={(e) => setGeneratedKey(e.target.value)}
+                      className="flex-1 px-3 py-2 rounded-md border border-input bg-background text-sm font-mono"
+                      placeholder="sk-..."
+                      readOnly={false}
+                    />
                     <button
                       type="button"
-                      onClick={() => {
-                        if (selectedUnifiedModels.length === unifiedModels.length) {
-                          setSelectedUnifiedModels([]);
-                        } else {
-                          setSelectedUnifiedModels([...unifiedModels]);
-                        }
-                      }}
-                      className="text-xs text-primary hover:underline"
+                      onClick={handleGenerateKey}
+                      className="p-2 rounded-md border border-input hover:bg-accent transition-colors"
+                      title="生成新密钥"
                     >
-                      {selectedUnifiedModels.length === unifiedModels.length ? "取消全选" : "全选"}
+                      <RefreshCw className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCopy}
+                      className="p-2 rounded-md border border-input hover:bg-accent transition-colors"
+                      title="复制"
+                    >
+                      {copied ? (
+                        <Check className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
                     </button>
                   </div>
+                </div>
+              )}
+
+              <div className="rounded-md border border-border p-3 space-y-4">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium">启用此密钥</label>
+                  <button
+                    type="button"
+                    onClick={() => setEnabled(!enabled)}
+                    className={cn(
+                      "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                      enabled ? "bg-primary" : "bg-muted"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                        enabled ? "translate-x-6" : "translate-x-1"
+                      )}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-medium">统一模型模式</label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      开启后用户直接用模型名调用，系统自动跨渠道路由
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setUnifiedMode(!unifiedMode)}
+                    className={cn(
+                      "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
+                      unifiedMode ? "bg-primary" : "bg-muted"
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        "inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                        unifiedMode ? "translate-x-6" : "translate-x-1"
+                      )}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1">临时停止时长</label>
+                <div className="flex items-center gap-2">
                   <input
-                    type="text"
-                    value={unifiedSearchQuery}
-                    onChange={(e) => setUnifiedSearchQuery(e.target.value)}
-                    className="w-full px-2 py-1 rounded border border-input bg-background text-sm mb-2"
-                    placeholder="搜索模型..."
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={temporaryStopValue}
+                    onChange={(e) => setTemporaryStopValue(Math.max(0, Number.parseInt(e.target.value || "0", 10) || 0))}
+                    className="min-w-0 flex-1 px-3 py-2 rounded-md border border-input bg-background text-sm"
+                    placeholder="0 表示关闭"
                   />
-                  <div className="max-h-48 overflow-y-auto space-y-1">
-                    {unifiedModels
-                      .filter((m) => !unifiedSearchQuery || m.toLowerCase().includes(unifiedSearchQuery.toLowerCase()))
-                      .map((modelName) => (
-                      <label key={modelName} className="flex items-center gap-2 cursor-pointer py-0.5">
-                        <input
-                          type="checkbox"
-                          checked={selectedUnifiedModels.includes(modelName)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedUnifiedModels((prev) => [...prev, modelName]);
+                  <select
+                    value={temporaryStopUnit}
+                    onChange={(e) => setTemporaryStopUnit(e.target.value as "second" | "minute" | "hour" | "day")}
+                    className="w-28 shrink-0 px-3 py-2 rounded-md border border-input bg-background text-sm"
+                  >
+                    <option value="second">秒</option>
+                    <option value="minute">分钟</option>
+                    <option value="hour">小时</option>
+                    <option value="day">天</option>
+                  </select>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  临时异常命中后，当前代理 key 下的候选会暂停这么久；填 0 就是不启用临时停止
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">统一模式渠道策略</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setUnifiedRouteStrategy("round_robin")}
+                    className={cn(
+                      "px-3 py-2 rounded-md border text-sm transition-colors",
+                      unifiedRouteStrategy === "round_robin"
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-input hover:bg-accent"
+                    )}
+                  >
+                    轮询
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUnifiedRouteStrategy("random")}
+                    className={cn(
+                      "px-3 py-2 rounded-md border text-sm transition-colors",
+                      unifiedRouteStrategy === "random"
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-input hover:bg-accent"
+                    )}
+                  >
+                    随机
+                  </button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  只影响统一模型模式下，同名模型跨渠道时的候选顺序
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">访问权限</label>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="accessMode"
+                      checked={allowAllModels}
+                      onChange={() => setAllowAllModels(true)}
+                      className="w-4 h-4 text-primary"
+                    />
+                    <span className="text-sm">所有已检测可用模型</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="accessMode"
+                      checked={!allowAllModels}
+                      onChange={() => setAllowAllModels(false)}
+                      className="w-4 h-4 text-primary"
+                    />
+                    <span className="text-sm">自定义权限</span>
+                  </label>
+                </div>
+              </div>
+
+              {!allowAllModels && !unifiedMode && (
+                <div className="border border-border rounded-md p-3">
+                  {loadingChannels ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : (
+                    <ChannelModelSelector
+                      channels={channels}
+                      selectedChannelIds={selectedChannelIds}
+                      selectedModelIds={selectedModelIds}
+                      onSelectionChange={(channelIds, modelIds) => {
+                        setSelectedChannelIds(channelIds);
+                        setSelectedModelIds(modelIds);
+                      }}
+                      selectAllLabel="全选所有渠道"
+                    />
+                  )}
+                </div>
+              )}
+
+              {!allowAllModels && unifiedMode && (
+                <div className="border border-border rounded-md p-3">
+                  {loadingUnifiedModels ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : unifiedModels.length === 0 ? (
+                    <div className="text-sm text-muted-foreground text-center py-4">
+                      暂无可用模型
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium">选择允许的模型</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (selectedUnifiedModels.length === unifiedModels.length) {
+                              setSelectedUnifiedModels([]);
                             } else {
-                              setSelectedUnifiedModels((prev) => prev.filter((m) => m !== modelName));
+                              setSelectedUnifiedModels([...unifiedModels]);
                             }
                           }}
-                          className="w-3.5 h-3.5 text-primary rounded"
-                        />
-                        <span className="text-sm font-mono truncate">{modelName}</span>
-                      </label>
-                    ))}
-                  </div>
-                  {selectedUnifiedModels.length > 0 && (
-                    <div className="text-xs text-muted-foreground pt-1 border-t border-border">
-                      已选 {selectedUnifiedModels.length} / {unifiedModels.length} 个模型
+                          className="text-xs text-primary hover:underline"
+                        >
+                          {selectedUnifiedModels.length === unifiedModels.length ? "取消全选" : "全选"}
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={unifiedSearchQuery}
+                        onChange={(e) => setUnifiedSearchQuery(e.target.value)}
+                        className="w-full px-2 py-1 rounded border border-input bg-background text-sm mb-2"
+                        placeholder="搜索模型..."
+                      />
+                      <div className="max-h-72 overflow-y-auto space-y-1">
+                        {unifiedModels
+                          .filter((m) => !unifiedSearchQuery || m.toLowerCase().includes(unifiedSearchQuery.toLowerCase()))
+                          .map((modelName) => (
+                          <label key={modelName} className="flex items-center gap-2 cursor-pointer py-0.5">
+                            <input
+                              type="checkbox"
+                              checked={selectedUnifiedModels.includes(modelName)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedUnifiedModels((prev) => [...prev, modelName]);
+                                } else {
+                                  setSelectedUnifiedModels((prev) => prev.filter((m) => m !== modelName));
+                                }
+                              }}
+                              className="w-3.5 h-3.5 text-primary rounded"
+                            />
+                            <span className="text-sm font-mono truncate">{modelName}</span>
+                          </label>
+                        ))}
+                      </div>
+                      {selectedUnifiedModels.length > 0 && (
+                        <div className="text-xs text-muted-foreground pt-1 border-t border-border">
+                          已选 {selectedUnifiedModels.length} / {unifiedModels.length} 个模型
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               )}
             </div>
-          )}
-
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium">统一模型模式</label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                开启后用户直接用模型名调用，系统自动跨渠道路由
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setUnifiedMode(!unifiedMode)}
-              className={cn(
-                "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-                unifiedMode ? "bg-primary" : "bg-muted"
-              )}
-            >
-              <span
-                className={cn(
-                  "inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                  unifiedMode ? "translate-x-6" : "translate-x-1"
-                )}
-              />
-            </button>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">统一模式渠道策略</label>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setUnifiedRouteStrategy("round_robin")}
-                className={cn(
-                  "px-3 py-2 rounded-md border text-sm transition-colors",
-                  unifiedRouteStrategy === "round_robin"
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-input hover:bg-accent"
-                )}
-              >
-                轮询
-              </button>
-              <button
-                type="button"
-                onClick={() => setUnifiedRouteStrategy("random")}
-                className={cn(
-                  "px-3 py-2 rounded-md border text-sm transition-colors",
-                  unifiedRouteStrategy === "random"
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-input hover:bg-accent"
-                )}
-              >
-                随机
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              只影响统一模型模式下，同名模型跨渠道时的候选顺序
-            </p>
           </div>
 
           {/* Actions */}
