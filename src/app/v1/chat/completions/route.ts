@@ -7,6 +7,8 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getProxyChannelCandidatesWithPermission,
   buildUpstreamHeaders,
+  createProxyRequestId,
+  getUpstreamPathFromUrl,
   markProxyChannelKeyUnavailable,
   proxyRequest,
   recordProxyModelResult,
@@ -16,6 +18,7 @@ import {
   withStreamTracking,
   errorResponse,
   normalizeBaseUrl,
+  type ProxyRequestAttemptLog,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
 import {
@@ -546,6 +549,8 @@ export async function POST(request: NextRequest) {
   try {
     const requestPath = request.nextUrl?.pathname ?? new URL(request.url).pathname;
     const requestMethod = request.method;
+    const requestId = createProxyRequestId();
+    const upstreamAttempts: ProxyRequestAttemptLog[] = [];
     const handleWriteRequestLogError = createAsyncErrorHandler("[ChatProxy] 写请求日志失败", "warn");
     const handleRecordModelResultError = createAsyncErrorHandler("[ChatProxy] 记录模型结果失败", "warn");
     const handlePreferredEndpointError = createAsyncErrorHandler("[ChatProxy] 记录优先代理端点失败", "warn");
@@ -563,10 +568,23 @@ export async function POST(request: NextRequest) {
       errorMsg?: string | null;
     }) => recordProxyRequestLog({
       keyResult,
+      requestId,
       requestPath,
       requestMethod,
+      attempts: upstreamAttempts,
       ...options,
     }).catch(handleWriteRequestLogError);
+    const addUpstreamAttempt = (attempt: ProxyRequestAttemptLog) => {
+      upstreamAttempts.push({
+        ...attempt,
+        upstreamPath: attempt.upstreamPath ?? null,
+        actualModelName: attempt.actualModelName ?? null,
+        channelId: attempt.channelId ?? null,
+        channelName: attempt.channelName ?? null,
+        modelId: attempt.modelId ?? null,
+        errorMsg: attempt.errorMsg ?? null,
+      });
+    };
     const recordModelResult = (
       modelId: Parameters<typeof recordProxyModelResult>[0],
       endpointType: Parameters<typeof recordProxyModelResult>[1],
@@ -681,6 +699,18 @@ export async function POST(request: NextRequest) {
         const result = await requestUpstreamAttempt(channel, attempt);
 
         if (!result.ok) {
+          addUpstreamAttempt({
+            endpointType: attempt.endpointType,
+            upstreamPath: getUpstreamPathFromUrl(attempt.url),
+            actualModelName: channel.actualModelName,
+            channelId: channel.channelId,
+            channelName: channel.channelName,
+            modelId: channel.modelId,
+            success: false,
+            statusCode: result.data.statusCode,
+            latency: result.data.latency,
+            errorMsg: result.data.errorMsg,
+          });
           lastErrorMessage = result.data.errorMsg;
           lastStatus = result.data.statusCode;
           finalFailureLog = {
@@ -709,6 +739,17 @@ export async function POST(request: NextRequest) {
         }
 
         const { response, latency } = result.data;
+        addUpstreamAttempt({
+          endpointType: attempt.endpointType,
+          upstreamPath: getUpstreamPathFromUrl(attempt.url),
+          actualModelName: channel.actualModelName,
+          channelId: channel.channelId,
+          channelName: channel.channelName,
+          modelId: channel.modelId,
+          success: true,
+          statusCode: response.status,
+          latency,
+        });
 
         try {
           if (attempt.endpointType === "CHAT") {
@@ -1264,6 +1305,13 @@ export async function POST(request: NextRequest) {
             modelId: channel.modelId,
             statusCode: 502,
             latency,
+            errorMsg: lastErrorMessage,
+          };
+
+          upstreamAttempts[upstreamAttempts.length - 1] = {
+            ...upstreamAttempts[upstreamAttempts.length - 1],
+            success: false,
+            statusCode: 502,
             errorMsg: lastErrorMessage,
           };
 

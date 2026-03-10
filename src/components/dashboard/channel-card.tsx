@@ -590,22 +590,22 @@ function EndpointBadge({
   const colorSchemes: Record<string, { success: string; fail: string; unknown: string }> = {
     CHAT: {
       success: "bg-blue-500 text-white",
-      fail: "bg-blue-500/20 text-blue-600 dark:text-blue-400 ring-1 ring-red-400",
+      fail: "bg-blue-500/20 text-blue-600 dark:text-blue-400",
       unknown: "bg-blue-500/10 text-blue-500",
     },
     CLAUDE: {
       success: "bg-orange-500 text-white",
-      fail: "bg-orange-500/20 text-orange-600 dark:text-orange-400 ring-1 ring-red-400",
+      fail: "bg-orange-500/20 text-orange-600 dark:text-orange-400",
       unknown: "bg-orange-500/10 text-orange-500",
     },
     GEMINI: {
       success: "bg-cyan-500 text-white",
-      fail: "bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 ring-1 ring-red-400",
+      fail: "bg-cyan-500/20 text-cyan-600 dark:text-cyan-400",
       unknown: "bg-cyan-500/10 text-cyan-500",
     },
     CODEX: {
       success: "bg-violet-500 text-white",
-      fail: "bg-violet-500/20 text-violet-600 dark:text-violet-400 ring-1 ring-red-400",
+      fail: "bg-violet-500/20 text-violet-600 dark:text-violet-400",
       unknown: "bg-violet-500/10 text-violet-500",
     },
   };

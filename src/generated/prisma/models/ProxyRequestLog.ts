@@ -38,6 +38,7 @@ export type ProxyRequestLogSumAggregateOutputType = {
 
 export type ProxyRequestLogMinAggregateOutputType = {
   id: string | null
+  requestId: string | null
   proxyKeyId: string | null
   channelId: string | null
   modelId: string | null
@@ -58,6 +59,7 @@ export type ProxyRequestLogMinAggregateOutputType = {
 
 export type ProxyRequestLogMaxAggregateOutputType = {
   id: string | null
+  requestId: string | null
   proxyKeyId: string | null
   channelId: string | null
   modelId: string | null
@@ -78,6 +80,7 @@ export type ProxyRequestLogMaxAggregateOutputType = {
 
 export type ProxyRequestLogCountAggregateOutputType = {
   id: number
+  requestId: number
   proxyKeyId: number
   channelId: number
   modelId: number
@@ -93,6 +96,7 @@ export type ProxyRequestLogCountAggregateOutputType = {
   statusCode: number
   latency: number
   errorMsg: number
+  attempts: number
   createdAt: number
   _all: number
 }
@@ -110,6 +114,7 @@ export type ProxyRequestLogSumAggregateInputType = {
 
 export type ProxyRequestLogMinAggregateInputType = {
   id?: true
+  requestId?: true
   proxyKeyId?: true
   channelId?: true
   modelId?: true
@@ -130,6 +135,7 @@ export type ProxyRequestLogMinAggregateInputType = {
 
 export type ProxyRequestLogMaxAggregateInputType = {
   id?: true
+  requestId?: true
   proxyKeyId?: true
   channelId?: true
   modelId?: true
@@ -150,6 +156,7 @@ export type ProxyRequestLogMaxAggregateInputType = {
 
 export type ProxyRequestLogCountAggregateInputType = {
   id?: true
+  requestId?: true
   proxyKeyId?: true
   channelId?: true
   modelId?: true
@@ -165,6 +172,7 @@ export type ProxyRequestLogCountAggregateInputType = {
   statusCode?: true
   latency?: true
   errorMsg?: true
+  attempts?: true
   createdAt?: true
   _all?: true
 }
@@ -257,6 +265,7 @@ export type ProxyRequestLogGroupByArgs<ExtArgs extends runtime.Types.Extensions.
 
 export type ProxyRequestLogGroupByOutputType = {
   id: string
+  requestId: string | null
   proxyKeyId: string | null
   channelId: string | null
   modelId: string | null
@@ -272,6 +281,7 @@ export type ProxyRequestLogGroupByOutputType = {
   statusCode: number | null
   latency: number | null
   errorMsg: string | null
+  attempts: runtime.JsonValue | null
   createdAt: Date
   _count: ProxyRequestLogCountAggregateOutputType | null
   _avg: ProxyRequestLogAvgAggregateOutputType | null
@@ -300,6 +310,7 @@ export type ProxyRequestLogWhereInput = {
   OR?: Prisma.ProxyRequestLogWhereInput[]
   NOT?: Prisma.ProxyRequestLogWhereInput | Prisma.ProxyRequestLogWhereInput[]
   id?: Prisma.StringFilter<"ProxyRequestLog"> | string
+  requestId?: Prisma.StringNullableFilter<"ProxyRequestLog"> | string | null
   proxyKeyId?: Prisma.StringNullableFilter<"ProxyRequestLog"> | string | null
   channelId?: Prisma.StringNullableFilter<"ProxyRequestLog"> | string | null
   modelId?: Prisma.StringNullableFilter<"ProxyRequestLog"> | string | null
@@ -315,6 +326,7 @@ export type ProxyRequestLogWhereInput = {
   statusCode?: Prisma.IntNullableFilter<"ProxyRequestLog"> | number | null
   latency?: Prisma.IntNullableFilter<"ProxyRequestLog"> | number | null
   errorMsg?: Prisma.StringNullableFilter<"ProxyRequestLog"> | string | null
+  attempts?: Prisma.JsonNullableFilter<"ProxyRequestLog">
   createdAt?: Prisma.DateTimeFilter<"ProxyRequestLog"> | Date | string
   proxyKey?: Prisma.XOR<Prisma.ProxyKeyNullableScalarRelationFilter, Prisma.ProxyKeyWhereInput> | null
   channel?: Prisma.XOR<Prisma.ChannelNullableScalarRelationFilter, Prisma.ChannelWhereInput> | null
@@ -323,6 +335,7 @@ export type ProxyRequestLogWhereInput = {
 
 export type ProxyRequestLogOrderByWithRelationInput = {
   id?: Prisma.SortOrder
+  requestId?: Prisma.SortOrderInput | Prisma.SortOrder
   proxyKeyId?: Prisma.SortOrderInput | Prisma.SortOrder
   channelId?: Prisma.SortOrderInput | Prisma.SortOrder
   modelId?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -338,6 +351,7 @@ export type ProxyRequestLogOrderByWithRelationInput = {
   statusCode?: Prisma.SortOrderInput | Prisma.SortOrder
   latency?: Prisma.SortOrderInput | Prisma.SortOrder
   errorMsg?: Prisma.SortOrderInput | Prisma.SortOrder
+  attempts?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   proxyKey?: Prisma.ProxyKeyOrderByWithRelationInput
   channel?: Prisma.ChannelOrderByWithRelationInput
@@ -346,6 +360,7 @@ export type ProxyRequestLogOrderByWithRelationInput = {
 
 export type ProxyRequestLogWhereUniqueInput = Prisma.AtLeast<{
   id?: string
+  requestId?: string
   AND?: Prisma.ProxyRequestLogWhereInput | Prisma.ProxyRequestLogWhereInput[]
   OR?: Prisma.ProxyRequestLogWhereInput[]
   NOT?: Prisma.ProxyRequestLogWhereInput | Prisma.ProxyRequestLogWhereInput[]
@@ -364,14 +379,16 @@ export type ProxyRequestLogWhereUniqueInput = Prisma.AtLeast<{
   statusCode?: Prisma.IntNullableFilter<"ProxyRequestLog"> | number | null
   latency?: Prisma.IntNullableFilter<"ProxyRequestLog"> | number | null
   errorMsg?: Prisma.StringNullableFilter<"ProxyRequestLog"> | string | null
+  attempts?: Prisma.JsonNullableFilter<"ProxyRequestLog">
   createdAt?: Prisma.DateTimeFilter<"ProxyRequestLog"> | Date | string
   proxyKey?: Prisma.XOR<Prisma.ProxyKeyNullableScalarRelationFilter, Prisma.ProxyKeyWhereInput> | null
   channel?: Prisma.XOR<Prisma.ChannelNullableScalarRelationFilter, Prisma.ChannelWhereInput> | null
   model?: Prisma.XOR<Prisma.ModelNullableScalarRelationFilter, Prisma.ModelWhereInput> | null
-}, "id">
+}, "id" | "requestId">
 
 export type ProxyRequestLogOrderByWithAggregationInput = {
   id?: Prisma.SortOrder
+  requestId?: Prisma.SortOrderInput | Prisma.SortOrder
   proxyKeyId?: Prisma.SortOrderInput | Prisma.SortOrder
   channelId?: Prisma.SortOrderInput | Prisma.SortOrder
   modelId?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -387,6 +404,7 @@ export type ProxyRequestLogOrderByWithAggregationInput = {
   statusCode?: Prisma.SortOrderInput | Prisma.SortOrder
   latency?: Prisma.SortOrderInput | Prisma.SortOrder
   errorMsg?: Prisma.SortOrderInput | Prisma.SortOrder
+  attempts?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   _count?: Prisma.ProxyRequestLogCountOrderByAggregateInput
   _avg?: Prisma.ProxyRequestLogAvgOrderByAggregateInput
@@ -400,6 +418,7 @@ export type ProxyRequestLogScalarWhereWithAggregatesInput = {
   OR?: Prisma.ProxyRequestLogScalarWhereWithAggregatesInput[]
   NOT?: Prisma.ProxyRequestLogScalarWhereWithAggregatesInput | Prisma.ProxyRequestLogScalarWhereWithAggregatesInput[]
   id?: Prisma.StringWithAggregatesFilter<"ProxyRequestLog"> | string
+  requestId?: Prisma.StringNullableWithAggregatesFilter<"ProxyRequestLog"> | string | null
   proxyKeyId?: Prisma.StringNullableWithAggregatesFilter<"ProxyRequestLog"> | string | null
   channelId?: Prisma.StringNullableWithAggregatesFilter<"ProxyRequestLog"> | string | null
   modelId?: Prisma.StringNullableWithAggregatesFilter<"ProxyRequestLog"> | string | null
@@ -415,11 +434,13 @@ export type ProxyRequestLogScalarWhereWithAggregatesInput = {
   statusCode?: Prisma.IntNullableWithAggregatesFilter<"ProxyRequestLog"> | number | null
   latency?: Prisma.IntNullableWithAggregatesFilter<"ProxyRequestLog"> | number | null
   errorMsg?: Prisma.StringNullableWithAggregatesFilter<"ProxyRequestLog"> | string | null
+  attempts?: Prisma.JsonNullableWithAggregatesFilter<"ProxyRequestLog">
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"ProxyRequestLog"> | Date | string
 }
 
 export type ProxyRequestLogCreateInput = {
   id?: string
+  requestId?: string | null
   requestPath: string
   requestMethod: string
   endpointType?: $Enums.EndpointType | null
@@ -432,6 +453,7 @@ export type ProxyRequestLogCreateInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   proxyKey?: Prisma.ProxyKeyCreateNestedOneWithoutProxyRequestLogsInput
   channel?: Prisma.ChannelCreateNestedOneWithoutProxyRequestLogsInput
@@ -440,6 +462,7 @@ export type ProxyRequestLogCreateInput = {
 
 export type ProxyRequestLogUncheckedCreateInput = {
   id?: string
+  requestId?: string | null
   proxyKeyId?: string | null
   channelId?: string | null
   modelId?: string | null
@@ -455,11 +478,13 @@ export type ProxyRequestLogUncheckedCreateInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
 }
 
 export type ProxyRequestLogUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   requestPath?: Prisma.StringFieldUpdateOperationsInput | string
   requestMethod?: Prisma.StringFieldUpdateOperationsInput | string
   endpointType?: Prisma.NullableEnumEndpointTypeFieldUpdateOperationsInput | $Enums.EndpointType | null
@@ -472,6 +497,7 @@ export type ProxyRequestLogUpdateInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   proxyKey?: Prisma.ProxyKeyUpdateOneWithoutProxyRequestLogsNestedInput
   channel?: Prisma.ChannelUpdateOneWithoutProxyRequestLogsNestedInput
@@ -480,6 +506,7 @@ export type ProxyRequestLogUpdateInput = {
 
 export type ProxyRequestLogUncheckedUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   proxyKeyId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   channelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   modelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -495,11 +522,13 @@ export type ProxyRequestLogUncheckedUpdateInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ProxyRequestLogCreateManyInput = {
   id?: string
+  requestId?: string | null
   proxyKeyId?: string | null
   channelId?: string | null
   modelId?: string | null
@@ -515,11 +544,13 @@ export type ProxyRequestLogCreateManyInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
 }
 
 export type ProxyRequestLogUpdateManyMutationInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   requestPath?: Prisma.StringFieldUpdateOperationsInput | string
   requestMethod?: Prisma.StringFieldUpdateOperationsInput | string
   endpointType?: Prisma.NullableEnumEndpointTypeFieldUpdateOperationsInput | $Enums.EndpointType | null
@@ -532,11 +563,13 @@ export type ProxyRequestLogUpdateManyMutationInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ProxyRequestLogUncheckedUpdateManyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   proxyKeyId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   channelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   modelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -552,6 +585,7 @@ export type ProxyRequestLogUncheckedUpdateManyInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -567,6 +601,7 @@ export type ProxyRequestLogOrderByRelationAggregateInput = {
 
 export type ProxyRequestLogCountOrderByAggregateInput = {
   id?: Prisma.SortOrder
+  requestId?: Prisma.SortOrder
   proxyKeyId?: Prisma.SortOrder
   channelId?: Prisma.SortOrder
   modelId?: Prisma.SortOrder
@@ -582,6 +617,7 @@ export type ProxyRequestLogCountOrderByAggregateInput = {
   statusCode?: Prisma.SortOrder
   latency?: Prisma.SortOrder
   errorMsg?: Prisma.SortOrder
+  attempts?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
 }
 
@@ -592,6 +628,7 @@ export type ProxyRequestLogAvgOrderByAggregateInput = {
 
 export type ProxyRequestLogMaxOrderByAggregateInput = {
   id?: Prisma.SortOrder
+  requestId?: Prisma.SortOrder
   proxyKeyId?: Prisma.SortOrder
   channelId?: Prisma.SortOrder
   modelId?: Prisma.SortOrder
@@ -612,6 +649,7 @@ export type ProxyRequestLogMaxOrderByAggregateInput = {
 
 export type ProxyRequestLogMinOrderByAggregateInput = {
   id?: Prisma.SortOrder
+  requestId?: Prisma.SortOrder
   proxyKeyId?: Prisma.SortOrder
   channelId?: Prisma.SortOrder
   modelId?: Prisma.SortOrder
@@ -767,6 +805,7 @@ export type NullableEnumEndpointTypeFieldUpdateOperationsInput = {
 
 export type ProxyRequestLogCreateWithoutChannelInput = {
   id?: string
+  requestId?: string | null
   requestPath: string
   requestMethod: string
   endpointType?: $Enums.EndpointType | null
@@ -779,6 +818,7 @@ export type ProxyRequestLogCreateWithoutChannelInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   proxyKey?: Prisma.ProxyKeyCreateNestedOneWithoutProxyRequestLogsInput
   model?: Prisma.ModelCreateNestedOneWithoutProxyRequestLogsInput
@@ -786,6 +826,7 @@ export type ProxyRequestLogCreateWithoutChannelInput = {
 
 export type ProxyRequestLogUncheckedCreateWithoutChannelInput = {
   id?: string
+  requestId?: string | null
   proxyKeyId?: string | null
   modelId?: string | null
   requestPath: string
@@ -800,6 +841,7 @@ export type ProxyRequestLogUncheckedCreateWithoutChannelInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
 }
 
@@ -834,6 +876,7 @@ export type ProxyRequestLogScalarWhereInput = {
   OR?: Prisma.ProxyRequestLogScalarWhereInput[]
   NOT?: Prisma.ProxyRequestLogScalarWhereInput | Prisma.ProxyRequestLogScalarWhereInput[]
   id?: Prisma.StringFilter<"ProxyRequestLog"> | string
+  requestId?: Prisma.StringNullableFilter<"ProxyRequestLog"> | string | null
   proxyKeyId?: Prisma.StringNullableFilter<"ProxyRequestLog"> | string | null
   channelId?: Prisma.StringNullableFilter<"ProxyRequestLog"> | string | null
   modelId?: Prisma.StringNullableFilter<"ProxyRequestLog"> | string | null
@@ -849,11 +892,13 @@ export type ProxyRequestLogScalarWhereInput = {
   statusCode?: Prisma.IntNullableFilter<"ProxyRequestLog"> | number | null
   latency?: Prisma.IntNullableFilter<"ProxyRequestLog"> | number | null
   errorMsg?: Prisma.StringNullableFilter<"ProxyRequestLog"> | string | null
+  attempts?: Prisma.JsonNullableFilter<"ProxyRequestLog">
   createdAt?: Prisma.DateTimeFilter<"ProxyRequestLog"> | Date | string
 }
 
 export type ProxyRequestLogCreateWithoutModelInput = {
   id?: string
+  requestId?: string | null
   requestPath: string
   requestMethod: string
   endpointType?: $Enums.EndpointType | null
@@ -866,6 +911,7 @@ export type ProxyRequestLogCreateWithoutModelInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   proxyKey?: Prisma.ProxyKeyCreateNestedOneWithoutProxyRequestLogsInput
   channel?: Prisma.ChannelCreateNestedOneWithoutProxyRequestLogsInput
@@ -873,6 +919,7 @@ export type ProxyRequestLogCreateWithoutModelInput = {
 
 export type ProxyRequestLogUncheckedCreateWithoutModelInput = {
   id?: string
+  requestId?: string | null
   proxyKeyId?: string | null
   channelId?: string | null
   requestPath: string
@@ -887,6 +934,7 @@ export type ProxyRequestLogUncheckedCreateWithoutModelInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
 }
 
@@ -918,6 +966,7 @@ export type ProxyRequestLogUpdateManyWithWhereWithoutModelInput = {
 
 export type ProxyRequestLogCreateWithoutProxyKeyInput = {
   id?: string
+  requestId?: string | null
   requestPath: string
   requestMethod: string
   endpointType?: $Enums.EndpointType | null
@@ -930,6 +979,7 @@ export type ProxyRequestLogCreateWithoutProxyKeyInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
   channel?: Prisma.ChannelCreateNestedOneWithoutProxyRequestLogsInput
   model?: Prisma.ModelCreateNestedOneWithoutProxyRequestLogsInput
@@ -937,6 +987,7 @@ export type ProxyRequestLogCreateWithoutProxyKeyInput = {
 
 export type ProxyRequestLogUncheckedCreateWithoutProxyKeyInput = {
   id?: string
+  requestId?: string | null
   channelId?: string | null
   modelId?: string | null
   requestPath: string
@@ -951,6 +1002,7 @@ export type ProxyRequestLogUncheckedCreateWithoutProxyKeyInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
 }
 
@@ -982,6 +1034,7 @@ export type ProxyRequestLogUpdateManyWithWhereWithoutProxyKeyInput = {
 
 export type ProxyRequestLogCreateManyChannelInput = {
   id?: string
+  requestId?: string | null
   proxyKeyId?: string | null
   modelId?: string | null
   requestPath: string
@@ -996,11 +1049,13 @@ export type ProxyRequestLogCreateManyChannelInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
 }
 
 export type ProxyRequestLogUpdateWithoutChannelInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   requestPath?: Prisma.StringFieldUpdateOperationsInput | string
   requestMethod?: Prisma.StringFieldUpdateOperationsInput | string
   endpointType?: Prisma.NullableEnumEndpointTypeFieldUpdateOperationsInput | $Enums.EndpointType | null
@@ -1013,6 +1068,7 @@ export type ProxyRequestLogUpdateWithoutChannelInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   proxyKey?: Prisma.ProxyKeyUpdateOneWithoutProxyRequestLogsNestedInput
   model?: Prisma.ModelUpdateOneWithoutProxyRequestLogsNestedInput
@@ -1020,6 +1076,7 @@ export type ProxyRequestLogUpdateWithoutChannelInput = {
 
 export type ProxyRequestLogUncheckedUpdateWithoutChannelInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   proxyKeyId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   modelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   requestPath?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1034,11 +1091,13 @@ export type ProxyRequestLogUncheckedUpdateWithoutChannelInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ProxyRequestLogUncheckedUpdateManyWithoutChannelInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   proxyKeyId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   modelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   requestPath?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1053,11 +1112,13 @@ export type ProxyRequestLogUncheckedUpdateManyWithoutChannelInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ProxyRequestLogCreateManyModelInput = {
   id?: string
+  requestId?: string | null
   proxyKeyId?: string | null
   channelId?: string | null
   requestPath: string
@@ -1072,11 +1133,13 @@ export type ProxyRequestLogCreateManyModelInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
 }
 
 export type ProxyRequestLogUpdateWithoutModelInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   requestPath?: Prisma.StringFieldUpdateOperationsInput | string
   requestMethod?: Prisma.StringFieldUpdateOperationsInput | string
   endpointType?: Prisma.NullableEnumEndpointTypeFieldUpdateOperationsInput | $Enums.EndpointType | null
@@ -1089,6 +1152,7 @@ export type ProxyRequestLogUpdateWithoutModelInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   proxyKey?: Prisma.ProxyKeyUpdateOneWithoutProxyRequestLogsNestedInput
   channel?: Prisma.ChannelUpdateOneWithoutProxyRequestLogsNestedInput
@@ -1096,6 +1160,7 @@ export type ProxyRequestLogUpdateWithoutModelInput = {
 
 export type ProxyRequestLogUncheckedUpdateWithoutModelInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   proxyKeyId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   channelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   requestPath?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1110,11 +1175,13 @@ export type ProxyRequestLogUncheckedUpdateWithoutModelInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ProxyRequestLogUncheckedUpdateManyWithoutModelInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   proxyKeyId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   channelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   requestPath?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1129,11 +1196,13 @@ export type ProxyRequestLogUncheckedUpdateManyWithoutModelInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ProxyRequestLogCreateManyProxyKeyInput = {
   id?: string
+  requestId?: string | null
   channelId?: string | null
   modelId?: string | null
   requestPath: string
@@ -1148,11 +1217,13 @@ export type ProxyRequestLogCreateManyProxyKeyInput = {
   statusCode?: number | null
   latency?: number | null
   errorMsg?: string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Date | string
 }
 
 export type ProxyRequestLogUpdateWithoutProxyKeyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   requestPath?: Prisma.StringFieldUpdateOperationsInput | string
   requestMethod?: Prisma.StringFieldUpdateOperationsInput | string
   endpointType?: Prisma.NullableEnumEndpointTypeFieldUpdateOperationsInput | $Enums.EndpointType | null
@@ -1165,6 +1236,7 @@ export type ProxyRequestLogUpdateWithoutProxyKeyInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   channel?: Prisma.ChannelUpdateOneWithoutProxyRequestLogsNestedInput
   model?: Prisma.ModelUpdateOneWithoutProxyRequestLogsNestedInput
@@ -1172,6 +1244,7 @@ export type ProxyRequestLogUpdateWithoutProxyKeyInput = {
 
 export type ProxyRequestLogUncheckedUpdateWithoutProxyKeyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   channelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   modelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   requestPath?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1186,11 +1259,13 @@ export type ProxyRequestLogUncheckedUpdateWithoutProxyKeyInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ProxyRequestLogUncheckedUpdateManyWithoutProxyKeyInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   channelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   modelId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   requestPath?: Prisma.StringFieldUpdateOperationsInput | string
@@ -1205,6 +1280,7 @@ export type ProxyRequestLogUncheckedUpdateManyWithoutProxyKeyInput = {
   statusCode?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   latency?: Prisma.NullableIntFieldUpdateOperationsInput | number | null
   errorMsg?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  attempts?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -1212,6 +1288,7 @@ export type ProxyRequestLogUncheckedUpdateManyWithoutProxyKeyInput = {
 
 export type ProxyRequestLogSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
+  requestId?: boolean
   proxyKeyId?: boolean
   channelId?: boolean
   modelId?: boolean
@@ -1227,6 +1304,7 @@ export type ProxyRequestLogSelect<ExtArgs extends runtime.Types.Extensions.Inter
   statusCode?: boolean
   latency?: boolean
   errorMsg?: boolean
+  attempts?: boolean
   createdAt?: boolean
   proxyKey?: boolean | Prisma.ProxyRequestLog$proxyKeyArgs<ExtArgs>
   channel?: boolean | Prisma.ProxyRequestLog$channelArgs<ExtArgs>
@@ -1235,6 +1313,7 @@ export type ProxyRequestLogSelect<ExtArgs extends runtime.Types.Extensions.Inter
 
 export type ProxyRequestLogSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
+  requestId?: boolean
   proxyKeyId?: boolean
   channelId?: boolean
   modelId?: boolean
@@ -1250,6 +1329,7 @@ export type ProxyRequestLogSelectCreateManyAndReturn<ExtArgs extends runtime.Typ
   statusCode?: boolean
   latency?: boolean
   errorMsg?: boolean
+  attempts?: boolean
   createdAt?: boolean
   proxyKey?: boolean | Prisma.ProxyRequestLog$proxyKeyArgs<ExtArgs>
   channel?: boolean | Prisma.ProxyRequestLog$channelArgs<ExtArgs>
@@ -1258,6 +1338,7 @@ export type ProxyRequestLogSelectCreateManyAndReturn<ExtArgs extends runtime.Typ
 
 export type ProxyRequestLogSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
+  requestId?: boolean
   proxyKeyId?: boolean
   channelId?: boolean
   modelId?: boolean
@@ -1273,6 +1354,7 @@ export type ProxyRequestLogSelectUpdateManyAndReturn<ExtArgs extends runtime.Typ
   statusCode?: boolean
   latency?: boolean
   errorMsg?: boolean
+  attempts?: boolean
   createdAt?: boolean
   proxyKey?: boolean | Prisma.ProxyRequestLog$proxyKeyArgs<ExtArgs>
   channel?: boolean | Prisma.ProxyRequestLog$channelArgs<ExtArgs>
@@ -1281,6 +1363,7 @@ export type ProxyRequestLogSelectUpdateManyAndReturn<ExtArgs extends runtime.Typ
 
 export type ProxyRequestLogSelectScalar = {
   id?: boolean
+  requestId?: boolean
   proxyKeyId?: boolean
   channelId?: boolean
   modelId?: boolean
@@ -1296,10 +1379,11 @@ export type ProxyRequestLogSelectScalar = {
   statusCode?: boolean
   latency?: boolean
   errorMsg?: boolean
+  attempts?: boolean
   createdAt?: boolean
 }
 
-export type ProxyRequestLogOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "proxyKeyId" | "channelId" | "modelId" | "requestPath" | "requestMethod" | "endpointType" | "requestedModel" | "actualModelName" | "channelName" | "proxyKeyName" | "isStream" | "success" | "statusCode" | "latency" | "errorMsg" | "createdAt", ExtArgs["result"]["proxyRequestLog"]>
+export type ProxyRequestLogOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "requestId" | "proxyKeyId" | "channelId" | "modelId" | "requestPath" | "requestMethod" | "endpointType" | "requestedModel" | "actualModelName" | "channelName" | "proxyKeyName" | "isStream" | "success" | "statusCode" | "latency" | "errorMsg" | "attempts" | "createdAt", ExtArgs["result"]["proxyRequestLog"]>
 export type ProxyRequestLogInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   proxyKey?: boolean | Prisma.ProxyRequestLog$proxyKeyArgs<ExtArgs>
   channel?: boolean | Prisma.ProxyRequestLog$channelArgs<ExtArgs>
@@ -1325,6 +1409,7 @@ export type $ProxyRequestLogPayload<ExtArgs extends runtime.Types.Extensions.Int
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
+    requestId: string | null
     proxyKeyId: string | null
     channelId: string | null
     modelId: string | null
@@ -1340,6 +1425,7 @@ export type $ProxyRequestLogPayload<ExtArgs extends runtime.Types.Extensions.Int
     statusCode: number | null
     latency: number | null
     errorMsg: string | null
+    attempts: runtime.JsonValue | null
     createdAt: Date
   }, ExtArgs["result"]["proxyRequestLog"]>
   composites: {}
@@ -1768,6 +1854,7 @@ export interface Prisma__ProxyRequestLogClient<T, Null = never, ExtArgs extends 
  */
 export interface ProxyRequestLogFieldRefs {
   readonly id: Prisma.FieldRef<"ProxyRequestLog", 'String'>
+  readonly requestId: Prisma.FieldRef<"ProxyRequestLog", 'String'>
   readonly proxyKeyId: Prisma.FieldRef<"ProxyRequestLog", 'String'>
   readonly channelId: Prisma.FieldRef<"ProxyRequestLog", 'String'>
   readonly modelId: Prisma.FieldRef<"ProxyRequestLog", 'String'>
@@ -1783,6 +1870,7 @@ export interface ProxyRequestLogFieldRefs {
   readonly statusCode: Prisma.FieldRef<"ProxyRequestLog", 'Int'>
   readonly latency: Prisma.FieldRef<"ProxyRequestLog", 'Int'>
   readonly errorMsg: Prisma.FieldRef<"ProxyRequestLog", 'String'>
+  readonly attempts: Prisma.FieldRef<"ProxyRequestLog", 'Json'>
   readonly createdAt: Prisma.FieldRef<"ProxyRequestLog", 'DateTime'>
 }
     

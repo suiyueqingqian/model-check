@@ -142,6 +142,7 @@ CREATE TABLE IF NOT EXISTS "model_keywords" (
 
 CREATE TABLE IF NOT EXISTS "proxy_request_logs" (
   "id" TEXT NOT NULL,
+  "request_id" VARCHAR(64),
   "proxy_key_id" TEXT,
   "channel_id" TEXT,
   "model_id" TEXT,
@@ -157,6 +158,7 @@ CREATE TABLE IF NOT EXISTS "proxy_request_logs" (
   "status_code" INTEGER,
   "latency" INTEGER,
   "error_msg" TEXT,
+  "attempts" JSONB,
   "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY ("id"),
   CONSTRAINT "proxy_request_logs_proxy_key_id_fkey" FOREIGN KEY ("proxy_key_id") REFERENCES "proxy_keys"("id") ON DELETE SET NULL ON UPDATE CASCADE,
@@ -222,6 +224,7 @@ ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "unified_mode" BOOLEAN NOT NUL
 ALTER TABLE "proxy_keys" ADD COLUMN IF NOT EXISTS "allowed_unified_models" JSONB;
 
 -- proxy_request_logs: 后加的字段
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "request_id" VARCHAR(64);
 ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "proxy_key_id" TEXT;
 ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "channel_id" TEXT;
 ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "model_id" TEXT;
@@ -234,6 +237,7 @@ ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "is_stream" BOOLEAN NO
 ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "status_code" INTEGER;
 ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "latency" INTEGER;
 ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "error_msg" TEXT;
+ALTER TABLE "proxy_request_logs" ADD COLUMN IF NOT EXISTS "attempts" JSONB;
 
 -- 默认内置代理 key 初始化
 -- 从 app.proxy_api_key 读取；为空时跳过
@@ -385,3 +389,4 @@ CREATE INDEX IF NOT EXISTS "proxy_request_logs_requested_model_created_at_idx" O
 CREATE INDEX IF NOT EXISTS "proxy_request_logs_channel_id_created_at_idx" ON "proxy_request_logs"("channel_id", "created_at");
 CREATE INDEX IF NOT EXISTS "proxy_request_logs_proxy_key_id_created_at_idx" ON "proxy_request_logs"("proxy_key_id", "created_at");
 CREATE INDEX IF NOT EXISTS "proxy_request_logs_model_id_created_at_idx" ON "proxy_request_logs"("model_id", "created_at");
+CREATE UNIQUE INDEX IF NOT EXISTS "proxy_request_logs_request_id_key" ON "proxy_request_logs"("request_id");

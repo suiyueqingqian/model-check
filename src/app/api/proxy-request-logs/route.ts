@@ -14,6 +14,7 @@ function buildWhere(
 
   if (search) {
     where.OR = [
+      { requestId: { contains: search, mode: "insensitive" } },
       { requestedModel: { contains: search, mode: "insensitive" } },
       { actualModelName: { contains: search, mode: "insensitive" } },
       { channelName: { contains: search, mode: "insensitive" } },
@@ -60,6 +61,7 @@ export async function GET(request: NextRequest) {
         take: pageSize,
         select: {
           id: true,
+          requestId: true,
           requestPath: true,
           requestMethod: true,
           endpointType: true,
@@ -72,6 +74,7 @@ export async function GET(request: NextRequest) {
           statusCode: true,
           latency: true,
           errorMsg: true,
+          attempts: true,
           createdAt: true,
         },
       }),

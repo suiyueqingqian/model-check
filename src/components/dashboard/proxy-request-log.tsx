@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 
 interface ProxyRequestLogItem {
   id: string;
+  requestId: string | null;
   requestPath: string;
   requestMethod: string;
   endpointType: string | null;
@@ -20,6 +21,18 @@ interface ProxyRequestLogItem {
   statusCode: number | null;
   latency: number | null;
   errorMsg: string | null;
+  attempts: Array<{
+    endpointType: string | null;
+    upstreamPath: string | null;
+    actualModelName: string | null;
+    channelId: string | null;
+    channelName: string | null;
+    modelId: string | null;
+    success: boolean;
+    statusCode: number | null;
+    latency: number | null;
+    errorMsg: string | null;
+  }> | null;
   createdAt: string;
 }
 
@@ -85,52 +98,40 @@ function formatEndpointLabel(value: string | null): string {
   }
 }
 
-function getUpstreamPath(value: string | null): string {
-  switch (value) {
-    case "CHAT":
-      return "/v1/chat/completions";
-    case "CLAUDE":
-      return "/v1/messages";
-    case "GEMINI":
-      return "/v1beta/models/...";
-    case "CODEX":
-      return "/v1/responses";
-    case "IMAGE":
-      return "/v1/images/generations";
-    default:
-      return "-";
-  }
-}
-
 function getStatusLabel(value: string): string {
   return STATUS_OPTIONS.find((item) => item.value === value)?.label || "全部结果";
 }
 
-function getPathBadges(requestPath: string, endpointType: string | null): string[] {
-  const upstreamPath = getUpstreamPath(endpointType);
-
-  if (upstreamPath === "-" || requestPath === upstreamPath) {
-    return ["同一路径"];
-  }
-
-  return ["用户请求", "上游请求"];
+function formatLatency(value: number | null): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value}ms` : "-";
 }
 
-function DetailItem({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div className="space-y-1">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={cn("text-sm break-all", mono && "font-mono")}>{value || "-"}</div>
-    </div>
-  );
+function getFinalResultLabel(log: ProxyRequestLogItem): string {
+  const status = log.statusCode ?? "-";
+  return `${log.success ? "成功" : "失败"} / ${status}`;
+}
+
+function getAttemptSummary(log: ProxyRequestLogItem): string {
+  const attempts = Array.isArray(log.attempts) ? log.attempts : [];
+  if (attempts.length === 0) {
+    return log.channelName || "-";
+  }
+
+  const latestSuccess = [...attempts].reverse().find((attempt) => attempt.success);
+  if (latestSuccess?.channelName) {
+    return attempts.length > 1
+      ? `${latestSuccess.channelName} · 共${attempts.length}次`
+      : latestSuccess.channelName;
+  }
+
+  const latestAttempt = attempts[attempts.length - 1];
+  if (latestAttempt?.channelName) {
+    return attempts.length > 1
+      ? `${latestAttempt.channelName} · 共${attempts.length}次`
+      : latestAttempt.channelName;
+  }
+
+  return attempts.length > 0 ? `共${attempts.length}次尝试` : "-";
 }
 
 export function ProxyRequestLog({
@@ -447,65 +448,67 @@ export function ProxyRequestLog({
           "overflow-hidden rounded-2xl border border-border bg-card dark:bg-card",
           standalone && "shadow-sm"
         )}>
-          <div className="hidden grid-cols-[180px_100px_minmax(0,1.3fr)_minmax(0,1fr)_90px_80px_48px] gap-3 border-b border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground lg:grid dark:bg-muted/10 md:px-5">
+          <div className="hidden grid-cols-[180px_minmax(0,1.6fr)_minmax(0,1fr)_120px_80px_44px_44px] gap-3 border-b border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground lg:grid dark:bg-muted/10 md:px-5">
             <span>时间</span>
-            <span>类型</span>
-            <span>模型 / 路径</span>
+            <span>模型 / 代理API请求路径</span>
             <span>渠道 / Key</span>
             <span>结果</span>
             <span>耗时</span>
-            <span className="text-right">操作</span>
+            <span className="text-center">展开</span>
+            <span className="text-center">删除</span>
           </div>
           <div className="divide-y divide-border">
             {data.logs.map((log) => {
               const isExpanded = expandedId === log.id;
-              const pathBadges = getPathBadges(log.requestPath, log.endpointType);
-              const upstreamPath = getUpstreamPath(log.endpointType);
-              const hasDifferentUpstreamPath = upstreamPath !== "-" && log.requestPath !== upstreamPath;
+              const attempts = Array.isArray(log.attempts) ? log.attempts : [];
+              const attemptSummary = getAttemptSummary(log);
 
               return (
                 <div key={log.id} className="overflow-hidden">
-                  <div className="grid w-full gap-3 px-4 py-3 transition-colors hover:bg-muted/30 dark:hover:bg-muted/10 md:px-5 lg:grid-cols-[minmax(0,1fr)_48px] lg:items-center">
-                    <button
-                      type="button"
-                      onClick={() => setExpandedId((prev) => prev === log.id ? null : log.id)}
-                      className="grid w-full gap-3 text-left lg:grid-cols-[180px_100px_minmax(0,1.3fr)_minmax(0,1fr)_90px_80px_40px] lg:items-center"
-                    >
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setExpandedId((prev) => prev === log.id ? null : log.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setExpandedId((prev) => prev === log.id ? null : log.id);
+                      }
+                    }}
+                    className="grid w-full cursor-pointer gap-3 px-4 py-3 transition-colors hover:bg-muted/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/30 dark:hover:bg-muted/10 md:px-5 lg:grid-cols-[180px_minmax(0,1.6fr)_minmax(0,1fr)_120px_80px_44px_44px] lg:items-center"
+                  >
                     <div className="text-xs text-muted-foreground md:text-sm">
                       {formatTime(log.createdAt)}
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="rounded-full border border-border bg-background px-2 py-1 font-medium dark:bg-muted/20">
-                        {log.requestMethod}
-                      </span>
-                      <span className="rounded-full border border-border bg-muted/40 px-2 py-1 font-medium dark:bg-muted/20">
-                        {formatEndpointLabel(log.endpointType)}
-                      </span>
-                    </div>
-
-                    <div className="min-w-0">
-                      <div className="truncate font-mono text-sm font-medium text-foreground" title={log.requestedModel || "-"}>
-                        {log.requestedModel || "-"}
-                      </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                        {pathBadges.map((badge) => (
-                          <span
-                            key={badge}
-                            className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground dark:bg-muted/20"
-                          >
-                            {badge}
+                    <div className="min-w-0 text-left">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="truncate font-mono text-sm font-medium text-foreground" title={log.requestedModel || "-"}>
+                          {log.requestedModel || "-"}
+                        </div>
+                        <span className="rounded-full border border-border bg-background px-1.5 py-px text-[10px] leading-4 text-muted-foreground dark:bg-muted/20">
+                          {log.requestMethod}
+                        </span>
+                        <span className="rounded-full border border-border bg-muted/40 px-1.5 py-px text-[10px] leading-4 text-muted-foreground dark:bg-muted/20">
+                          {formatEndpointLabel(log.endpointType)}
+                        </span>
+                        {log.isStream && (
+                          <span className="rounded-full border border-border bg-muted/40 px-1.5 py-px text-[10px] leading-4 text-muted-foreground dark:bg-muted/20">
+                            流式
                           </span>
-                        ))}
+                        )}
                       </div>
                       <div className="mt-1 truncate font-mono text-xs text-muted-foreground" title={log.requestPath}>
                         {log.requestPath}
                       </div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground" title={log.requestId || log.id}>
+                        请求ID：{log.requestId || log.id}
+                      </div>
                     </div>
 
                     <div className="min-w-0 text-sm">
-                      <div className="truncate text-foreground" title={log.channelName || "-"}>
-                        {log.channelName || "-"}
+                      <div className="truncate text-foreground" title={attemptSummary}>
+                        {attemptSummary}
                       </div>
                       <div className="truncate text-xs text-muted-foreground" title={log.proxyKeyName || "-"}>
                         {log.proxyKeyName || "-"}
@@ -516,23 +519,33 @@ export function ProxyRequestLog({
                       "text-sm font-medium",
                       log.success ? "text-emerald-600 dark:text-emerald-400" : "text-red-500 dark:text-red-400"
                     )}>
-                      {log.success ? "成功" : "失败"}
+                      {getFinalResultLabel(log)}
                     </div>
 
                     <div className="text-sm text-muted-foreground lg:text-left">
-                      {log.latency ? `${log.latency}ms` : "-"}
+                      {formatLatency(log.latency)}
                     </div>
 
-                    <div className="flex justify-end text-muted-foreground lg:justify-center">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setExpandedId((prev) => prev === log.id ? null : log.id);
+                      }}
+                      className="flex h-9 w-9 items-center justify-center justify-self-center rounded-xl text-muted-foreground transition-colors hover:bg-accent"
+                      title={isExpanded ? "收起详情" : "展开详情"}
+                    >
                       {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                    </div>
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => void handleDeleteLogs("single", log.id)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void handleDeleteLogs("single", log.id);
+                      }}
                       disabled={deletingTarget !== null}
-                      className="flex h-9 w-9 items-center justify-center rounded-xl text-red-500 transition-colors hover:bg-red-500/10 disabled:opacity-50 disabled:text-muted-foreground"
+                      className="flex h-9 w-9 items-center justify-center justify-self-center rounded-xl text-red-500 transition-colors hover:bg-red-500/10 disabled:opacity-50 disabled:text-muted-foreground"
                       title="删除这条日志"
                     >
                       {deletingTarget === log.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -541,53 +554,49 @@ export function ProxyRequestLog({
 
                   {isExpanded && (
                     <div className="border-t border-border bg-muted/20 px-4 py-3 dark:bg-muted/10 md:px-5">
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                      <DetailItem label="请求模型" value={log.requestedModel || "-"} mono />
-                      <DetailItem label="实际模型" value={log.actualModelName || "-"} mono />
-                      <DetailItem
-                        label={hasDifferentUpstreamPath ? "请求路径" : "路径"}
-                        value={log.requestPath}
-                        mono
-                      />
-                      <DetailItem label="上游端点" value={formatEndpointLabel(log.endpointType)} />
-                      <DetailItem
-                        label={hasDifferentUpstreamPath ? "上游路径" : "实际路径"}
-                        value={upstreamPath}
-                        mono
-                      />
-                      <DetailItem label="请求方法" value={log.requestMethod} />
-                      <DetailItem label="请求时间" value={formatTime(log.createdAt)} />
-                      <DetailItem label="渠道名" value={log.channelName || "-"} />
-                      <DetailItem label="代理 Key" value={log.proxyKeyName || "-"} />
-                      <DetailItem label="传输方式" value={log.isStream ? "流式" : "普通"} />
-                      <DetailItem label="状态码" value={String(log.statusCode ?? "-")} />
-                      <DetailItem label="耗时" value={log.latency ? `${log.latency}ms` : "-"} />
-                      <DetailItem label="执行结果" value={log.success ? "成功" : "失败"} />
-                    </div>
-
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {pathBadges.map((badge) => (
-                        <span
-                          key={`detail-${badge}`}
-                          className="rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground dark:bg-muted/20"
-                        >
-                          {badge}
-                        </span>
-                      ))}
-                    </div>
-
-                    {hasDifferentUpstreamPath && (
-                      <div className="mt-2 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
-                        用户路径：{log.requestPath} · 上游路径：{upstreamPath}
-                      </div>
-                    )}
-
-                      {log.errorMsg && (
-                        <div className="mt-2.5 space-y-1.5">
-                          <div className="text-xs text-muted-foreground">错误详情</div>
-                          <pre className="rounded-xl border border-red-300/50 bg-red-500/5 px-3 py-2 text-xs text-red-600 whitespace-pre-wrap break-all dark:border-red-500/30 dark:text-red-400">
-                            {log.errorMsg}
-                          </pre>
+                      {attempts.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                          <div className="text-xs text-muted-foreground">上游尝试链路</div>
+                          <div className="flex flex-wrap items-stretch gap-2">
+                            {attempts.map((attempt, index) => (
+                              <div key={`${log.id}-attempt-${index}`} className="flex items-stretch gap-2">
+                                <div
+                                  className={cn(
+                                    "min-w-[220px] max-w-[280px] rounded-xl border px-3 py-2 dark:bg-muted/10",
+                                    attempt.success
+                                      ? "border-emerald-300/60 bg-emerald-500/5"
+                                      : "border-red-300/60 bg-red-500/5"
+                                  )}
+                                >
+                                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                    <span>第 {index + 1} 次</span>
+                                    <span>{formatEndpointLabel(attempt.endpointType)}</span>
+                                    <span>{attempt.statusCode ?? "-"}</span>
+                                    <span>{formatLatency(attempt.latency)}</span>
+                                  </div>
+                                  <div className="mt-1 text-sm text-foreground">
+                                    {(attempt.channelName || "-") + " / " + (attempt.actualModelName || "-")}
+                                  </div>
+                                  <div className="mt-1 text-[11px] text-muted-foreground">
+                                    上游请求端点
+                                  </div>
+                                  <div className="mt-1 font-mono text-xs text-muted-foreground break-all">
+                                    {attempt.upstreamPath || "-"}
+                                  </div>
+                                  {attempt.errorMsg && (
+                                    <div className="mt-2 line-clamp-3 text-xs text-red-600 dark:text-red-400">
+                                      {attempt.errorMsg}
+                                    </div>
+                                  )}
+                                </div>
+                                {index < attempts.length - 1 && (
+                                  <div className="flex items-center text-sm text-muted-foreground">
+                                    →
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>

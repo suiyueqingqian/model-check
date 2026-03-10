@@ -2,6 +2,7 @@
 // Routes requests to channels stored in database based on model name
 
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma";
 import { getRedisClient } from "@/lib/redis";
@@ -240,8 +241,22 @@ export interface ProxyRequestContext {
 
 export type ProxyEndpointType = "CHAT" | "CLAUDE" | "GEMINI" | "CODEX" | "IMAGE";
 
+export interface ProxyRequestAttemptLog {
+  endpointType?: ProxyEndpointType;
+  upstreamPath?: string | null;
+  actualModelName?: string | null;
+  channelId?: string | null;
+  channelName?: string | null;
+  modelId?: string | null;
+  success: boolean;
+  statusCode?: number;
+  latency?: number;
+  errorMsg?: string | null;
+}
+
 export interface ProxyRequestLogInput {
   keyResult?: ValidateKeyResult;
+  requestId?: string;
   requestPath: string;
   requestMethod: string;
   endpointType?: ProxyEndpointType;
@@ -255,6 +270,7 @@ export interface ProxyRequestLogInput {
   statusCode?: number;
   latency?: number;
   errorMsg?: string | null;
+  attempts?: ProxyRequestAttemptLog[];
 }
 
 export interface ProxyChannelCandidate {
@@ -273,6 +289,18 @@ export interface ProxyChannelCandidate {
 export interface ProxyChannelCandidateResult {
   isUnifiedRouting: boolean;
   candidates: ProxyChannelCandidate[];
+}
+
+export function createProxyRequestId(): string {
+  return randomUUID();
+}
+
+export function getUpstreamPathFromUrl(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
 }
 
 type RoutedModelRecord = {
@@ -383,26 +411,50 @@ export async function recordProxyRequestLog(input: ProxyRequestLogInput): Promis
   const proxyKeyId = keyRecord && keyRecord.id !== BUILTIN_PROXY_KEY_DB_ID
     ? keyRecord.id
     : null;
+  const attempts = Array.isArray(input.attempts)
+    ? input.attempts.map((attempt) => ({
+        endpointType: attempt.endpointType ?? null,
+        upstreamPath: attempt.upstreamPath ?? null,
+        actualModelName: attempt.actualModelName ?? null,
+        channelId: attempt.channelId ?? null,
+        channelName: attempt.channelName ?? null,
+        modelId: attempt.modelId ?? null,
+        success: attempt.success,
+        statusCode: attempt.statusCode ?? null,
+        latency: attempt.latency ?? null,
+        errorMsg: attempt.errorMsg ? attempt.errorMsg.slice(0, 1000) : null,
+      }))
+    : [];
+  const data = {
+    requestId: input.requestId ?? null,
+    proxyKeyId,
+    channelId: input.channelId ?? null,
+    modelId: input.modelId ?? null,
+    requestPath: input.requestPath,
+    requestMethod: input.requestMethod,
+    endpointType: input.endpointType ?? null,
+    requestedModel: input.requestedModel ?? null,
+    actualModelName: input.actualModelName ?? null,
+    channelName: input.channelName ?? null,
+    proxyKeyName: keyRecord?.name ?? null,
+    isStream: input.isStream === true,
+    success: input.success,
+    statusCode: input.statusCode,
+    latency: input.latency,
+    errorMsg: input.errorMsg ? input.errorMsg.slice(0, 1000) : null,
+    attempts: attempts.length > 0 ? attempts : Prisma.JsonNull,
+  };
 
-  await prisma.proxyRequestLog.create({
-    data: {
-      proxyKeyId,
-      channelId: input.channelId ?? null,
-      modelId: input.modelId ?? null,
-      requestPath: input.requestPath,
-      requestMethod: input.requestMethod,
-      endpointType: input.endpointType ?? null,
-      requestedModel: input.requestedModel ?? null,
-      actualModelName: input.actualModelName ?? null,
-      channelName: input.channelName ?? null,
-      proxyKeyName: keyRecord?.name ?? null,
-      isStream: input.isStream === true,
-      success: input.success,
-      statusCode: input.statusCode,
-      latency: input.latency,
-      errorMsg: input.errorMsg ? input.errorMsg.slice(0, 1000) : null,
-    },
-  });
+  if (input.requestId) {
+    await prisma.proxyRequestLog.upsert({
+      where: { requestId: input.requestId },
+      create: data,
+      update: data,
+    });
+    return;
+  }
+
+  await prisma.proxyRequestLog.create({ data });
 }
 
 const routedModelSelect = {

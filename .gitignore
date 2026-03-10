@@ -49,3 +49,4 @@ coverage
 *.temp
 
 nul
+.ace-tool/

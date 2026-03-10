@@ -1135,6 +1135,7 @@ export type ProxyKeyScalarFieldEnum = (typeof ProxyKeyScalarFieldEnum)[keyof typ
 
 export const ProxyRequestLogScalarFieldEnum = {
   id: 'id',
+  requestId: 'requestId',
   proxyKeyId: 'proxyKeyId',
   channelId: 'channelId',
   modelId: 'modelId',
@@ -1150,6 +1151,7 @@ export const ProxyRequestLogScalarFieldEnum = {
   statusCode: 'statusCode',
   latency: 'latency',
   errorMsg: 'errorMsg',
+  attempts: 'attempts',
   createdAt: 'createdAt'
 } as const
 

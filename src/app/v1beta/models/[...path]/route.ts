@@ -8,6 +8,8 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getProxyChannelCandidatesWithPermission,
   buildUpstreamHeaders,
+  createProxyRequestId,
+  getUpstreamPathFromUrl,
   markProxyChannelKeyUnavailable,
   proxyRequest,
   recordProxyModelResult,
@@ -15,6 +17,7 @@ import {
   streamResponse,
   errorResponse,
   normalizeBaseUrl,
+  type ProxyRequestAttemptLog,
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
 import { createAsyncErrorHandler } from "@/lib/utils/error";
@@ -51,6 +54,8 @@ export async function POST(
   try {
     const requestPath = request.nextUrl?.pathname ?? new URL(request.url).pathname;
     const requestMethod = request.method;
+    const requestId = createProxyRequestId();
+    const upstreamAttempts: ProxyRequestAttemptLog[] = [];
     const handleWriteRequestLogError = createAsyncErrorHandler("[GeminiProxy] 写请求日志失败", "warn");
     const handleRecordModelResultError = createAsyncErrorHandler("[GeminiProxy] 记录模型结果失败", "warn");
     const writeRequestLog = (options: {
@@ -66,11 +71,24 @@ export async function POST(
       errorMsg?: string | null;
     }) => recordProxyRequestLog({
       keyResult,
+      requestId,
       requestPath,
       requestMethod,
       endpointType: "GEMINI",
+      attempts: upstreamAttempts,
       ...options,
     }).catch(handleWriteRequestLogError);
+    const addUpstreamAttempt = (attempt: ProxyRequestAttemptLog) => {
+      upstreamAttempts.push({
+        ...attempt,
+        upstreamPath: attempt.upstreamPath ?? null,
+        actualModelName: attempt.actualModelName ?? null,
+        channelId: attempt.channelId ?? null,
+        channelName: attempt.channelName ?? null,
+        modelId: attempt.modelId ?? null,
+        errorMsg: attempt.errorMsg ?? null,
+      });
+    };
     const recordModelResult = (
       modelId: Parameters<typeof recordProxyModelResult>[0],
       endpointType: Parameters<typeof recordProxyModelResult>[1],
@@ -185,6 +203,18 @@ export async function POST(
           const errorText = await response.text().catch(() => "Unknown error");
           lastErrorMessage = `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`;
           lastStatus = response.status;
+          addUpstreamAttempt({
+            endpointType: "GEMINI",
+            upstreamPath: getUpstreamPathFromUrl(url),
+            actualModelName: channel.actualModelName,
+            channelId: channel.channelId,
+            channelName: channel.channelName,
+            modelId: channel.modelId,
+            success: false,
+            statusCode: response.status,
+            latency,
+            errorMsg: lastErrorMessage,
+          });
           finalFailureLog = {
             actualModelName: channel.actualModelName,
             channelId: channel.channelId,
@@ -207,6 +237,18 @@ export async function POST(
 
           continue;
         }
+
+        addUpstreamAttempt({
+          endpointType: "GEMINI",
+          upstreamPath: getUpstreamPathFromUrl(url),
+          actualModelName: channel.actualModelName,
+          channelId: channel.channelId,
+          channelName: channel.channelName,
+          modelId: channel.modelId,
+          success: true,
+          statusCode: response.status,
+          latency,
+        });
 
         if (isStream) {
           if (isUnifiedRouting && channel.modelId) {
@@ -305,6 +347,18 @@ export async function POST(
         const message = error instanceof Error ? error.message : "Unknown error";
         lastErrorMessage = `Proxy error: ${message}`;
         lastStatus = 502;
+        addUpstreamAttempt({
+          endpointType: "GEMINI",
+          upstreamPath: `/v1beta/models/${channel.actualModelName}:${method}`,
+          actualModelName: channel.actualModelName,
+          channelId: channel.channelId,
+          channelName: channel.channelName,
+          modelId: channel.modelId,
+          success: false,
+          statusCode: 502,
+          latency: Date.now() - startedAt,
+          errorMsg: lastErrorMessage,
+        });
         finalFailureLog = {
           actualModelName: channel.actualModelName,
           channelId: channel.channelId,
@@ -372,6 +426,8 @@ export async function GET(
   try {
     const requestPath = request.nextUrl?.pathname ?? new URL(request.url).pathname;
     const requestMethod = request.method;
+    const requestId = createProxyRequestId();
+    const upstreamAttempts: ProxyRequestAttemptLog[] = [];
     const handleWriteRequestLogError = createAsyncErrorHandler("[GeminiProxy] 写请求日志失败", "warn");
     const handleRecordModelResultError = createAsyncErrorHandler("[GeminiProxy] 记录模型结果失败", "warn");
     const writeRequestLog = (options: {
@@ -386,11 +442,24 @@ export async function GET(
       errorMsg?: string | null;
     }) => recordProxyRequestLog({
       keyResult,
+      requestId,
       requestPath,
       requestMethod,
       endpointType: "GEMINI",
+      attempts: upstreamAttempts,
       ...options,
     }).catch(handleWriteRequestLogError);
+    const addUpstreamAttempt = (attempt: ProxyRequestAttemptLog) => {
+      upstreamAttempts.push({
+        ...attempt,
+        upstreamPath: attempt.upstreamPath ?? null,
+        actualModelName: attempt.actualModelName ?? null,
+        channelId: attempt.channelId ?? null,
+        channelName: attempt.channelName ?? null,
+        modelId: attempt.modelId ?? null,
+        errorMsg: attempt.errorMsg ?? null,
+      });
+    };
     const recordModelResult = (
       modelId: Parameters<typeof recordProxyModelResult>[0],
       endpointType: Parameters<typeof recordProxyModelResult>[1],
@@ -481,6 +550,18 @@ export async function GET(
           const errorText = await response.text().catch(() => "Unknown error");
           lastErrorMessage = `Upstream error: ${response.status} - ${errorText.slice(0, 500)}`;
           lastStatus = response.status;
+          addUpstreamAttempt({
+            endpointType: "GEMINI",
+            upstreamPath: getUpstreamPathFromUrl(url),
+            actualModelName: channel.actualModelName,
+            channelId: channel.channelId,
+            channelName: channel.channelName,
+            modelId: channel.modelId,
+            success: false,
+            statusCode: response.status,
+            latency,
+            errorMsg: lastErrorMessage,
+          });
           finalFailureLog = {
             actualModelName: channel.actualModelName,
             channelId: channel.channelId,
@@ -503,6 +584,18 @@ export async function GET(
 
           continue;
         }
+
+        addUpstreamAttempt({
+          endpointType: "GEMINI",
+          upstreamPath: getUpstreamPathFromUrl(url),
+          actualModelName: channel.actualModelName,
+          channelId: channel.channelId,
+          channelName: channel.channelName,
+          modelId: channel.modelId,
+          success: true,
+          statusCode: response.status,
+          latency,
+        });
 
         const data = await response.json();
 
@@ -530,6 +623,18 @@ export async function GET(
         const message = error instanceof Error ? error.message : "Unknown error";
         lastErrorMessage = `Proxy error: ${message}`;
         lastStatus = 502;
+        addUpstreamAttempt({
+          endpointType: "GEMINI",
+          upstreamPath: `/v1beta/models/${channel.actualModelName}`,
+          actualModelName: channel.actualModelName,
+          channelId: channel.channelId,
+          channelName: channel.channelName,
+          modelId: channel.modelId,
+          success: false,
+          statusCode: 502,
+          latency: Date.now() - startedAt,
+          errorMsg: lastErrorMessage,
+        });
         finalFailureLog = {
           actualModelName: channel.actualModelName,
           channelId: channel.channelId,

@@ -111,6 +111,7 @@ model ProxyKey {
 
 model ProxyRequestLog {
   id              String       @id @default(cuid())
+  requestId       String?      @unique @map("request_id") @db.VarChar(64)
   proxyKeyId      String?      @map("proxy_key_id")
   channelId       String?      @map("channel_id")
   modelId         String?      @map("model_id")
@@ -126,6 +127,7 @@ model ProxyRequestLog {
   statusCode      Int?         @map("status_code")
   latency         Int?
   errorMsg        String?      @map("error_msg")
+  attempts        Json?
   createdAt       DateTime     @default(now()) @map("created_at")
   proxyKey        ProxyKey?    @relation(fields: [proxyKeyId], references: [id], onDelete: SetNull)
   channel         Channel?     @relation(fields: [channelId], references: [id], onDelete: SetNull)
