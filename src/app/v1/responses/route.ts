@@ -35,6 +35,7 @@ import {
 import {
   getOpenAIEndpointOrder,
   isGptFiveOrNewerModel,
+  shouldUseChatCompletionsOnlyForModel,
 } from "@/lib/utils/model-name";
 import { createAsyncErrorHandler, isExpectedCloseError, logWarn } from "@/lib/utils/error";
 
@@ -448,7 +449,8 @@ function buildAttemptList(
   actualModelName: string,
   detectedEndpoints: string[],
   preferredProxyEndpoint: "CHAT" | "CODEX" | null,
-  shouldTryChatFallback: boolean
+  shouldTryChatFallback: boolean,
+  forceChatCompletions: boolean
 ): ProxyAttempt[] {
   if (isClaudeModelName(actualModelName)) {
     return [{
@@ -486,6 +488,10 @@ function buildAttemptList(
       extraHeaders: RESPONSES_HEADERS,
     },
   };
+
+  if (forceChatCompletions) {
+    return [attempts.CHAT];
+  }
 
   if (!shouldTryChatFallback) {
     return [attempts.CODEX];
@@ -655,11 +661,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const forceChatCompletions =
+      typeof modelName === "string" && shouldUseChatCompletionsOnlyForModel(modelName);
+
     const requestedEndpointType =
       typeof modelName === "string" && isClaudeModelName(modelName)
         ? "CLAUDE"
         : typeof modelName === "string" && isGeminiModelName(modelName)
           ? "GEMINI"
+          : forceChatCompletions
+            ? "CHAT"
           : "CODEX";
 
     const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(
@@ -681,8 +692,11 @@ export async function POST(request: NextRequest) {
 
     const isStream = body.stream !== false;
     const shouldTryChatFallback =
-      isGptFiveOrNewerModel(modelName) &&
-      !modelName.toLowerCase().includes("codex");
+      forceChatCompletions ||
+      (
+        isGptFiveOrNewerModel(modelName) &&
+        !modelName.toLowerCase().includes("codex")
+      );
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
     let finalFailureLog: {
@@ -704,7 +718,8 @@ export async function POST(request: NextRequest) {
         channel.actualModelName,
         channel.detectedEndpoints,
         channel.preferredProxyEndpoint,
-        shouldTryChatFallback
+        shouldTryChatFallback,
+        forceChatCompletions
       );
 
       for (const attempt of attempts) {

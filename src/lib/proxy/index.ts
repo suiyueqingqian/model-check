@@ -23,6 +23,7 @@ import {
 import {
   isGptFiveOrNewerModel,
   isResponsesCompatibleChatModel,
+  shouldUseChatCompletionsOnlyForModel,
 } from "@/lib/utils/model-name";
 
 // Round-robin counter: 优先使用 Redis INCR（多实例安全），无 Redis 时退回内存 Map
@@ -214,6 +215,16 @@ function supportsPreferredEndpoint(
   if (
     isGptFiveOrNewerModel(modelName) &&
     !normalizedName.includes("codex") &&
+    (preferredEndpoint === "CHAT" || preferredEndpoint === "CODEX")
+  ) {
+    return (
+      detectedEndpoints.includes("CHAT") ||
+      detectedEndpoints.includes("CODEX")
+    );
+  }
+
+  if (
+    shouldUseChatCompletionsOnlyForModel(modelName) &&
     (preferredEndpoint === "CHAT" || preferredEndpoint === "CODEX")
   ) {
     return (

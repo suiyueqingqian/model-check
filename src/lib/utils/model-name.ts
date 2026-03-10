@@ -2,12 +2,28 @@ const GPT_VERSION_REGEX = /gpt-?(\d+(?:\.\d+)?)/i;
 
 export type OpenAIProxyEndpoint = "CHAT" | "CODEX";
 
+function getNormalizedModelName(modelName: string): string {
+  const slashIndex = modelName.indexOf("/");
+  const actualModelName = slashIndex > 0 ? modelName.slice(slashIndex + 1) : modelName;
+  return actualModelName.toLowerCase();
+}
+
 export function isCodexNamedModel(modelName: string): boolean {
-  return modelName.toLowerCase().includes("codex");
+  return getNormalizedModelName(modelName).includes("codex");
+}
+
+export function shouldUseChatCompletionsOnlyForModel(modelName: string): boolean {
+  const normalizedModelName = getNormalizedModelName(modelName);
+  return (
+    normalizedModelName.includes("qwen") ||
+    normalizedModelName.includes("deepseek") ||
+    normalizedModelName.includes("grok") ||
+    normalizedModelName.includes("gpt-oss")
+  );
 }
 
 export function getGptVersion(modelName: string): number | null {
-  const match = modelName.toLowerCase().match(GPT_VERSION_REGEX);
+  const match = getNormalizedModelName(modelName).match(GPT_VERSION_REGEX);
   if (!match) {
     return null;
   }
@@ -30,11 +46,11 @@ export function isResponsesCompatibleChatModel(modelName: string): boolean {
 }
 
 export function shouldTryResponsesFallbackForChatModel(modelName: string): boolean {
-  return isGptFiveOrNewerModel(modelName);
+  return !shouldUseChatCompletionsOnlyForModel(modelName) && isGptFiveOrNewerModel(modelName);
 }
 
 export function shouldUseResponsesOnlyForChatModel(modelName: string): boolean {
-  return isCodexNamedModel(modelName);
+  return !shouldUseChatCompletionsOnlyForModel(modelName) && isCodexNamedModel(modelName);
 }
 
 export function getOpenAIEndpointOrder(options: {
