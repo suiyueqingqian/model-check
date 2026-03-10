@@ -5,7 +5,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { redis } from "@/lib/redis";
 import { proxyFetch } from "@/lib/utils/proxy-fetch";
-import { createAsyncErrorHandler, isExpectedCloseError, logWarn } from "@/lib/utils/error";
+import {
+  createAsyncErrorHandler,
+  isClientStreamDisconnectError,
+  isExpectedCloseError,
+  logWarn,
+} from "@/lib/utils/error";
 import {
   BUILTIN_PROXY_KEY_DB_ID,
   getProxyApiKey,
@@ -1041,6 +1046,27 @@ export function streamResponse(
     }
   };
 
+  const completeByClientClose = (
+    controller?: ReadableStreamDefaultController<Uint8Array>
+  ) => {
+    if (settled || canceled) {
+      return;
+    }
+    settled = true;
+    canceled = true;
+    clearIdle();
+    callbacks?.onComplete?.();
+    if (controller) {
+      try {
+        controller.close();
+      } catch (controllerError) {
+        if (!isExpectedCloseError(controllerError)) {
+          logWarn("[Proxy] 关闭客户端中断流失败", controllerError);
+        }
+      }
+    }
+  };
+
   const completeStream = (controller: ReadableStreamDefaultController<Uint8Array>) => {
     if (settled || canceled) {
       return;
@@ -1058,9 +1084,14 @@ export function streamResponse(
     if (settled || canceled) {
       return;
     }
+    const error = err instanceof Error ? err : new Error("Upstream stream interrupted");
+    if (isClientStreamDisconnectError(error)) {
+      completeByClientClose(controller);
+      reader.cancel().catch(createAsyncErrorHandler("[Proxy] 客户端中断后取消上游流失败", "warn"));
+      return;
+    }
     settled = true;
     clearIdle();
-    const error = err instanceof Error ? err : new Error("Upstream stream interrupted");
     callbacks?.onError?.(error);
     try {
       controller.error(error);
@@ -1102,9 +1133,8 @@ export function streamResponse(
       }
     },
     cancel() {
-      canceled = true;
-      clearIdle();
-      reader.cancel();
+      completeByClientClose();
+      reader.cancel().catch(createAsyncErrorHandler("[Proxy] 取消下游已关闭流失败", "warn"));
     },
   });
 
@@ -1143,6 +1173,24 @@ export function withStreamTracking(
   let settled = false;
   let canceled = false;
 
+  const completeByClientClose = (
+    controller?: ReadableStreamDefaultController<Uint8Array>
+  ) => {
+    if (settled || canceled) {
+      return;
+    }
+    settled = true;
+    canceled = true;
+    onComplete();
+    if (controller) {
+      try {
+        controller.close();
+      } catch {
+        // controller already closed
+      }
+    }
+  };
+
   const completeStream = (controller: ReadableStreamDefaultController<Uint8Array>) => {
     if (settled || canceled) {
       return;
@@ -1159,8 +1207,13 @@ export function withStreamTracking(
     if (settled || canceled) {
       return;
     }
-    settled = true;
     const error = err instanceof Error ? err : new Error("Stream tracking error");
+    if (isClientStreamDisconnectError(error)) {
+      completeByClientClose(controller);
+      reader.cancel().catch(createAsyncErrorHandler("[Proxy] 客户端中断后取消跟踪流失败", "warn"));
+      return;
+    }
+    settled = true;
     onError(error);
     try {
       controller.error(error);
@@ -1183,8 +1236,8 @@ export function withStreamTracking(
       }
     },
     cancel() {
-      canceled = true;
-      reader.cancel();
+      completeByClientClose();
+      reader.cancel().catch(createAsyncErrorHandler("[Proxy] 取消已关闭跟踪流失败", "warn"));
     },
   });
 

@@ -26,6 +26,25 @@ export function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
+export function isClientStreamDisconnectError(error: unknown): boolean {
+  const message = getErrorMessage(error, "").toLowerCase();
+
+  if (error instanceof Error && error.name === "AbortError") {
+    return true;
+  }
+
+  return (
+    message.includes("controller is already closed") ||
+    message.includes("readablestream is already closed") ||
+    message.includes("stream is already closed") ||
+    message.includes("stream is closed") ||
+    message.includes("client disconnected") ||
+    message.includes("the operation was aborted") ||
+    message.includes("cancelled") ||
+    message.includes("canceled")
+  );
+}
+
 export function isExpectedCloseError(error: unknown): boolean {
   const message = getErrorMessage(error, "").toLowerCase();
   return (

@@ -24,6 +24,8 @@ interface CheckLog {
   createdAt: string;
 }
 
+type DisplayStatus = "healthy" | "unhealthy" | "unknown";
+
 interface Model {
   id: string;
   modelName: string;
@@ -95,8 +97,60 @@ function formatEndpointType(ep: string): { label: string; type: "chat" | "cli" }
   }
 }
 
-function isModelHealthy(model: Model): boolean {
-  return model.lastStatus === true;
+function isProxyRuntimeLog(log: CheckLog): boolean {
+  const responseContent = log.responseContent || "";
+  const errorMsg = log.errorMsg || "";
+
+  if (
+    responseContent === "代理请求成功" ||
+    responseContent === "代理流式请求成功"
+  ) {
+    return true;
+  }
+
+  return (
+    errorMsg === "流式传输中断" ||
+    errorMsg === "代理请求失败" ||
+    errorMsg.startsWith("Upstream error:") ||
+    errorMsg.startsWith("Proxy error:")
+  );
+}
+
+function splitLogsBySource(checkLogs: CheckLog[]) {
+  const detectionLogs: CheckLog[] = [];
+  const proxyLogs: CheckLog[] = [];
+
+  for (const log of checkLogs) {
+    if (isProxyRuntimeLog(log)) {
+      proxyLogs.push(log);
+    } else {
+      detectionLogs.push(log);
+    }
+  }
+
+  return { detectionLogs, proxyLogs };
+}
+
+function getModelDisplayStatus(model: Model): DisplayStatus {
+  const { detectionLogs } = splitLogsBySource(model.checkLogs);
+  if (detectionLogs.length === 0) {
+    return model.lastStatus === true
+      ? "healthy"
+      : model.lastStatus === false
+        ? "unhealthy"
+        : "unknown";
+  }
+
+  const endpointStatuses = getEndpointStatuses(detectionLogs);
+  const latestByEndpoint = Object.values(endpointStatuses);
+
+  if (latestByEndpoint.length === 0) {
+    return "unknown";
+  }
+
+  return latestByEndpoint.some((log) => log.status === "SUCCESS")
+    ? "healthy"
+    : "unhealthy";
 }
 
 export function ChannelCard({ channel, onDelete, className, onEndpointFilterChange, activeEndpointFilter, testingModelIds = EMPTY_SET, onTestModels, onStopModels }: ChannelCardProps) {
@@ -112,7 +166,7 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
   const currentFilter = onEndpointFilterChange ? activeEndpointFilter : localEndpointFilter;
 
   // Calculate healthy count based on checkLogs
-  const healthyCount = channel.models.filter(isModelHealthy).length;
+  const healthyCount = channel.models.filter((model) => getModelDisplayStatus(model) === "healthy").length;
   const totalCount = channel.models.length;
 
   // Build health summary text for collapsed view - only show total models count
@@ -122,7 +176,7 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
   // Calculate channel status based on new logic
   const channelStatus = (() => {
     if (totalCount === 0) return "unknown" as const;
-    const checkedModels = channel.models.filter((m) => m.lastStatus !== null);
+    const checkedModels = channel.models.filter((m) => getModelDisplayStatus(m) !== "unknown");
     if (checkedModels.length === 0) return "unknown" as const;
     if (healthyCount === checkedModels.length) return "healthy" as const;
     if (healthyCount === 0) return "unhealthy" as const;
@@ -131,8 +185,8 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
 
   // Check if all models are unavailable after detection
   // A model is unavailable only if BOTH chat and cli endpoints fail (no endpoint works)
-  const checkedModels = channel.models.filter((m) => m.lastStatus !== null);
-  const availableCount = checkedModels.filter(isModelHealthy).length;
+  const checkedModels = channel.models.filter((m) => getModelDisplayStatus(m) !== "unknown");
+  const availableCount = checkedModels.filter((model) => getModelDisplayStatus(model) === "healthy").length;
   const isAllUnhealthy = checkedModels.length > 0 && availableCount === 0;
 
   // Handle endpoint filter click
@@ -491,6 +545,34 @@ function getDisplayEndpointLog(
   return endpointStatuses[endpointType];
 }
 
+function getPreferredEndpointStatuses(checkLogs: CheckLog[]): Record<string, CheckLog> {
+  const { detectionLogs, proxyLogs } = splitLogsBySource(checkLogs);
+  const detectionStatuses = getEndpointStatuses(detectionLogs);
+  const proxyStatuses = getEndpointStatuses(proxyLogs);
+
+  return {
+    ...proxyStatuses,
+    ...detectionStatuses,
+  };
+}
+
+function getDisplayEndpointsFromLogs(
+  modelName: string,
+  detectedEndpoints: string[],
+  endpointStatuses: Record<string, CheckLog>
+): string[] {
+  const merged = new Set(getDisplayEndpoints(modelName, detectedEndpoints));
+  for (const endpoint of Object.keys(endpointStatuses)) {
+    merged.add(endpoint);
+  }
+  return Array.from(merged);
+}
+
+function getLatestDisplayLog(checkLogs: CheckLog[]): CheckLog | undefined {
+  const { detectionLogs, proxyLogs } = splitLogsBySource(checkLogs);
+  return detectionLogs[0] || proxyLogs[0];
+}
+
 // Endpoint badge component with status
 function EndpointBadge({
   type,
@@ -572,16 +654,21 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
   };
 
   // gpt-5+ 模型固定展示 Chat 和 Codex 两个端点状态
-  const endpoints = getDisplayEndpoints(model.modelName, (model.detectedEndpoints || []) as string[]);
-  const endpointStatuses = getEndpointStatuses(model.checkLogs);
+  const endpointStatuses = getPreferredEndpointStatuses(model.checkLogs);
+  const endpoints = getDisplayEndpointsFromLogs(
+    model.modelName,
+    (model.detectedEndpoints || []) as string[],
+    endpointStatuses
+  );
   const testedEndpoints = endpoints.filter((ep) =>
     !!getDisplayEndpointLog(model.modelName, endpointStatuses, ep)
   );
-  const isHealthy = model.lastStatus === true;
-  const isUnknown = model.lastStatus === null;
+  const displayStatus = getModelDisplayStatus(model);
+  const isHealthy = displayStatus === "healthy";
+  const isUnknown = displayStatus === "unknown";
 
-  // Get the latest latency from any endpoint
-  const latestLog = model.checkLogs[0];
+  const latestLog = getLatestDisplayLog(model.checkLogs);
+  const heatmapLogs = splitLogsBySource(model.checkLogs).detectionLogs;
 
   return (
     <div
@@ -717,9 +804,9 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
       )}
 
       {/* Heatmap */}
-      {model.checkLogs.length > 0 && (
+      {heatmapLogs.length > 0 && (
         <div className="mt-2 pt-2 border-t border-border/50">
-          <Heatmap data={model.checkLogs} />
+          <Heatmap data={heatmapLogs} />
         </div>
       )}
     </div>
