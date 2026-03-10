@@ -25,6 +25,13 @@ interface CheckLog {
   createdAt: string;
 }
 
+interface TemporaryStoppedCredential {
+  credentialKey: string;
+  keyType: "main" | "channel";
+  channelKeyId: string | null;
+  name: string;
+}
+
 interface Model {
   id: string;
   modelName: string;
@@ -33,6 +40,7 @@ interface Model {
   lastLatency: number | null;
   lastCheckedAt: string | null;
   checkLogs: CheckLog[];
+  temporaryStoppedCredential: TemporaryStoppedCredential | null;
 }
 
 interface Channel {
@@ -51,6 +59,7 @@ interface Pagination {
 
 interface DashboardData {
   authenticated: boolean;
+  allowAdminTemporaryStopBypass: boolean;
   summary: {
     totalChannels: number;
     totalModels: number;
@@ -284,6 +293,7 @@ export function Dashboard({
               key={channel.id}
               channel={channel}
               onDelete={handleDeleteChannel}
+              allowAdminTemporaryStopBypass={data.allowAdminTemporaryStopBypass}
               testingModelIds={testingModelIds}
               onTestModels={onTestModels}
               onStopModels={onStopModels}

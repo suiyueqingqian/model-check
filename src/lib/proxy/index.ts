@@ -21,9 +21,8 @@ import {
   type ValidateKeyResult,
 } from "@/lib/utils/proxy-key";
 import {
-  isGptFiveOrNewerModel,
   isResponsesCompatibleChatModel,
-  shouldUseChatCompletionsOnlyForModel,
+  shouldPreferChatCompletionsForModel,
 } from "@/lib/utils/model-name";
 
 // Round-robin counter: 优先使用 Redis INCR（多实例安全），无 Redis 时退回内存 Map
@@ -42,6 +41,22 @@ const TEMPORARY_STOP_UNIT_MS: Record<string, number> = {
   hour: 3_600_000,
   day: 86_400_000,
 };
+
+function isEnvFlagEnabled(value: string | undefined, defaultValue: boolean): boolean {
+  if (value === undefined) {
+    return defaultValue;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return defaultValue;
+}
 
 function evictRoundRobinCounters(): void {
   if (roundRobinCounters.size < ROUND_ROBIN_MAX_KEYS) return;
@@ -94,8 +109,27 @@ async function nextRoundRobin(counterKey: string): Promise<number> {
   return current;
 }
 
-function buildTemporaryStopKey(proxyKeyId: string, modelId: string): string {
-  return `${proxyKeyId}:${modelId}`;
+function buildTemporaryStopKey(modelId: string): string {
+  return modelId;
+}
+
+function parseTemporaryStopCacheKey(cacheKey: string): { modelId: string } | null {
+  const normalized = cacheKey.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return {
+    modelId: normalized,
+  };
+}
+
+function parseTemporaryStopRedisKey(redisKey: string): { modelId: string } | null {
+  if (!redisKey.startsWith(TEMPORARY_STOP_REDIS_PREFIX)) {
+    return null;
+  }
+
+  return parseTemporaryStopCacheKey(redisKey.slice(TEMPORARY_STOP_REDIS_PREFIX.length));
 }
 
 function getTemporaryStopDurationMs(
@@ -109,15 +143,7 @@ function getTemporaryStopDurationMs(
   return temporaryStopValue * unitMs;
 }
 
-function getKeyTemporaryStopDurationMs(keyResult: ValidateKeyResult): number {
-  return getTemporaryStopDurationMs(
-    keyResult.keyRecord?.temporaryStopValue,
-    keyResult.keyRecord?.temporaryStopUnit
-  );
-}
-
 async function rememberTemporaryStoppedCandidate(
-  proxyKeyId: string,
   modelId: string,
   durationMs: number
 ): Promise<void> {
@@ -125,7 +151,7 @@ async function rememberTemporaryStoppedCandidate(
     return;
   }
 
-  const cacheKey = buildTemporaryStopKey(proxyKeyId, modelId);
+  const cacheKey = buildTemporaryStopKey(modelId);
   const expiresAt = Date.now() + durationMs;
 
   try {
@@ -151,8 +177,8 @@ async function rememberTemporaryStoppedCandidate(
   temporaryStopFallback.set(cacheKey, expiresAt);
 }
 
-async function isCandidateTemporarilyStopped(proxyKeyId: string, modelId: string): Promise<boolean> {
-  const cacheKey = buildTemporaryStopKey(proxyKeyId, modelId);
+async function isCandidateTemporarilyStopped(modelId: string): Promise<boolean> {
+  const cacheKey = buildTemporaryStopKey(modelId);
 
   try {
     const redis = getRedisClient();
@@ -178,6 +204,270 @@ async function isCandidateTemporarilyStopped(proxyKeyId: string, modelId: string
     return false;
   }
   return true;
+}
+
+export function shouldHideTemporaryStoppedModelsFromListing(): boolean {
+  return isEnvFlagEnabled(process.env.TEMP_STOP_HIDE_FROM_MODELS, true);
+}
+
+export function shouldAllowAdminTemporaryStopBypass(): boolean {
+  return isEnvFlagEnabled(process.env.TEMP_STOP_ALLOW_ADMIN_BYPASS, true);
+}
+
+export interface TemporaryStoppedChannelCredentialInfo {
+  credentialKey: string;
+  keyType: "main" | "channel";
+  channelKeyId: string | null;
+  name: string;
+}
+
+async function scanRedisKeys(pattern: string): Promise<string[]> {
+  const redis = getRedisClient();
+  const keys: string[] = [];
+  let cursor = "0";
+
+  do {
+    const result = await redis.scan(cursor, "MATCH", pattern, "COUNT", 100);
+    cursor = result[0];
+    keys.push(...result[1]);
+  } while (cursor !== "0");
+
+  return keys;
+}
+
+export async function filterTemporaryStoppedModelsForListing<T extends { id: string }>(
+  items: T[]
+): Promise<T[]> {
+  if (!shouldHideTemporaryStoppedModelsFromListing()) {
+    return items;
+  }
+
+  if (items.length === 0) {
+    return items;
+  }
+
+  const filtered: T[] = [];
+  for (const item of items) {
+    if (!(await isCandidateTemporarilyStopped(item.id))) {
+      filtered.push(item);
+    }
+  }
+
+  return filtered;
+}
+
+export async function clearTemporaryStoppedModel(
+  modelId: string
+): Promise<number> {
+  let clearedCount = 0;
+
+  if (temporaryStopFallback.delete(buildTemporaryStopKey(modelId))) {
+    clearedCount += 1;
+  }
+
+  try {
+    const redisKey = `${TEMPORARY_STOP_REDIS_PREFIX}${buildTemporaryStopKey(modelId)}`;
+    const deletedCount = await getRedisClient().del(redisKey);
+    if (deletedCount > 0) {
+      clearedCount += deletedCount;
+    }
+  } catch (error) {
+    if (!hasLoggedTemporaryStopRedisFallback) {
+      hasLoggedTemporaryStopRedisFallback = true;
+      logWarn("[Proxy] Redis 临时停用缓存清理失败，已退回内存模式", error);
+    }
+  }
+
+  return clearedCount;
+}
+
+function maskApiKey(apiKey: string | null | undefined): string {
+  if (!apiKey) {
+    return "***";
+  }
+  if (apiKey.length <= 12) {
+    return "***";
+  }
+  return `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}`;
+}
+
+function getTemporaryStoppedCredentialInfo(model: {
+  channelKeyId: string | null;
+  channelKey: { id: string; name: string | null; apiKey: string } | null;
+}): TemporaryStoppedChannelCredentialInfo {
+  if (!model.channelKeyId) {
+    return {
+      credentialKey: "__main__",
+      keyType: "main",
+      channelKeyId: null,
+      name: "主 Key",
+    };
+  }
+
+  const channelKeyName = model.channelKey?.name?.trim();
+  const masked = maskApiKey(model.channelKey?.apiKey);
+
+  return {
+    credentialKey: model.channelKeyId,
+    keyType: "channel",
+    channelKeyId: model.channelKeyId,
+    name: channelKeyName ? `${channelKeyName} (${masked})` : `子 Key ${masked}`,
+  };
+}
+
+export async function getTemporaryStoppedChannelCredentialsByModelIds(
+  modelIds: string[]
+): Promise<Record<string, TemporaryStoppedChannelCredentialInfo | null>> {
+  const targetModelIds = Array.from(new Set(modelIds.filter(Boolean)));
+  if (targetModelIds.length === 0) {
+    return {};
+  }
+
+  const targetModelIdSet = new Set(targetModelIds);
+  const stoppedModelIdSet = new Set<string>();
+
+  const now = Date.now();
+  for (const [cacheKey, expiresAt] of temporaryStopFallback.entries()) {
+    if (expiresAt <= now) {
+      temporaryStopFallback.delete(cacheKey);
+      continue;
+    }
+
+    const parsed = parseTemporaryStopCacheKey(cacheKey);
+    if (!parsed || !targetModelIdSet.has(parsed.modelId)) {
+      continue;
+    }
+
+    stoppedModelIdSet.add(parsed.modelId);
+  }
+
+  try {
+    const redisKeys = await scanRedisKeys(`${TEMPORARY_STOP_REDIS_PREFIX}*`);
+    for (const redisKey of redisKeys) {
+      const parsed = parseTemporaryStopRedisKey(redisKey);
+      if (!parsed || !targetModelIdSet.has(parsed.modelId)) {
+        continue;
+      }
+
+      stoppedModelIdSet.add(parsed.modelId);
+    }
+  } catch (error) {
+    if (!hasLoggedTemporaryStopRedisFallback) {
+      hasLoggedTemporaryStopRedisFallback = true;
+      logWarn("[Proxy] Redis 临时停用状态查询失败，已退回内存模式", error);
+    }
+  }
+
+  const result: Record<string, TemporaryStoppedChannelCredentialInfo | null> = {};
+  for (const modelId of targetModelIds) {
+    result[modelId] = null;
+  }
+
+  if (stoppedModelIdSet.size === 0) {
+    return result;
+  }
+
+  const stoppedModels = await prisma.model.findMany({
+    where: {
+      id: {
+        in: Array.from(stoppedModelIdSet),
+      },
+    },
+    select: {
+      id: true,
+      channelKeyId: true,
+      channelKey: {
+        select: {
+          id: true,
+          name: true,
+          apiKey: true,
+        },
+      },
+    },
+  });
+
+  for (const model of stoppedModels) {
+    result[model.id] = getTemporaryStoppedCredentialInfo(model);
+  }
+
+  return result;
+}
+
+export async function getTemporaryStoppedModelsForChannel(channelId: string): Promise<Array<{
+  id: string;
+  modelName: string;
+  temporaryStoppedCredential: TemporaryStoppedChannelCredentialInfo;
+}>> {
+  const models = await prisma.model.findMany({
+    where: {
+      channelId,
+    },
+    select: {
+      id: true,
+      modelName: true,
+      channelKeyId: true,
+      channelKey: {
+        select: {
+          id: true,
+          name: true,
+          apiKey: true,
+        },
+      },
+    },
+    orderBy: [
+      { modelName: "asc" },
+      { id: "asc" },
+    ],
+  });
+
+  if (models.length === 0) {
+    return [];
+  }
+
+  const temporaryStoppedCredentialByModelId = await getTemporaryStoppedChannelCredentialsByModelIds(
+    models.map((item) => item.id)
+  );
+
+  return models
+    .map((model) => ({
+      id: model.id,
+      modelName: model.modelName,
+      temporaryStoppedCredential: temporaryStoppedCredentialByModelId[model.id],
+    }))
+    .filter((model): model is {
+      id: string;
+      modelName: string;
+      temporaryStoppedCredential: TemporaryStoppedChannelCredentialInfo;
+    } => Boolean(model.temporaryStoppedCredential));
+}
+
+export async function clearTemporaryStoppedModelsByChannel(
+  channelId: string,
+  credentialKey?: string
+): Promise<{ clearedCount: number; clearedModels: number }> {
+  const temporaryStoppedModels = await getTemporaryStoppedModelsForChannel(channelId);
+  let clearedCount = 0;
+  let clearedModels = 0;
+
+  for (const model of temporaryStoppedModels) {
+    if (
+      credentialKey &&
+      model.temporaryStoppedCredential.credentialKey !== credentialKey
+    ) {
+      continue;
+    }
+
+    const count = await clearTemporaryStoppedModel(model.id);
+    if (count > 0) {
+      clearedCount += count;
+      clearedModels += 1;
+    }
+  }
+
+  return {
+    clearedCount,
+    clearedModels,
+  };
 }
 
 /**
@@ -211,20 +501,8 @@ function supportsPreferredEndpoint(
     return true;
   }
 
-  const normalizedName = modelName.toLowerCase();
   if (
-    isGptFiveOrNewerModel(modelName) &&
-    !normalizedName.includes("codex") &&
-    (preferredEndpoint === "CHAT" || preferredEndpoint === "CODEX")
-  ) {
-    return (
-      detectedEndpoints.includes("CHAT") ||
-      detectedEndpoints.includes("CODEX")
-    );
-  }
-
-  if (
-    shouldUseChatCompletionsOnlyForModel(modelName) &&
+    shouldPreferChatCompletionsForModel(modelName) &&
     (preferredEndpoint === "CHAT" || preferredEndpoint === "CODEX")
   ) {
     return (
@@ -320,6 +598,7 @@ type RoutedModelRecord = {
   detectedEndpoints: string[];
   lastStatus: boolean | null;
   preferredProxyEndpoint: string | null;
+  channelKeyId?: string | null;
   channel: {
     id: string;
     name: string;
@@ -328,9 +607,11 @@ type RoutedModelRecord = {
     proxy: string | null;
     keyMode: string;
     routeStrategy: string;
+    mainKeyLastValid?: boolean | null;
   };
   channelKey: {
     apiKey: string;
+    lastValid?: boolean | null;
   } | null;
 };
 
@@ -472,6 +753,7 @@ const routedModelSelect = {
   detectedEndpoints: true,
   lastStatus: true,
   preferredProxyEndpoint: true,
+  channelKeyId: true,
   channel: {
     select: {
       id: true,
@@ -480,6 +762,7 @@ const routedModelSelect = {
       apiKey: true,
       proxy: true,
       enabled: true,
+      mainKeyLastValid: true,
       sortOrder: true,
       createdAt: true,
       keyMode: true,
@@ -489,9 +772,18 @@ const routedModelSelect = {
   channelKey: {
     select: {
       apiKey: true,
+      lastValid: true,
     },
   },
 } satisfies Prisma.ModelSelect;
+
+function isCredentialAvailableForModel(model: RoutedModelRecord): boolean {
+  if (model.channelKeyId) {
+    return model.channelKey?.lastValid !== false;
+  }
+
+  return model.channel.mainKeyLastValid !== false;
+}
 
 function shuffleArray<T>(items: T[]): T[] {
   const shuffled = [...items];
@@ -595,6 +887,7 @@ async function fetchModelCandidatesByName(
 
   let validModels = models.filter((m) => {
     if (m.lastStatus !== true) return false;
+    if (!isCredentialAvailableForModel(m)) return false;
     return true;
   });
 
@@ -636,9 +929,43 @@ export async function markProxyChannelKeyUnavailable(
   }
 
   try {
-    await prisma.model.update({
+    const model = await prisma.model.findUnique({
       where: { id: modelId },
-      data: { lastStatus: false },
+      select: {
+        id: true,
+        channelId: true,
+        channelKeyId: true,
+      },
+    });
+
+    if (!model) {
+      return;
+    }
+
+    const now = new Date();
+    await prisma.$transaction(async (tx) => {
+      if (model.channelKeyId) {
+        await tx.channelKey.update({
+          where: { id: model.channelKeyId },
+          data: {
+            lastValid: false,
+            lastCheckedAt: now,
+          },
+        });
+      } else {
+        await tx.channel.update({
+          where: { id: model.channelId },
+          data: {
+            mainKeyLastValid: false,
+            mainKeyLastCheckedAt: now,
+          },
+        });
+      }
+
+      await tx.model.update({
+        where: { id: modelId },
+        data: { lastStatus: false },
+      });
     });
   } catch (error) {
     logWarn("[Proxy] 标记模型不可用失败", error);
@@ -657,18 +984,15 @@ function includesAnyPattern(message: string, patterns: string[]): boolean {
 }
 
 async function filterTemporarilyStoppedCandidates(
-  candidates: ProxyChannelCandidate[],
-  keyResult: ValidateKeyResult
+  candidates: ProxyChannelCandidate[]
 ): Promise<ProxyChannelCandidate[]> {
-  const proxyKeyId = keyResult.keyRecord?.id;
-  const temporaryStopDurationMs = getKeyTemporaryStopDurationMs(keyResult);
-  if (!proxyKeyId || temporaryStopDurationMs <= 0 || candidates.length === 0) {
+  if (candidates.length === 0) {
     return candidates;
   }
 
   const filtered: ProxyChannelCandidate[] = [];
   for (const candidate of candidates) {
-    if (!(await isCandidateTemporarilyStopped(proxyKeyId, candidate.modelId))) {
+    if (!(await isCandidateTemporarilyStopped(candidate.modelId))) {
       filtered.push(candidate);
     }
   }
@@ -691,7 +1015,7 @@ function groupCandidatesByChannel(candidates: ProxyChannelCandidate[]): ProxyCha
 function shouldDisableChannelCredential(statusCode?: number, errorMsg?: string): boolean {
   const normalizedMessage = normalizeProxyErrorMessage(errorMsg);
 
-  if (statusCode === 401) {
+  if (statusCode === 401 || statusCode === 402) {
     return true;
   }
 
@@ -767,6 +1091,16 @@ function shouldDisableChannelCredential(statusCode?: number, errorMsg?: string):
     "密钥不存在",
     "apikey无效",
     "apikey 不存在",
+    "quota exceeded",
+    "insufficient_quota",
+    "insufficient quota",
+    "exceeded your current quota",
+    "credits exhausted",
+    "credit balance is too low",
+    "account balance is insufficient",
+    "余额不足",
+    "配额不足",
+    "额度不足",
   ];
 
   if (includesAnyPattern(normalizedMessage, keyErrorPatterns)) {
@@ -986,9 +1320,9 @@ async function getUnifiedModelCandidates(
   });
 
   // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型（有回退）
-  let endpointFiltered = models;
+  let endpointFiltered = models.filter((m) => isCredentialAvailableForModel(m));
   if (preferredEndpoint && models.length > 0) {
-    endpointFiltered = models.filter((m: RoutedModelRecord) =>
+    endpointFiltered = endpointFiltered.filter((m: RoutedModelRecord) =>
       supportsPreferredEndpoint(m.modelName, m.detectedEndpoints, preferredEndpoint)
     );
     if (endpointFiltered.length === 0) {
@@ -1092,8 +1426,7 @@ async function findChannelByUnifiedModel(
   preferredEndpoint?: string
 ): Promise<ProxyChannelCandidate | null> {
   const candidates = await filterTemporarilyStoppedCandidates(
-    await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint),
-    keyResult
+    await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint)
   );
   if (candidates.length === 0) {
     return null;
@@ -1125,8 +1458,7 @@ export async function findChannelByModelWithPermission(
   }
 
   const candidates = await filterTemporarilyStoppedCandidates(
-    await getOrderedChannelCandidatesByModel(modelName, preferredEndpoint),
-    keyResult
+    await getOrderedChannelCandidatesByModel(modelName, preferredEndpoint)
   );
   if (candidates.length === 0) {
     return null;
@@ -1159,8 +1491,7 @@ export async function getProxyChannelCandidatesWithPermission(
 
   if (isUnifiedRouting) {
     const candidates = await filterTemporarilyStoppedCandidates(
-      await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint),
-      keyResult
+      await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint)
     );
     return {
       isUnifiedRouting: true,
@@ -1192,7 +1523,7 @@ export async function getProxyChannelCandidatesWithPermission(
 
   return {
     isUnifiedRouting: false,
-    candidates: await filterTemporarilyStoppedCandidates(permittedCandidates, keyResult),
+    candidates: await filterTemporarilyStoppedCandidates(permittedCandidates),
   };
 }
 
@@ -1207,7 +1538,6 @@ export async function recordProxyModelResult(
     statusCode?: number;
     errorMsg?: string;
     responseContent?: string;
-    proxyKeyId?: string;
     temporaryStopValue?: number;
     temporaryStopUnit?: string;
   }
@@ -1218,7 +1548,6 @@ export async function recordProxyModelResult(
     options?.temporaryStopUnit
   );
   const shouldTemporaryStop = !success &&
-    !!options?.proxyKeyId &&
     temporaryStopDurationMs > 0 &&
     isTransientProxyFailure(options?.statusCode, options?.errorMsg);
 
@@ -1321,7 +1650,6 @@ export async function recordProxyModelResult(
 
   if (shouldTemporaryStop) {
     await rememberTemporaryStoppedCandidate(
-      options!.proxyKeyId!,
       modelId,
       temporaryStopDurationMs
     );
@@ -1448,7 +1776,9 @@ export async function getAllModelsWithChannelsUnified(keyResult?: ValidateKeyRes
     channelId: string;
   }>
 > {
-  const models = await getAllModelsWithChannels(keyResult);
+  const models = await filterTemporaryStoppedModelsForListing(
+    await getAllModelsWithChannels(keyResult)
+  );
   if (!keyResult?.keyRecord?.unifiedMode) {
     return models;
   }

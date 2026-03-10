@@ -5,6 +5,10 @@ import prisma from "@/lib/prisma";
 import { isAuthenticated } from "@/lib/middleware/auth";
 import { Prisma } from "@/generated/prisma";
 import { supportsDisplayEndpoint } from "@/lib/utils/model-name";
+import {
+  getTemporaryStoppedChannelCredentialsByModelIds,
+  shouldAllowAdminTemporaryStopBypass,
+} from "@/lib/proxy";
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -86,7 +90,30 @@ export async function GET(request: NextRequest) {
       },
     } satisfies Prisma.ChannelSelect;
 
-    let channels: unknown[];
+    let channels: Array<{
+      id: string;
+      name: string;
+      baseUrl?: string;
+      createdAt: Date;
+      models: Array<{
+        id: string;
+        modelName: string;
+        detectedEndpoints: string[];
+        lastStatus: boolean | null;
+        lastLatency: number | null;
+        lastCheckedAt: Date | null;
+        checkLogs: Array<{
+          id: string;
+          status: "SUCCESS" | "FAIL";
+          latency: number | null;
+          statusCode: number | null;
+          endpointType: string;
+          responseContent: string | null;
+          errorMsg: string | null;
+          createdAt: Date;
+        }>;
+      }>;
+    }>;
     let totalFilteredChannels: number;
 
     if (endpointFilter === "all") {
@@ -102,7 +129,7 @@ export async function GET(request: NextRequest) {
         }),
       ]);
       totalFilteredChannels = count;
-      channels = pageData;
+        channels = pageData;
     } else {
       // endpointFilter 依赖 JS 逻辑，先轻量查询筛选 ID，再加载当前页完整数据
       const lightChannels = await prisma.channel.findMany({
@@ -146,6 +173,11 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const modelIds = channels.flatMap((channel) => channel.models.map((model) => model.id));
+    const temporaryStoppedCredentialByModelId = authenticated
+      ? await getTemporaryStoppedChannelCredentialsByModelIds(modelIds)
+      : {};
+
     // Calculate summary statistics using aggregate counts (avoid loading all models + logs)
     const [totalChannelsCount, totalModels, healthyModels] = await Promise.all([
       prisma.channel.count({ where: { enabled: true } }),
@@ -161,6 +193,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       authenticated,
+      allowAdminTemporaryStopBypass: shouldAllowAdminTemporaryStopBypass(),
       summary: {
         totalChannels: totalChannelsCount,
         totalModels,
@@ -173,7 +206,13 @@ export async function GET(request: NextRequest) {
         totalPages,
         totalChannels: totalFilteredChannels,
       },
-      channels,
+      channels: channels.map((channel) => ({
+        ...channel,
+        models: channel.models.map((model) => ({
+          ...model,
+          temporaryStoppedCredential: temporaryStoppedCredentialByModelId[model.id] || null,
+        })),
+      })),
     });
   } catch {
     return NextResponse.json(

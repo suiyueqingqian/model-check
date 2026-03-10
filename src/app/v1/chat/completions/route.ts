@@ -592,7 +592,6 @@ export async function POST(request: NextRequest) {
       options?: Parameters<typeof recordProxyModelResult>[3],
     ) => recordProxyModelResult(modelId, endpointType, success, {
       ...options,
-      proxyKeyId: keyResult?.keyRecord?.id,
       temporaryStopValue: keyResult?.keyRecord?.temporaryStopValue,
       temporaryStopUnit: keyResult?.keyRecord?.temporaryStopUnit,
     }).catch(handleRecordModelResultError);

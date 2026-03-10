@@ -12,13 +12,11 @@ export function isCodexNamedModel(modelName: string): boolean {
   return getNormalizedModelName(modelName).includes("codex");
 }
 
-export function shouldUseChatCompletionsOnlyForModel(modelName: string): boolean {
+export function shouldPreferChatCompletionsForModel(modelName: string): boolean {
   const normalizedModelName = getNormalizedModelName(modelName);
   return (
-    normalizedModelName.includes("qwen") ||
-    normalizedModelName.includes("deepseek") ||
-    normalizedModelName.includes("grok") ||
-    normalizedModelName.includes("gpt-oss")
+    !normalizedModelName.includes("claude") &&
+    !normalizedModelName.includes("gemini")
   );
 }
 
@@ -46,11 +44,12 @@ export function isResponsesCompatibleChatModel(modelName: string): boolean {
 }
 
 export function shouldTryResponsesFallbackForChatModel(modelName: string): boolean {
-  return !shouldUseChatCompletionsOnlyForModel(modelName) && isGptFiveOrNewerModel(modelName);
+  return shouldPreferChatCompletionsForModel(modelName);
 }
 
 export function shouldUseResponsesOnlyForChatModel(modelName: string): boolean {
-  return !shouldUseChatCompletionsOnlyForModel(modelName) && isCodexNamedModel(modelName);
+  void modelName;
+  return false;
 }
 
 export function getOpenAIEndpointOrder(options: {
@@ -70,12 +69,12 @@ export function getOpenAIEndpointOrder(options: {
     forceRequestedFirst = false,
   } = options;
 
-  if (isCodexNamedModel(modelName)) {
-    return ["CODEX"];
-  }
-
   if (!allowFallback) {
     return [requestedEndpoint];
+  }
+
+  if (shouldPreferChatCompletionsForModel(modelName)) {
+    return ["CHAT", "CODEX"];
   }
 
   const alternateEndpoint: OpenAIProxyEndpoint =

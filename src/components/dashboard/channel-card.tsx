@@ -2,8 +2,8 @@
 
 "use client";
 
-import { useState, useRef } from "react";
-import { ChevronDown, ChevronUp, Clock, Zap, PlayCircle, Square, Loader2, Trash2, Copy, Check } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+import { ChevronDown, ChevronUp, Clock, Zap, PlayCircle, Square, Loader2, Trash2, Copy, Check, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusIndicator } from "@/components/ui/status-indicator";
 import { Heatmap } from "@/components/ui/heatmap";
@@ -34,6 +34,14 @@ interface Model {
   lastLatency: number | null;
   lastCheckedAt: string | null;
   checkLogs: CheckLog[];
+  temporaryStoppedCredential: TemporaryStoppedCredential | null;
+}
+
+interface TemporaryStoppedCredential {
+  credentialKey: string;
+  keyType: "main" | "channel";
+  channelKeyId: string | null;
+  name: string;
 }
 
 interface ChannelCardProps {
@@ -43,6 +51,7 @@ interface ChannelCardProps {
     type: string;
     models: Model[];
   };
+  allowAdminTemporaryStopBypass?: boolean;
   onDelete?: (channelId: string) => void;
   className?: string;
   onEndpointFilterChange?: (endpoint: string | null) => void;
@@ -153,14 +162,30 @@ function getModelDisplayStatus(model: Model): DisplayStatus {
     : "unhealthy";
 }
 
-export function ChannelCard({ channel, onDelete, className, onEndpointFilterChange, activeEndpointFilter, testingModelIds = EMPTY_SET, onTestModels, onStopModels }: ChannelCardProps) {
+export function ChannelCard({
+  channel,
+  allowAdminTemporaryStopBypass = false,
+  onDelete,
+  className,
+  onEndpointFilterChange,
+  activeEndpointFilter,
+  testingModelIds = EMPTY_SET,
+  onTestModels,
+  onStopModels,
+}: ChannelCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [localEndpointFilter, setLocalEndpointFilter] = useState<string | null>(null);
   const [hoveringChannelStop, setHoveringChannelStop] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [resettingTemporaryStopModelId, setResettingTemporaryStopModelId] = useState<string | null>(null);
+  const [clearedTemporaryStops, setClearedTemporaryStops] = useState<Record<string, boolean>>({});
   const { isAuthenticated, authFetch } = useAuth();
   const { toast, update } = useToast();
+
+  useEffect(() => {
+    setClearedTemporaryStops({});
+  }, [channel.models]);
 
   // Use local filter if no external filter provided
   const currentFilter = onEndpointFilterChange ? activeEndpointFilter : localEndpointFilter;
@@ -207,6 +232,14 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
       )
     : channel.models;
 
+  const isModelTemporarilyStopped = (model: Model): boolean => {
+    if (clearedTemporaryStops[model.id]) {
+      return false;
+    }
+
+    return Boolean(model.temporaryStoppedCredential);
+  };
+
   // Group models by endpoint type
   const endpointCounts = channel.models.reduce(
     (acc, model) => {
@@ -221,6 +254,48 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
 
   // Check if any model in channel is testing
   const isChannelTesting = displayedModels.some((m) => testingModelIds.has(m.id));
+
+  const handleResetTemporaryStop = async (
+    modelId: string,
+    modelName: string
+  ) => {
+    if (!isAuthenticated || !allowAdminTemporaryStopBypass) {
+      return;
+    }
+
+    if (resettingTemporaryStopModelId === modelId) {
+      return;
+    }
+
+    setResettingTemporaryStopModelId(modelId);
+    const toastId = toast(`正在恢复 ${modelName} 的临时封禁...`, "loading");
+
+    try {
+      const response = await authFetch(`/api/model/${modelId}/temp-stop/reset`, {
+        method: "POST",
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "恢复失败");
+      }
+
+      setClearedTemporaryStops((prev) => ({
+        ...prev,
+        [modelId]: true,
+      }));
+
+      update(toastId, `已恢复 ${modelName} 的临时封禁`, "success");
+    } catch (error) {
+      update(
+        toastId,
+        error instanceof Error ? error.message : "恢复失败",
+        "error"
+      );
+    } finally {
+      setResettingTemporaryStopModelId(null);
+    }
+  };
 
   // Test or stop channel
   const handleChannelAction = async (e: React.MouseEvent) => {
@@ -502,8 +577,13 @@ export function ChannelCard({ channel, onDelete, className, onEndpointFilterChan
                 model={model}
                 channelName={channel.name}
                 onTest={() => handleTestModel(model.id, model.modelName)}
+                onResetTemporaryStop={() => handleResetTemporaryStop(model.id, model.modelName)}
                 isTesting={testingModelIds.has(model.id)}
                 canTest={isAuthenticated}
+                canResetTemporaryStop={isAuthenticated && allowAdminTemporaryStopBypass}
+                isTemporarilyStopped={isModelTemporarilyStopped(model)}
+                temporaryStoppedCredentialName={model.temporaryStoppedCredential?.name || null}
+                resettingTemporaryStopModelId={resettingTemporaryStopModelId}
               />
             ))}
           </div>
@@ -517,8 +597,13 @@ interface ModelItemProps {
   model: Model;
   channelName: string;
   onTest: () => void;
+  onResetTemporaryStop: () => void;
   isTesting: boolean;
   canTest: boolean;
+  canResetTemporaryStop: boolean;
+  isTemporarilyStopped: boolean;
+  temporaryStoppedCredentialName: string | null;
+  resettingTemporaryStopModelId: string | null;
 }
 
 // Get latest check log for each endpoint type
@@ -634,7 +719,18 @@ function EndpointBadge({
   );
 }
 
-function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItemProps) {
+function ModelItem({
+  model,
+  channelName,
+  onTest,
+  onResetTemporaryStop,
+  isTesting,
+  canTest,
+  canResetTemporaryStop,
+  isTemporarilyStopped,
+  temporaryStoppedCredentialName,
+  resettingTemporaryStopModelId,
+}: ModelItemProps) {
   const [hoveringStop, setHoveringStop] = useState(false);
   const [copied, setCopied] = useState(false);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -669,6 +765,7 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
 
   const latestLog = getLatestDisplayLog(model.checkLogs);
   const heatmapLogs = splitLogsBySource(model.checkLogs).detectionLogs;
+  const isResettingTemporaryStop = resettingTemporaryStopModelId === model.id;
 
   return (
     <div
@@ -707,33 +804,53 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
         </div>
 
         {/* Test/Stop button */}
-        {canTest && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onTest();
-            }}
-            onMouseEnter={() => setHoveringStop(true)}
-            onMouseLeave={() => setHoveringStop(false)}
-            className={cn(
-              "p-1 rounded transition-colors shrink-0",
-              isTesting && hoveringStop
-                ? "bg-red-500/10 hover:bg-red-500/20"
-                : "hover:bg-accent"
-            )}
-            title={isTesting ? (hoveringStop ? "停止测试" : "测试中...") : "测试此模型"}
-          >
-            {isTesting ? (
-              hoveringStop ? (
-                <Square className="h-4 w-4 text-red-500" />
+        <div className="flex items-center gap-1 shrink-0">
+          {canResetTemporaryStop && isTemporarilyStopped && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onResetTemporaryStop();
+              }}
+              disabled={isResettingTemporaryStop}
+              className="p-1 rounded transition-colors hover:bg-amber-500/10 disabled:opacity-50"
+              title={`恢复 ${temporaryStoppedCredentialName || "该渠道 Key"} 的临时封禁`}
+            >
+              {isResettingTemporaryStop ? (
+                <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
               ) : (
-                <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-              )
-            ) : (
-              <PlayCircle className="h-4 w-4 text-blue-500" />
-            )}
-          </button>
-        )}
+                <RotateCcw className="h-4 w-4 text-amber-600" />
+              )}
+            </button>
+          )}
+
+          {canTest && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onTest();
+              }}
+              onMouseEnter={() => setHoveringStop(true)}
+              onMouseLeave={() => setHoveringStop(false)}
+              className={cn(
+                "p-1 rounded transition-colors shrink-0",
+                isTesting && hoveringStop
+                  ? "bg-red-500/10 hover:bg-red-500/20"
+                  : "hover:bg-accent"
+              )}
+              title={isTesting ? (hoveringStop ? "停止测试" : "测试中...") : "测试此模型"}
+            >
+              {isTesting ? (
+                hoveringStop ? (
+                  <Square className="h-4 w-4 text-red-500" />
+                ) : (
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                )
+              ) : (
+                <PlayCircle className="h-4 w-4 text-blue-500" />
+              )}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Endpoint status badges - only show if there are detected endpoints */}

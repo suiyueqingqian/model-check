@@ -60,6 +60,27 @@ interface ChannelKeyInfo {
   lastValid: boolean | null;
 }
 
+interface TemporaryStoppedCredentialInfo {
+  credentialKey: string;
+  keyType: "main" | "channel";
+  channelKeyId: string | null;
+  name: string;
+  modelCount: number;
+}
+
+interface TemporaryStoppedModelInfo {
+  id: string;
+  modelName: string;
+  temporaryStoppedCredential: Omit<TemporaryStoppedCredentialInfo, "modelCount">;
+}
+
+interface ChannelTemporaryStopSummary {
+  allowAdminBypass: boolean;
+  temporaryStoppedModelCount: number;
+  temporaryStoppedCredentials: TemporaryStoppedCredentialInfo[];
+  models: TemporaryStoppedModelInfo[];
+}
+
 interface ValidateResult {
   keyId: string | null;
   maskedKey: string;
@@ -107,7 +128,7 @@ function getChannelBorderClass(channel: Channel): string {
 
 export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const { token, authFetch } = useAuth();
-  const { toast } = useToast();
+  const { toast, update } = useToast();
   const importAbortRef = useRef<AbortController | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -143,6 +164,10 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
   const [channelKeysInfo, setChannelKeysInfo] = useState<ChannelKeyInfo[]>([]);
   const [validating, setValidating] = useState(false);
   const [maskedApiKey, setMaskedApiKey] = useState<string>("");
+  const [tempStopSummary, setTempStopSummary] = useState<ChannelTemporaryStopSummary | null>(null);
+  const [loadingTempStopSummary, setLoadingTempStopSummary] = useState(false);
+  const [resettingTempStop, setResettingTempStop] = useState(false);
+  const [selectedTempStopCredentialKey, setSelectedTempStopCredentialKey] = useState("ALL");
 
   // Key management in edit modal
   const [keyViewMode, setKeyViewMode] = useState<"list" | "edit">("list");
@@ -299,6 +324,8 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     setMaskedApiKey("");
     setMainKeyFull("");
     setChannelKeysInfo([]);
+    setTempStopSummary(null);
+    setSelectedTempStopCredentialKey("ALL");
     setShowModal(true);
   };
 
@@ -318,12 +345,16 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
     setKeyViewMode("list");
     setNewSingleKey("");
     setEditingKeyTarget(null);
+    setTempStopSummary(null);
+    setSelectedTempStopCredentialKey("ALL");
     setShowModal(true);
+    setLoadingTempStopSummary(true);
     // Load existing keys (full values) + main key
     try {
-      const [keysRes, mainKeyRes] = await Promise.all([
+      const [keysRes, mainKeyRes, tempStopRes] = await Promise.all([
         authFetch(`/api/channel/${channel.id}/keys`),
         authFetch(`/api/channel/${channel.id}/key`),
+        authFetch(`/api/channel/${channel.id}/temp-stop`),
       ]);
       if (keysRes.ok) {
         const data = await keysRes.json();
@@ -342,8 +373,69 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
           setMainKeyFull(data.apiKey);
         }
       }
+      if (tempStopRes.ok) {
+        const data = await tempStopRes.json();
+        setTempStopSummary(data);
+      }
     } catch {
       // ignore
+    } finally {
+      setLoadingTempStopSummary(false);
+    }
+  };
+
+  const handleResetChannelTemporaryStops = async () => {
+    if (!editingChannel || resettingTempStop) {
+      return;
+    }
+
+    const credentialKey = selectedTempStopCredentialKey !== "ALL"
+      ? selectedTempStopCredentialKey
+      : undefined;
+
+    setResettingTempStop(true);
+    const toastId = toast("正在恢复渠道临时封禁...", "loading");
+
+    try {
+      const response = await authFetch(`/api/channel/${editingChannel.id}/temp-stop/reset`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(credentialKey ? { credentialKey } : {}),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "恢复失败");
+      }
+
+      const summaryResponse = await authFetch(`/api/channel/${editingChannel.id}/temp-stop`);
+      if (summaryResponse.ok) {
+        const summary = await summaryResponse.json();
+        setTempStopSummary(summary);
+        if (summary.temporaryStoppedCredentials.length <= 1) {
+          setSelectedTempStopCredentialKey("ALL");
+        }
+      } else {
+        setTempStopSummary(null);
+        setSelectedTempStopCredentialKey("ALL");
+      }
+
+      update(
+        toastId,
+        `已恢复 ${data.clearedModels || 0} 个模型的临时封禁`,
+        "success"
+      );
+      onUpdate();
+    } catch (error) {
+      update(
+        toastId,
+        error instanceof Error ? error.message : "恢复失败",
+        "error"
+      );
+    } finally {
+      setResettingTempStop(false);
     }
   };
 
@@ -1572,6 +1664,39 @@ export function ChannelManager({ onUpdate, className }: ChannelManagerProps) {
                           {batchDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
                           删除无效Key
                         </button>
+                      )}
+                      {tempStopSummary?.allowAdminBypass && tempStopSummary.temporaryStoppedModelCount > 0 && (
+                        <>
+                          {tempStopSummary.temporaryStoppedCredentials.length > 1 && (
+                            <select
+                              value={selectedTempStopCredentialKey}
+                              onChange={(e) => setSelectedTempStopCredentialKey(e.target.value)}
+                              disabled={resettingTempStop}
+                              className="px-2.5 py-1 text-xs rounded-md border border-input bg-background"
+                            >
+                              <option value="ALL">全部渠道Key</option>
+                              {tempStopSummary.temporaryStoppedCredentials.map((credential) => (
+                                <option key={credential.credentialKey} value={credential.credentialKey}>
+                                  {credential.name}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          <button
+                            type="button"
+                            onClick={handleResetChannelTemporaryStops}
+                            disabled={resettingTempStop || loadingTempStopSummary}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-md border border-amber-500/50 text-amber-700 dark:text-amber-300 bg-amber-500/5 hover:bg-amber-500/10 disabled:opacity-50 transition-colors"
+                            title={`当前有 ${tempStopSummary.temporaryStoppedModelCount} 个模型处于临时封禁`}
+                          >
+                            {resettingTempStop || loadingTempStopSummary ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3 w-3" />
+                            )}
+                            恢复临停模型({tempStopSummary.temporaryStoppedModelCount})
+                          </button>
+                        </>
                       )}
                     </div>
 

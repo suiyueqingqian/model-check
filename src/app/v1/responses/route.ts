@@ -34,8 +34,7 @@ import {
 } from "@/lib/proxy/compat";
 import {
   getOpenAIEndpointOrder,
-  isGptFiveOrNewerModel,
-  shouldUseChatCompletionsOnlyForModel,
+  shouldPreferChatCompletionsForModel,
 } from "@/lib/utils/model-name";
 import { createAsyncErrorHandler, isExpectedCloseError, logWarn } from "@/lib/utils/error";
 
@@ -450,7 +449,7 @@ function buildAttemptList(
   detectedEndpoints: string[],
   preferredProxyEndpoint: "CHAT" | "CODEX" | null,
   shouldTryChatFallback: boolean,
-  forceChatCompletions: boolean
+  preferChatCompletions: boolean
 ): ProxyAttempt[] {
   if (isClaudeModelName(actualModelName)) {
     return [{
@@ -489,8 +488,14 @@ function buildAttemptList(
     },
   };
 
-  if (forceChatCompletions) {
-    return [attempts.CHAT];
+  if (preferChatCompletions) {
+    return getOpenAIEndpointOrder({
+      modelName: actualModelName,
+      requestedEndpoint: "CHAT",
+      detectedEndpoints,
+      preferredEndpoint: preferredProxyEndpoint,
+      allowFallback: true,
+    }).map((endpoint) => attempts[endpoint]);
   }
 
   if (!shouldTryChatFallback) {
@@ -611,7 +616,6 @@ export async function POST(request: NextRequest) {
       options?: Parameters<typeof recordProxyModelResult>[3],
     ) => recordProxyModelResult(modelId, endpointType, success, {
       ...options,
-      proxyKeyId: keyResult?.keyRecord?.id,
       temporaryStopValue: keyResult?.keyRecord?.temporaryStopValue,
       temporaryStopUnit: keyResult?.keyRecord?.temporaryStopUnit,
     }).catch(handleRecordModelResultError);
@@ -661,15 +665,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const forceChatCompletions =
-      typeof modelName === "string" && shouldUseChatCompletionsOnlyForModel(modelName);
+    const preferChatCompletions =
+      typeof modelName === "string" && shouldPreferChatCompletionsForModel(modelName);
 
     const requestedEndpointType =
       typeof modelName === "string" && isClaudeModelName(modelName)
         ? "CLAUDE"
         : typeof modelName === "string" && isGeminiModelName(modelName)
           ? "GEMINI"
-          : forceChatCompletions
+          : preferChatCompletions
             ? "CHAT"
           : "CODEX";
 
@@ -691,12 +695,7 @@ export async function POST(request: NextRequest) {
     }
 
     const isStream = body.stream !== false;
-    const shouldTryChatFallback =
-      forceChatCompletions ||
-      (
-        isGptFiveOrNewerModel(modelName) &&
-        !modelName.toLowerCase().includes("codex")
-      );
+    const shouldTryChatFallback = preferChatCompletions;
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
     let finalFailureLog: {
@@ -719,7 +718,7 @@ export async function POST(request: NextRequest) {
         channel.detectedEndpoints,
         channel.preferredProxyEndpoint,
         shouldTryChatFallback,
-        forceChatCompletions
+        preferChatCompletions
       );
 
       for (const attempt of attempts) {

@@ -1,7 +1,11 @@
 // GET /v1/models - Return all models from all enabled channels
 
 import { NextRequest, NextResponse } from "next/server";
-import { getAllModelsWithChannelsUnified, verifyProxyKeyAsync, errorResponse } from "@/lib/proxy";
+import {
+  getAllModelsWithChannelsUnified,
+  verifyProxyKeyAsync,
+  errorResponse,
+} from "@/lib/proxy";
 
 export async function GET(request: NextRequest) {
   // Verify proxy API key (async for multi-key support)
