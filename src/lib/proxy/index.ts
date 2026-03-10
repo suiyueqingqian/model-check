@@ -13,7 +13,10 @@ import {
   canAccessModel,
   type ValidateKeyResult,
 } from "@/lib/utils/proxy-key";
-import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
+import {
+  isGptFiveOrNewerModel,
+  isResponsesCompatibleChatModel,
+} from "@/lib/utils/model-name";
 
 // Round-robin counter: 优先使用 Redis INCR（多实例安全），无 Redis 时退回内存 Map
 const roundRobinCounters = new Map<string, number>();
@@ -145,6 +148,7 @@ export interface ProxyChannelCandidate {
   actualModelName: string;
   modelId: string;
   modelStatus: boolean | null;
+  detectedEndpoints: string[];
   preferredProxyEndpoint: "CHAT" | "CODEX" | null;
 }
 
@@ -424,6 +428,7 @@ export async function findChannelByModel(modelName: string, preferredEndpoint?: 
     actualModelName,
     modelId: selected.id,
     modelStatus: selected.lastStatus,
+    detectedEndpoints: selected.detectedEndpoints,
     preferredProxyEndpoint:
       selected.preferredProxyEndpoint === "CHAT" || selected.preferredProxyEndpoint === "CODEX"
         ? selected.preferredProxyEndpoint
@@ -564,6 +569,7 @@ async function getUnifiedModelCandidates(
     actualModelName: modelName,
     modelId: selected.id,
     modelStatus: selected.lastStatus,
+    detectedEndpoints: selected.detectedEndpoints,
     preferredProxyEndpoint:
       selected.preferredProxyEndpoint === "CHAT" || selected.preferredProxyEndpoint === "CODEX"
         ? selected.preferredProxyEndpoint
@@ -678,18 +684,55 @@ export async function recordProxyModelResult(
 ): Promise<void> {
   const now = new Date();
 
-  // 按状态码分级决定是否更新 lastStatus：
-  // 成功 / 5xx / 401/403/404 → 更新（模型或渠道真有问题）
-  // 400/422/429 等其他 4xx → 可能是用户侧问题，不更新
-  const shouldUpdateStatus = success || !options?.statusCode ||
-    (options.statusCode >= 500) ||
-    [401, 403, 404].includes(options.statusCode);
-
   await prisma.$transaction(async (tx) => {
+    const currentModel = await tx.model.findUnique({
+      where: { id: modelId },
+      select: {
+        modelName: true,
+        detectedEndpoints: true,
+      },
+    });
+
+    const currentDetectedEndpoints = currentModel?.detectedEndpoints ?? [];
+    const isGptDualEndpointModel =
+      !!currentModel?.modelName &&
+      isResponsesCompatibleChatModel(currentModel.modelName) &&
+      (endpointType === "CHAT" || endpointType === "CODEX");
+
+    const alternateDetectedEndpoints = isGptDualEndpointModel
+      ? currentDetectedEndpoints.filter(
+          (endpoint) =>
+            (endpoint === "CHAT" || endpoint === "CODEX") &&
+            endpoint !== endpointType
+        )
+      : [];
+
+    // 按状态码分级决定是否更新 lastStatus：
+    // 成功 / 5xx / 401/403/404 → 更新（模型或渠道真有问题）
+    // 400/422/429 等其他 4xx → 可能是用户侧问题，不更新
+    const shouldUpdateStatus = success || !options?.statusCode ||
+      (options.statusCode >= 500) ||
+      [401, 403, 404].includes(options.statusCode);
+
+    const shouldRemoveFailedEndpoint = !success &&
+      [401, 403, 404].includes(options?.statusCode ?? 0) &&
+      currentDetectedEndpoints.includes(endpointType);
+
+    const nextDetectedEndpoints = shouldRemoveFailedEndpoint
+      ? currentDetectedEndpoints.filter((endpoint) => endpoint !== endpointType)
+      : currentDetectedEndpoints;
+
+    const nextLastStatus = success
+      ? true
+      : isGptDualEndpointModel && alternateDetectedEndpoints.length > 0
+        ? true
+        : false;
+
     await tx.model.update({
       where: { id: modelId },
       data: {
-        ...(shouldUpdateStatus ? { lastStatus: success } : {}),
+        ...(shouldUpdateStatus ? { lastStatus: nextLastStatus } : {}),
+        ...(shouldRemoveFailedEndpoint ? { detectedEndpoints: nextDetectedEndpoints } : {}),
         lastLatency: success ? (options?.latency ?? null) : null,
         lastCheckedAt: now,
       },

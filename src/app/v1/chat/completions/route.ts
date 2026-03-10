@@ -29,6 +29,7 @@ import {
   isGeminiModelName,
 } from "@/lib/proxy/compat";
 import {
+  getOpenAIEndpointOrder,
   shouldTryResponsesFallbackForChatModel,
   shouldUseResponsesOnlyForChatModel,
 } from "@/lib/utils/model-name";
@@ -424,6 +425,7 @@ function buildAttemptList(
   requestedBody: Record<string, unknown>,
   baseUrl: string,
   actualModelName: string,
+  detectedEndpoints: string[],
   preferredProxyEndpoint: "CHAT" | "CODEX" | null,
   shouldTryResponsesFallback: boolean
 ): ProxyAttempt[] {
@@ -472,13 +474,13 @@ function buildAttemptList(
     return [attempts.CHAT];
   }
 
-  if (shouldUseResponsesOnlyForChatModel(actualModelName)) {
-    return [attempts.CODEX];
-  }
-
-  return preferredProxyEndpoint === "CODEX"
-    ? [attempts.CODEX, attempts.CHAT]
-    : [attempts.CHAT, attempts.CODEX];
+  return getOpenAIEndpointOrder({
+    modelName: actualModelName,
+    requestedEndpoint: "CHAT",
+    detectedEndpoints,
+    preferredEndpoint: preferredProxyEndpoint,
+    allowFallback: true,
+  }).map((endpoint) => attempts[endpoint]);
 }
 
 async function requestUpstreamAttempt(
@@ -661,6 +663,7 @@ export async function POST(request: NextRequest) {
         body,
         normalizeBaseUrl(channel.baseUrl),
         channel.actualModelName,
+        channel.detectedEndpoints,
         channel.preferredProxyEndpoint,
         shouldTryResponsesFallback
       );

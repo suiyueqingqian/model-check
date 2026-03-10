@@ -4,7 +4,6 @@ import { CheckStatus, EndpointType } from "@/generated/prisma";
 import { buildEndpointDetection, buildClaudeEndpointWithThinking } from "./strategies";
 import type { DetectionJobData, DetectionResult, FetchModelsResult } from "./types";
 import { proxyFetch } from "@/lib/utils/proxy-fetch";
-import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
 
 // Detection timeout in milliseconds
 const DETECTION_TIMEOUT = 30000;
@@ -465,15 +464,6 @@ export async function executeDetection(
       if (retryResult) return retryResult;
     }
 
-    // gpt-5+ 先尝试 Chat，失败再降级到 Responses
-    if (job.endpointType === EndpointType.CHAT) {
-      const name = job.modelName.toLowerCase();
-      if (isGptFiveOrNewerModel(name) && !name.includes("codex")) {
-        const retryResult = await retryWithResponsesEndpoint(job, startTime, options);
-        if (retryResult) return retryResult;
-      }
-    }
-
     return {
       status: CheckStatus.FAIL,
       latency,
@@ -508,15 +498,6 @@ export async function executeDetection(
     if (!(error instanceof Error && error.name === "AbortError") && job.endpointType === EndpointType.CLAUDE) {
       const retryResult = await retryClaudeWithThinking(job, startTime, options);
       if (retryResult) return retryResult;
-    }
-
-    // gpt-5+ 先尝试 Chat，失败再降级到 Responses（超时不降级）
-    if (!(error instanceof Error && error.name === "AbortError") && job.endpointType === EndpointType.CHAT) {
-      const name = job.modelName.toLowerCase();
-      if (isGptFiveOrNewerModel(name) && !name.includes("codex")) {
-        const retryResult = await retryWithResponsesEndpoint(job, startTime, options);
-        if (retryResult) return retryResult;
-      }
     }
 
     return {
@@ -589,76 +570,6 @@ async function retryClaudeWithThinking(
         latency,
         statusCode: response.status,
         endpointType: EndpointType.CLAUDE,
-        responseContent,
-      };
-    }
-
-    return null;
-  } catch {
-    return null;
-  } finally {
-    abortContext?.cleanup();
-  }
-}
-
-/**
- * gpt-5+ 的 Chat 检测失败后，降级尝试 Responses API
- */
-async function retryWithResponsesEndpoint(
-  job: DetectionJobData,
-  originalStartTime: number,
-  options?: DetectionExecutionOptions
-): Promise<DetectionResult | null> {
-  const proxy = job.proxy || GLOBAL_PROXY;
-  const endpoint = buildEndpointDetection(job.baseUrl, job.apiKey, job.modelName, EndpointType.CODEX);
-  let abortContext: ReturnType<typeof createAbortContext> | null = null;
-
-  try {
-    if (isUserCancelled(options?.signal)) {
-      return {
-        status: CheckStatus.FAIL,
-        latency: Date.now() - originalStartTime,
-        errorMsg: "Model detection cancelled by user",
-        endpointType: job.endpointType,
-      };
-    }
-
-    abortContext = createAbortContext(options?.signal);
-
-    const response = await proxyFetch(endpoint.url, {
-      method: "POST",
-      headers: endpoint.headers,
-      body: JSON.stringify(endpoint.requestBody),
-      signal: abortContext.signal,
-    }, proxy);
-
-    const latency = Date.now() - originalStartTime;
-
-    if (response.ok) {
-      let responseContent: string | undefined;
-      let responseBody: unknown;
-      try {
-        const contentType = response.headers.get("content-type") || "";
-        if (contentType.includes("text/event-stream")) {
-          const sseText = await response.text();
-          responseContent = extractStreamContent(sseText, EndpointType.CODEX);
-          responseBody = parseLastSSEEvent(sseText);
-        } else {
-          responseBody = await response.json();
-          responseContent = extractResponseContent(responseBody, EndpointType.CODEX);
-        }
-      } catch {
-        // Ignore parsing errors
-      }
-
-      const bodyError = checkResponseBodyForError(responseBody);
-      if (bodyError) return null;
-
-      return {
-        status: CheckStatus.SUCCESS,
-        latency,
-        statusCode: response.status,
-        endpointType: EndpointType.CODEX,
         responseContent,
       };
     }

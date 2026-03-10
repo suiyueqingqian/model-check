@@ -28,7 +28,10 @@ import {
   isClaudeModelName,
   isGeminiModelName,
 } from "@/lib/proxy/compat";
-import { isGptFiveOrNewerModel } from "@/lib/utils/model-name";
+import {
+  getOpenAIEndpointOrder,
+  isGptFiveOrNewerModel,
+} from "@/lib/utils/model-name";
 import { createAsyncErrorHandler, isExpectedCloseError, logWarn } from "@/lib/utils/error";
 
 const CLI_DETECT_PROMPT = process.env.DETECT_PROMPT || "1+1=2? yes or no";
@@ -439,6 +442,7 @@ function buildAttemptList(
   requestedBody: Record<string, unknown>,
   baseUrl: string,
   actualModelName: string,
+  detectedEndpoints: string[],
   preferredProxyEndpoint: "CHAT" | "CODEX" | null,
   shouldTryChatFallback: boolean
 ): ProxyAttempt[] {
@@ -479,15 +483,18 @@ function buildAttemptList(
     },
   };
 
-  if (!shouldTryChatFallback || hasResponsesOnlyFields(requestedBody)) {
+  if (!shouldTryChatFallback) {
     return [attempts.CODEX];
   }
 
-  if (preferredProxyEndpoint === "CHAT") {
-    return [attempts.CHAT, attempts.CODEX];
-  }
-
-  return [attempts.CODEX, attempts.CHAT];
+  return getOpenAIEndpointOrder({
+    modelName: actualModelName,
+    requestedEndpoint: "CODEX",
+    detectedEndpoints,
+    preferredEndpoint: preferredProxyEndpoint,
+    allowFallback: true,
+    forceRequestedFirst: hasResponsesOnlyFields(requestedBody),
+  }).map((endpoint) => attempts[endpoint]);
 }
 
 async function requestUpstreamAttempt(
@@ -668,6 +675,7 @@ export async function POST(request: NextRequest) {
         body,
         normalizeBaseUrl(channel.baseUrl),
         channel.actualModelName,
+        channel.detectedEndpoints,
         channel.preferredProxyEndpoint,
         shouldTryChatFallback
       );

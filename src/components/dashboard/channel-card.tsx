@@ -11,7 +11,7 @@ import { useAuth } from "@/components/providers/auth-provider";
 
 const EMPTY_SET = new Set<string>();
 import { useToast } from "@/components/ui/toast";
-import { getDisplayEndpoints, isResponsesCompatibleChatModel, isCodexNamedModel, supportsDisplayEndpoint } from "@/lib/utils/model-name";
+import { getDisplayEndpoints, isCodexNamedModel, supportsDisplayEndpoint } from "@/lib/utils/model-name";
 
 interface CheckLog {
   id: string;
@@ -93,43 +93,6 @@ function formatEndpointType(ep: string): { label: string; type: "chat" | "cli" }
     default:
       return { label: ep, type: "chat" };
   }
-}
-
-function pickPreferredLog(logs: CheckLog[]): CheckLog | undefined {
-  if (logs.length === 0) {
-    return undefined;
-  }
-
-  const sortedLogs = [...logs].sort((a, b) => {
-    if (a.status !== b.status) {
-      return a.status === "SUCCESS" ? -1 : 1;
-    }
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-  });
-
-  return sortedLogs[0];
-}
-
-function getSemanticEndpointStatuses(modelName: string, checkLogs: CheckLog[]): Record<string, string> {
-  const endpointStatuses: Record<string, string> = {};
-  const chatLikeLogs: CheckLog[] = [];
-
-  for (const log of checkLogs) {
-    if (isResponsesCompatibleChatModel(modelName) && (log.endpointType === "CHAT" || log.endpointType === "CODEX")) {
-      chatLikeLogs.push(log);
-      continue;
-    }
-
-    if (!endpointStatuses[log.endpointType]) {
-      endpointStatuses[log.endpointType] = log.status;
-    }
-  }
-
-  if (chatLikeLogs.length > 0) {
-    endpointStatuses.CHAT = chatLikeLogs.some((log) => log.status === "SUCCESS") ? "SUCCESS" : "FAIL";
-  }
-
-  return endpointStatuses;
 }
 
 function isModelHealthy(model: Model): boolean {
@@ -525,28 +488,7 @@ function getDisplayEndpointLog(
     return endpointType === "CODEX" ? endpointStatuses.CODEX : undefined;
   }
 
-  const directLog = endpointStatuses[endpointType];
-  if (directLog) {
-    return directLog;
-  }
-
-  if (!isResponsesCompatibleChatModel(modelName)) {
-    return undefined;
-  }
-
-  const chatLikeLog = pickPreferredLog(
-    [endpointStatuses.CHAT, endpointStatuses.CODEX].filter((log): log is CheckLog => !!log)
-  );
-
-  if (endpointType === "CHAT") {
-    return chatLikeLog;
-  }
-
-  if (endpointType === "CODEX") {
-    return chatLikeLog;
-  }
-
-  return undefined;
+  return endpointStatuses[endpointType];
 }
 
 // Endpoint badge component with status
@@ -632,9 +574,9 @@ function ModelItem({ model, channelName, onTest, isTesting, canTest }: ModelItem
   // gpt-5+ 模型固定展示 Chat 和 Codex 两个端点状态
   const endpoints = getDisplayEndpoints(model.modelName, (model.detectedEndpoints || []) as string[]);
   const endpointStatuses = getEndpointStatuses(model.checkLogs);
-  const semanticStatuses = getSemanticEndpointStatuses(model.modelName, model.checkLogs);
-
-  const testedEndpoints = Object.keys(semanticStatuses);
+  const testedEndpoints = endpoints.filter((ep) =>
+    !!getDisplayEndpointLog(model.modelName, endpointStatuses, ep)
+  );
   const isHealthy = model.lastStatus === true;
   const isUnknown = model.lastStatus === null;
 
