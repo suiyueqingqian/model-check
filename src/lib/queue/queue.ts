@@ -2,7 +2,7 @@
 
 import { randomUUID } from "crypto";
 import { Queue } from "bullmq";
-import redis from "@/lib/redis";
+import { getRedisClient } from "@/lib/redis";
 import type { DetectionJobData } from "@/lib/detection/types";
 import { createAsyncErrorHandler, logWarn } from "@/lib/utils/error";
 import { DETECTION_QUEUE_NAME, DETECTION_STOPPED_KEY, DETECTION_STOPPED_TTL, CANCELLED_MODELS_KEY, CANCELLED_MODELS_TTL, PROGRESS_BASELINE_KEY } from "./constants";
@@ -15,6 +15,10 @@ const DETECTION_SESSION_LOCK_WAIT_MS = 50;
 
 // Queue instance (singleton)
 let detectionQueue: Queue<DetectionJobData> | null = null;
+
+function getRedis() {
+  return getRedisClient();
+}
 
 type SessionChannelJobs = {
   channelId: string;
@@ -70,12 +74,12 @@ async function withChannelSessionLock<T>(
   const lockKey = getSessionChannelLockKey(sessionId, channelId);
 
   for (let i = 0; i < DETECTION_SESSION_LOCK_RETRY; i += 1) {
-    const acquired = await redis.set(lockKey, "1", "EX", 10, "NX");
+    const acquired = await getRedis().set(lockKey, "1", "EX", 10, "NX");
     if (acquired === "OK") {
       try {
         return await task();
       } finally {
-        await redis.del(lockKey);
+        await getRedis().del(lockKey);
       }
     }
     await sleep(DETECTION_SESSION_LOCK_WAIT_MS);
@@ -93,7 +97,7 @@ async function applyModelRemainingCounts(jobs: DetectionJobData[]): Promise<void
     return;
   }
 
-  const pipeline = redis.pipeline();
+  const pipeline = getRedis().pipeline();
   for (const [modelId, count] of modelJobCounts) {
     const key = `${MODEL_REMAINING_PREFIX}${modelId}`;
     pipeline.incrby(key, count);
@@ -116,7 +120,7 @@ async function enqueueSessionChannelJobs(
   const jobs: DetectionJobData[] = [];
 
   for (let i = 0; i < limit; i += 1) {
-    const job = parseDetectionJob(await redis.lpop(jobsKey));
+    const job = parseDetectionJob(await getRedis().lpop(jobsKey));
     if (!job) {
       break;
     }
@@ -128,7 +132,7 @@ async function enqueueSessionChannelJobs(
   }
 
   const jobIds = await addDetectionJobsBulk(jobs, { trackRemaining: false });
-  const pipeline = redis.pipeline();
+  const pipeline = getRedis().pipeline();
   pipeline.incrby(inflightKey, jobs.length);
   pipeline.expire(inflightKey, DETECTION_SESSION_TTL);
   pipeline.expire(jobsKey, DETECTION_SESSION_TTL);
@@ -141,8 +145,8 @@ async function enqueueSessionChannelJobs(
 
 async function cleanupDetectionSessionIfIdle(sessionId: string): Promise<void> {
   const [activeCount, pendingCount] = await Promise.all([
-    redis.scard(getSessionActiveChannelsKey(sessionId)),
-    redis.llen(getSessionPendingChannelsKey(sessionId)),
+    getRedis().scard(getSessionActiveChannelsKey(sessionId)),
+    getRedis().llen(getSessionPendingChannelsKey(sessionId)),
   ]);
 
   if (activeCount > 0 || pendingCount > 0) {
@@ -151,7 +155,7 @@ async function cleanupDetectionSessionIfIdle(sessionId: string): Promise<void> {
 
   const keys = await scanKeys(`${getSessionBaseKey(sessionId)}*`);
   if (keys.length > 0) {
-    await redis.del(...keys);
+    await getRedis().del(...keys);
   }
 }
 
@@ -161,7 +165,7 @@ async function cleanupDetectionSessionIfIdle(sessionId: string): Promise<void> {
 export function getDetectionQueue(): Queue<DetectionJobData> {
   if (!detectionQueue) {
     detectionQueue = new Queue<DetectionJobData>(DETECTION_QUEUE_NAME, {
-      connection: redis,
+      connection: getRedis(),
       defaultJobOptions: {
         attempts: 3,
         backoff: {
@@ -224,7 +228,7 @@ export async function addDetectionJobsBulk(
 export async function clearDetectionSessions(): Promise<void> {
   const keys = await scanKeys(`${DETECTION_SESSION_PREFIX}*`);
   if (keys.length > 0) {
-    await redis.del(...keys);
+    await getRedis().del(...keys);
   }
 }
 
@@ -248,7 +252,7 @@ export async function createDetectionSession(
 
   await applyModelRemainingCounts(allJobs);
 
-  const pipeline = redis.pipeline();
+  const pipeline = getRedis().pipeline();
   for (const channel of nonEmptyChannels) {
     const jobsKey = getSessionChannelJobsKey(sessionId, channel.channelId);
     if (channel.jobs.length > 0) {
@@ -299,7 +303,7 @@ async function getPendingSessionJobs(): Promise<DetectionJobData[]> {
 
   const jobs: DetectionJobData[] = [];
   for (const key of keys) {
-    const items = await redis.lrange(key, 0, -1);
+    const items = await getRedis().lrange(key, 0, -1);
     for (const item of items) {
       const job = parseDetectionJob(item);
       if (job) {
@@ -409,7 +413,7 @@ async function scanKeys(pattern: string): Promise<string[]> {
   const keys: string[] = [];
   let cursor = "0";
   do {
-    const [nextCursor, batch] = await redis.scan(cursor, "MATCH", pattern, "COUNT", 100);
+    const [nextCursor, batch] = await getRedis().scan(cursor, "MATCH", pattern, "COUNT", 100);
     cursor = nextCursor;
     keys.push(...batch);
   } while (cursor !== "0");
@@ -426,7 +430,7 @@ export async function pauseAndDrainQueue(): Promise<{ cleared: number }> {
   const handleRemoveJobError = createAsyncErrorHandler("[Queue] 删除任务失败", "warn");
 
   // Set stopped flag so workers skip remaining jobs
-  await redis.set(DETECTION_STOPPED_KEY, "1", "EX", DETECTION_STOPPED_TTL);
+  await getRedis().set(DETECTION_STOPPED_KEY, "1", "EX", DETECTION_STOPPED_TTL);
 
   // Pause the queue globally to prevent new jobs from being processed across all workers
   await queue.pause();
@@ -466,13 +470,13 @@ export async function pauseAndDrainQueue(): Promise<{ cleared: number }> {
     // Clear Redis semaphore counters to reset concurrency tracking
     const semaphoreKeys = await scanKeys("detection:semaphore:*");
     if (semaphoreKeys.length > 0) {
-      await redis.del(...semaphoreKeys);
+      await getRedis().del(...semaphoreKeys);
     }
 
     // Clear model remaining counters
     const modelRemainingKeys = await scanKeys(`${MODEL_REMAINING_PREFIX}*`);
     if (modelRemainingKeys.length > 0) {
-      await redis.del(...modelRemainingKeys);
+      await getRedis().del(...modelRemainingKeys);
     }
 
     await clearDetectionSessions();
@@ -490,7 +494,7 @@ export async function pauseAndDrainQueue(): Promise<{ cleared: number }> {
  * Check if detection has been stopped by user
  */
 export async function isDetectionStopped(): Promise<boolean> {
-  const value = await redis.get(DETECTION_STOPPED_KEY);
+  const value = await getRedis().get(DETECTION_STOPPED_KEY);
   return value === "1";
 }
 
@@ -498,7 +502,7 @@ export async function isDetectionStopped(): Promise<boolean> {
  * Clear the detection stopped flag (called when starting new detection)
  */
 export async function clearStoppedFlag(): Promise<void> {
-  await redis.del(DETECTION_STOPPED_KEY);
+  await getRedis().del(DETECTION_STOPPED_KEY);
 }
 
 /**
@@ -506,7 +510,7 @@ export async function clearStoppedFlag(): Promise<void> {
  */
 export async function markModelsCancelled(modelIds: string[]): Promise<void> {
   if (modelIds.length === 0) return;
-  const pipeline = redis.pipeline();
+  const pipeline = getRedis().pipeline();
   for (const modelId of modelIds) {
     pipeline.sadd(CANCELLED_MODELS_KEY, modelId);
   }
@@ -515,16 +519,16 @@ export async function markModelsCancelled(modelIds: string[]): Promise<void> {
 }
 
 export async function isModelCancelled(modelId: string): Promise<boolean> {
-  return (await redis.sismember(CANCELLED_MODELS_KEY, modelId)) === 1;
+  return (await getRedis().sismember(CANCELLED_MODELS_KEY, modelId)) === 1;
 }
 
 export async function clearModelCancelled(modelId: string): Promise<void> {
-  await redis.srem(CANCELLED_MODELS_KEY, modelId);
+  await getRedis().srem(CANCELLED_MODELS_KEY, modelId);
 }
 
 export async function clearModelsCancelled(modelIds: string[]): Promise<void> {
   if (modelIds.length === 0) return;
-  await redis.srem(CANCELLED_MODELS_KEY, ...modelIds);
+  await getRedis().srem(CANCELLED_MODELS_KEY, ...modelIds);
 }
 
 /**
@@ -536,11 +540,11 @@ export async function saveProgressBaseline(): Promise<void> {
     queue.getCompletedCount(),
     queue.getFailedCount(),
   ]);
-  await redis.set(PROGRESS_BASELINE_KEY, JSON.stringify({ completed, failed }), "EX", 7200);
+  await getRedis().set(PROGRESS_BASELINE_KEY, JSON.stringify({ completed, failed }), "EX", 7200);
 }
 
 export async function getProgressBaseline(): Promise<{ completed: number; failed: number }> {
-  const data = await redis.get(PROGRESS_BASELINE_KEY);
+  const data = await getRedis().get(PROGRESS_BASELINE_KEY);
   if (!data) return { completed: 0, failed: 0 };
   try {
     return JSON.parse(data);
@@ -554,9 +558,9 @@ export async function getProgressBaseline(): Promise<{ completed: number; failed
  */
 export async function decrementModelRemaining(modelId: string): Promise<boolean> {
   const key = `${MODEL_REMAINING_PREFIX}${modelId}`;
-  const remaining = await redis.decr(key);
+  const remaining = await getRedis().decr(key);
   if (remaining <= 0) {
-    await redis.del(key);
+    await getRedis().del(key);
     return true;
   }
   return false;
@@ -568,9 +572,9 @@ export async function decrementModelRemainingBy(modelId: string, count: number):
   }
 
   const key = `${MODEL_REMAINING_PREFIX}${modelId}`;
-  const remaining = await redis.decrby(key, count);
+  const remaining = await getRedis().decrby(key, count);
   if (remaining <= 0) {
-    await redis.del(key);
+    await getRedis().del(key);
     return true;
   }
   return false;
@@ -591,11 +595,11 @@ export async function onDetectionJobSettled(
     const activeChannelsKey = getSessionActiveChannelsKey(sessionId);
     const pendingChannelsKey = getSessionPendingChannelsKey(sessionId);
 
-    const remainingInflight = await redis.decr(inflightKey);
+    const remainingInflight = await getRedis().decr(inflightKey);
     if (remainingInflight <= 0) {
-      await redis.del(inflightKey);
+      await getRedis().del(inflightKey);
     } else {
-      await redis.expire(inflightKey, DETECTION_SESSION_TTL);
+      await getRedis().expire(inflightKey, DETECTION_SESSION_TTL);
     }
 
     if (!detectionStopped) {
@@ -610,16 +614,16 @@ export async function onDetectionJobSettled(
       return;
     }
 
-    await redis.srem(activeChannelsKey, job.channelId);
+    await getRedis().srem(activeChannelsKey, job.channelId);
 
     if (!detectionStopped) {
       while (true) {
-        const nextChannelId = await redis.lpop(pendingChannelsKey);
+        const nextChannelId = await getRedis().lpop(pendingChannelsKey);
         if (!nextChannelId) {
           break;
         }
 
-        await redis.sadd(activeChannelsKey, nextChannelId);
+        await getRedis().sadd(activeChannelsKey, nextChannelId);
         const activatedJobIds = await enqueueSessionChannelJobs(
           sessionId,
           nextChannelId,
@@ -628,7 +632,7 @@ export async function onDetectionJobSettled(
         if (activatedJobIds.length > 0) {
           break;
         }
-        await redis.srem(activeChannelsKey, nextChannelId);
+        await getRedis().srem(activeChannelsKey, nextChannelId);
       }
     }
 
@@ -642,7 +646,7 @@ async function removePendingSessionJobsByModelIds(modelIds: string[]): Promise<M
   const keys = await scanKeys(`${DETECTION_SESSION_PREFIX}*:channel:*:jobs`);
 
   for (const key of keys) {
-    const items = await redis.lrange(key, 0, -1);
+    const items = await getRedis().lrange(key, 0, -1);
     if (items.length === 0) {
       continue;
     }
@@ -663,7 +667,7 @@ async function removePendingSessionJobsByModelIds(modelIds: string[]): Promise<M
       continue;
     }
 
-    const pipeline = redis.pipeline();
+    const pipeline = getRedis().pipeline();
     pipeline.del(key);
     if (kept.length > 0) {
       pipeline.rpush(key, ...kept);

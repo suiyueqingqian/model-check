@@ -6,7 +6,7 @@ import net from "node:net";
 import prisma from "@/lib/prisma";
 import { fetchModels } from "@/lib/detection";
 import { isAuthenticated } from "@/lib/middleware/auth";
-import { redis } from "@/lib/redis";
+import { getRedisClient } from "@/lib/redis";
 
 interface PublicUploadBody {
   name?: string;
@@ -85,18 +85,17 @@ export async function POST(request: NextRequest) {
     const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
       || request.headers.get("x-real-ip")
       || "unknown";
-    if (redis) {
-      const rateLimitKey = `rate_limit:public_upload:${ip}`;
-      const count = await redis.incr(rateLimitKey);
-      if (count === 1) {
-        await redis.expire(rateLimitKey, 60); // 60 秒窗口
-      }
-      if (count > 5) {
-        return NextResponse.json(
-          { error: "请求过于频繁，请稍后再试", code: "RATE_LIMITED" },
-          { status: 429 }
-        );
-      }
+    const redis = getRedisClient();
+    const rateLimitKey = `rate_limit:public_upload:${ip}`;
+    const count = await redis.incr(rateLimitKey);
+    if (count === 1) {
+      await redis.expire(rateLimitKey, 60); // 60 秒窗口
+    }
+    if (count > 5) {
+      return NextResponse.json(
+        { error: "请求过于频繁，请稍后再试", code: "RATE_LIMITED" },
+        { status: 429 }
+      );
     }
 
     const body = await request.json() as PublicUploadBody;
@@ -144,18 +143,20 @@ export async function POST(request: NextRequest) {
 
     const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
     const compareBaseUrl = normalizeBaseUrlForCompare(baseUrl);
-
-    // Prevent duplicate submissions using normalized baseUrl + apiKey
-    const existingChannels = await prisma.channel.findMany({
-      select: { baseUrl: true, apiKey: true },
-    });
-    const isDuplicate = existingChannels.some(
-      (channel) =>
-        normalizeBaseUrlForCompare(channel.baseUrl) === compareBaseUrl &&
-        channel.apiKey === apiKey
+    const duplicateBaseUrls = Array.from(
+      new Set([normalizedBaseUrl, compareBaseUrl, `${compareBaseUrl}/v1`].filter(Boolean))
     );
 
-    if (isDuplicate) {
+    // Prevent duplicate submissions using normalized baseUrl + apiKey
+    const existingDuplicate = await prisma.channel.findFirst({
+      where: {
+        apiKey,
+        baseUrl: { in: duplicateBaseUrls },
+      },
+      select: { id: true },
+    });
+
+    if (existingDuplicate) {
       return NextResponse.json(
         { error: "该渠道已存在，请勿重复上传", code: "DUPLICATE_CHANNEL" },
         { status: 409 }

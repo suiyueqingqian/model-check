@@ -3,7 +3,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { redis } from "@/lib/redis";
+import { Prisma } from "@/generated/prisma";
+import { getRedisClient } from "@/lib/redis";
 import { proxyFetch } from "@/lib/utils/proxy-fetch";
 import {
   createAsyncErrorHandler,
@@ -41,20 +42,19 @@ function evictRoundRobinCounters(): void {
 }
 
 async function nextRoundRobin(counterKey: string): Promise<number> {
-  if (redis) {
-    try {
-      const redisKey = `${ROUND_ROBIN_REDIS_PREFIX}${counterKey}`;
-      const val = await redis.incr(redisKey);
-      if (val === 1) {
-        await redis.expire(redisKey, ROUND_ROBIN_REDIS_TTL)
-          .catch(createAsyncErrorHandler("[Proxy] 设置轮询计数过期时间失败", "warn"));
-      }
-      return val - 1;
-    } catch (error) {
-      if (!hasLoggedRoundRobinRedisFallback) {
-        hasLoggedRoundRobinRedisFallback = true;
-        logWarn("[Proxy] Redis 轮询计数不可用，已退回内存模式", error);
-      }
+  try {
+    const redis = getRedisClient();
+    const redisKey = `${ROUND_ROBIN_REDIS_PREFIX}${counterKey}`;
+    const val = await redis.incr(redisKey);
+    if (val === 1) {
+      await redis.expire(redisKey, ROUND_ROBIN_REDIS_TTL)
+        .catch(createAsyncErrorHandler("[Proxy] 设置轮询计数过期时间失败", "warn"));
+    }
+    return val - 1;
+  } catch (error) {
+    if (!hasLoggedRoundRobinRedisFallback) {
+      hasLoggedRoundRobinRedisFallback = true;
+      logWarn("[Proxy] Redis 轮询计数不可用，已退回内存模式", error);
     }
   }
   if (roundRobinCounters.size >= ROUND_ROBIN_MAX_KEYS) {
@@ -808,21 +808,16 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
     channelId: string;
   }>
 > {
-  // Build where clause based on key permissions
-  let whereClause: {
-    channel: { enabled: boolean };
-    lastStatus?: boolean;
-    channelId?: { in: string[] };
-    id?: { in: string[] };
-    OR?: Array<
-      | { channelId: { in: string[] } }
-      | { id: { in: string[] } }
-    >;
-  } = {
-    channel: { enabled: true },
-    // Keep model list aligned with actual proxy routing behavior.
-    lastStatus: true,
-  };
+  const whereConditions: Prisma.ModelWhereInput[] = [
+    { channel: { enabled: true } },
+    { lastStatus: true },
+    {
+      OR: [
+        { channelKeyId: null },
+        { channelKey: { is: { lastValid: { not: false } } } },
+      ],
+    },
+  ];
 
   // If key has restricted permissions, filter by allowed channels/models
   if (keyResult?.keyRecord && !keyResult.keyRecord.allowAllModels) {
@@ -839,58 +834,46 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
 
     // Build OR condition: channel match OR model match
     if (hasChannelPerms && hasModelPerms) {
-      // Need to use Prisma OR logic - but findMany doesn't support top-level OR easily
-      // So we'll filter by channelId OR modelId using two queries and merge
-      // For simplicity, we use channelId filter first, then add model filter
-      whereClause = {
-        ...whereClause,
+      whereConditions.push({
         OR: [
           { channelId: { in: allowedChannelIds } },
           { id: { in: allowedModelIds } },
         ],
-      } as typeof whereClause;
+      });
     } else if (hasChannelPerms) {
-      whereClause = {
-        ...whereClause,
+      whereConditions.push({
         channelId: { in: allowedChannelIds },
-      };
+      });
     } else if (hasModelPerms) {
-      whereClause = {
-        ...whereClause,
+      whereConditions.push({
         id: { in: allowedModelIds },
-      };
+      });
+    }
+
+    const allowedUnified = parseStringArray(keyResult.keyRecord.allowedUnifiedModels);
+    if (allowedUnified && allowedUnified.length > 0) {
+      whereConditions.push({
+        modelName: { in: allowedUnified },
+      });
     }
   }
 
   const models = await prisma.model.findMany({
-    where: whereClause,
-    include: {
+    where: { AND: whereConditions },
+    select: {
+      id: true,
+      modelName: true,
       channel: {
         select: { id: true, name: true },
       },
-      channelKey: {
-        select: { lastValid: true },
-      },
     },
+    distinct: ["channelId", "modelName"],
     orderBy: [
       { channel: { name: "asc" } },
       { modelName: "asc" },
+      { id: "asc" },
     ],
   });
-
-  const availableModels = models.filter((m) => {
-    if (m.channelKey && m.channelKey.lastValid === false) return false;
-    return true;
-  });
-
-  // allowedUnifiedModels 过滤：与统一模式路由保持一致
-  let filteredModels = availableModels;
-  if (keyResult?.keyRecord && !keyResult.keyRecord.allowAllModels) {
-    const allowedUnified = parseStringArray(keyResult.keyRecord.allowedUnifiedModels);
-    if (allowedUnified && allowedUnified.length > 0) {
-      filteredModels = availableModels.filter((m) => allowedUnified.includes(m.modelName));
-    }
-  }
 
   const uniqueModels = new Map<string, {
     id: string;
@@ -899,7 +882,7 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
     channelId: string;
   }>();
 
-  for (const m of filteredModels) {
+  for (const m of models) {
     const dedupeKey = `${m.channel.id}\u0000${m.modelName}`;
     if (!uniqueModels.has(dedupeKey)) {
       uniqueModels.set(dedupeKey, {

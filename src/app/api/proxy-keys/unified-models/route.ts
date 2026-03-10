@@ -16,13 +16,11 @@ export async function GET(request: NextRequest) {
         channel: { enabled: true },
       },
       select: { modelName: true },
+      distinct: ["modelName"],
       orderBy: { modelName: "asc" },
     });
 
-    // 按 modelName 去重
-    const uniqueNames = [...new Set(models.map((m) => m.modelName))];
-
-    return NextResponse.json({ models: uniqueNames });
+    return NextResponse.json({ models: models.map((m) => m.modelName) });
   } catch {
     return NextResponse.json(
       { error: "Failed to fetch unified models", code: "FETCH_ERROR" },

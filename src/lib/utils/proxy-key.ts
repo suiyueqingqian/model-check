@@ -204,11 +204,10 @@ export async function validateProxyKey(apiKey: string): Promise<ValidateKeyResul
   }
 
   if (!builtInRecord) {
-    const builtInKey = await getBuiltInProxyKeyInfo();
-    if (apiKey === builtInKey.key) {
+    if (ENV_PROXY_API_KEY && apiKey === ENV_PROXY_API_KEY) {
       return {
         valid: true,
-        keyRecord: createTransientBuiltInProxyKey(builtInKey.key, builtInKey.source),
+        keyRecord: createTransientBuiltInProxyKey(ENV_PROXY_API_KEY, "env"),
       };
     }
   }

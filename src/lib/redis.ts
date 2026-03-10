@@ -45,9 +45,12 @@ function createRedisClient() {
   return client;
 }
 
-export const redis = globalForRedis.redis ?? createRedisClient();
-
-if (process.env.NODE_ENV !== "production") globalForRedis.redis = redis;
+export function getRedisClient(): Redis {
+  if (!globalForRedis.redis) {
+    globalForRedis.redis = createRedisClient();
+  }
+  return globalForRedis.redis;
+}
 
 /**
  * Shared Pub/Sub infrastructure to avoid creating new Redis connections per SSE request.
@@ -177,4 +180,4 @@ function createPubSubManager(): PubSubManager {
 
 export const pubsubManager = createPubSubManager();
 
-export default redis;
+export default getRedisClient;

@@ -1,7 +1,7 @@
 // BullMQ Worker for processing detection jobs
 
 import { Worker, Job } from "bullmq";
-import redis from "@/lib/redis";
+import { getRedisClient } from "@/lib/redis";
 import prisma from "@/lib/prisma";
 import { executeDetection, sleep, randomDelay } from "@/lib/detection/detector";
 import type { DetectionJobData, DetectionResult } from "@/lib/detection/types";
@@ -12,6 +12,10 @@ const WORKER_CONCURRENCY = parseInt(process.env.WORKER_CONCURRENCY || "0", 10);
 const SEMAPHORE_POLL_MS = 500; // Poll interval when waiting for slot
 const SEMAPHORE_TTL = 660; // TTL in seconds for semaphore keys (should > PROXY_TIMEOUT 600s)
 const CONFIG_CACHE_TTL_MS = 5000;
+
+function getRedis() {
+  return getRedisClient();
+}
 
 interface WorkerRuntimeConfig {
   channelConcurrency: number;
@@ -202,19 +206,19 @@ async function acquireSlots(channelId: string, config: WorkerRuntimeConfig): Pro
       throw new Error(`acquireSlots timeout after ${MAX_WAIT_ATTEMPTS * SEMAPHORE_POLL_MS}ms`);
     }
     // Atomic incr + expire for global slot
-    const globalCount = await redis.eval(ACQUIRE_SLOT_LUA, 1, GLOBAL_SEMAPHORE_KEY, SEMAPHORE_TTL) as number;
+    const globalCount = await getRedis().eval(ACQUIRE_SLOT_LUA, 1, GLOBAL_SEMAPHORE_KEY, SEMAPHORE_TTL) as number;
     if (globalCount > maxJobConcurrency) {
-      await redis.decr(GLOBAL_SEMAPHORE_KEY);
+      await getRedis().decr(GLOBAL_SEMAPHORE_KEY);
       await sleep(SEMAPHORE_POLL_MS);
       continue;
     }
 
     // Atomic incr + expire for channel slot
-    const channelCount = await redis.eval(ACQUIRE_SLOT_LUA, 1, channelKey, SEMAPHORE_TTL) as number;
+    const channelCount = await getRedis().eval(ACQUIRE_SLOT_LUA, 1, channelKey, SEMAPHORE_TTL) as number;
     if (channelCount > config.channelConcurrency) {
       // Release channel slot and global slot, then wait
-      await redis.decr(channelKey);
-      await redis.decr(GLOBAL_SEMAPHORE_KEY);
+      await getRedis().decr(channelKey);
+      await getRedis().decr(GLOBAL_SEMAPHORE_KEY);
       await sleep(SEMAPHORE_POLL_MS);
       continue;
     }
@@ -229,7 +233,7 @@ async function releaseSlots(channelId: string): Promise<void> {
 
   // Release both slots with minimum value protection
   // Use pipeline for atomic execution
-  const pipeline = redis.pipeline();
+  const pipeline = getRedis().pipeline();
   pipeline.decr(channelKey);
   pipeline.decr(GLOBAL_SEMAPHORE_KEY);
   const results = await pipeline.exec();
@@ -241,10 +245,10 @@ async function releaseSlots(channelId: string): Promise<void> {
   // Clean up or reset if counters are at or below 0
   // This prevents negative values from accumulating if queue was forcibly cleared
   if (channelVal <= 0) {
-    await redis.del(channelKey);
+    await getRedis().del(channelKey);
   }
   if (globalVal <= 0) {
-    await redis.del(GLOBAL_SEMAPHORE_KEY);
+    await getRedis().del(GLOBAL_SEMAPHORE_KEY);
   }
 }
 
@@ -253,13 +257,13 @@ async function clearSemaphoreKeys(): Promise<void> {
   let cursor = "0";
 
   do {
-    const [nextCursor, batch] = await redis.scan(cursor, "MATCH", "detection:semaphore:*", "COUNT", 100);
+    const [nextCursor, batch] = await getRedis().scan(cursor, "MATCH", "detection:semaphore:*", "COUNT", 100);
     cursor = nextCursor;
     keys.push(...batch);
   } while (cursor !== "0");
 
   if (keys.length > 0) {
-    await redis.del(...keys);
+    await getRedis().del(...keys);
   }
 }
 
@@ -401,7 +405,7 @@ async function processDetectionJob(
     };
 
     try {
-      await redis.publish(PROGRESS_CHANNEL, JSON.stringify(progressData));
+      await getRedis().publish(PROGRESS_CHANNEL, JSON.stringify(progressData));
     } catch {
       // Redis publish failure should not affect the detection result
     }
@@ -438,10 +442,10 @@ export function startWorker(): Worker<DetectionJobData, DetectionResult> {
   });
 
   worker = new Worker<DetectionJobData, DetectionResult>(
-    DETECTION_QUEUE_NAME,
-    processDetectionJob,
+      DETECTION_QUEUE_NAME,
+      processDetectionJob,
     {
-      connection: redis.duplicate(),
+      connection: getRedis().duplicate(),
       concurrency: getEffectiveWorkerConcurrency(DEFAULT_WORKER_CONFIG),
     }
   );

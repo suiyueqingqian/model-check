@@ -7,22 +7,29 @@ import { getQueueStats, isQueueRunning } from "@/lib/queue/queue";
 export async function GET() {
   try {
     // Get basic statistics
-    const [channelCount, modelCount, recentLogs] = await Promise.all([
+    const last24Hours = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [channelCount, modelCount, checksLast24h, successCount] = await Promise.all([
       prisma.channel.count({ where: { enabled: true } }),
       prisma.model.count(),
-      prisma.checkLog.findMany({
-        select: { status: true },
+      prisma.checkLog.count({
         where: {
           createdAt: {
-            gte: new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24 hours
+            gte: last24Hours,
           },
+        },
+      }),
+      prisma.checkLog.count({
+        where: {
+          createdAt: {
+            gte: last24Hours,
+          },
+          status: "SUCCESS",
         },
       }),
     ]);
 
     // Calculate health rate
-    const successCount = recentLogs.filter((log) => log.status === "SUCCESS").length;
-    const healthRate = recentLogs.length > 0 ? Math.round((successCount / recentLogs.length) * 100) : 0;
+    const healthRate = checksLast24h > 0 ? Math.round((successCount / checksLast24h) * 100) : 0;
 
     // Get queue status
     let queueStats = null;
@@ -38,7 +45,7 @@ export async function GET() {
       statistics: {
         channels: channelCount,
         models: modelCount,
-        checksLast24h: recentLogs.length,
+        checksLast24h,
         healthRate,
       },
       queue: queueStats

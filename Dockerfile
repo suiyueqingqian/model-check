@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ========================================
 # Stage 1: Dependencies
 # ========================================
@@ -11,11 +12,9 @@ RUN apk add --no-cache libc6-compat
 
 # Copy package files
 COPY package.json package-lock.json* ./
-COPY prisma ./prisma/
-COPY prisma.config.ts ./
 
 # Install dependencies (skip postinstall, will run in builder stage)
-RUN npm ci --legacy-peer-deps --ignore-scripts
+RUN --mount=type=cache,target=/root/.npm npm ci --legacy-peer-deps --ignore-scripts
 
 # ========================================
 # Stage 2: Builder
@@ -29,9 +28,6 @@ COPY . .
 
 # Set dummy DATABASE_URL for Prisma generate (no actual connection needed)
 ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
-
-# Generate Prisma client with index.ts
-RUN npm run db:generate
 
 # Build application
 ENV NEXT_TELEMETRY_DISABLED=1

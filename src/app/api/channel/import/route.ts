@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
     let updated = 0;
     let skipped = 0;
     let duplicates = 0;
-    const importedChannelIds: string[] = [];
+    const importedChannelIdSet = new Set<string>();
 
     // Track channels for WebDAV sync
     const channelsToSync: Array<{
@@ -69,6 +69,9 @@ export async function POST(request: NextRequest) {
     const existingKeySet = new Set(
       existingChannels.map((ch) => `${ch.baseUrl.replace(/\/$/, "")}|${ch.apiKey}`)
     );
+    const existingNameMap = new Map(
+      existingChannels.map((ch) => [ch.name, ch])
+    );
 
     // Also track duplicates within the import data itself
     const importKeySet = new Set<string>();
@@ -87,20 +90,12 @@ export async function POST(request: NextRequest) {
 
       // Check for duplicate with existing channels (by baseUrl+apiKey)
       if (mode !== "replace" && existingKeySet.has(channelKey)) {
-        // Find existing channel with same baseUrl+apiKey
-        const existingByKey = existingChannels.find(
-          (ec) => `${ec.baseUrl.replace(/\/$/, "")}|${ec.apiKey}` === channelKey
-        );
-        if (existingByKey) {
-          duplicates++;
-          continue;
-        }
+        duplicates++;
+        continue;
       }
 
       // Check if channel with same name exists
-      const existing = await tx.channel.findFirst({
-        where: { name: ch.name },
-      });
+      const existing = existingNameMap.get(ch.name);
 
       if (existing) {
         if (mode === "merge" || mode === "replace") {
@@ -129,7 +124,7 @@ export async function POST(request: NextRequest) {
                 })),
             });
           }
-          importedChannelIds.push(existing.id);
+          importedChannelIdSet.add(existing.id);
           updated++;
           // Track for WebDAV sync
           channelsToSync.push({
@@ -171,8 +166,14 @@ export async function POST(request: NextRequest) {
               })),
           });
         }
-        importedChannelIds.push(newChannel.id);
+        importedChannelIdSet.add(newChannel.id);
         imported++;
+        existingNameMap.set(newChannel.name, {
+          id: newChannel.id,
+          name: newChannel.name,
+          baseUrl: normalizedBaseUrl,
+          apiKey: ch.apiKey,
+        });
         // Track for WebDAV sync
         channelsToSync.push({
           name: newChannel.name,
@@ -190,7 +191,7 @@ export async function POST(request: NextRequest) {
 
     // Replace mode: delete old channels not touched by import
     if (replaceOldIds && replaceOldIds.size > 0) {
-      const untouchedIds = [...replaceOldIds].filter(id => !importedChannelIds.includes(id));
+      const untouchedIds = [...replaceOldIds].filter((id) => !importedChannelIdSet.has(id));
       if (untouchedIds.length > 0) {
         await tx.channel.deleteMany({ where: { id: { in: untouchedIds } } });
       }
@@ -234,6 +235,7 @@ export async function POST(request: NextRequest) {
 
     // 获取导入的渠道名称列表，供前端打开筛选弹窗
     let importedChannels: { id: string; name: string }[] = [];
+    const importedChannelIds = Array.from(importedChannelIdSet);
     if (importedChannelIds.length > 0) {
       importedChannels = await prisma.channel.findMany({
         where: { id: { in: importedChannelIds } },
