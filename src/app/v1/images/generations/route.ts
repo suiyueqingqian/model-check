@@ -111,6 +111,15 @@ export async function POST(request: NextRequest) {
         });
         return errorResponse("Missing or invalid 'model' field", 400);
       }
+      if (modelName.includes("/")) {
+        await writeRequestLog({
+          requestedModel: modelName,
+          success: false,
+          statusCode: 400,
+          errorMsg: "统一模式下不允许使用 channelName/modelName 格式",
+        });
+        return errorResponse("统一模式下不允许使用 channelName/modelName 格式", 400);
+      }
     }
 
     const { candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "IMAGE");

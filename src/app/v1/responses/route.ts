@@ -692,6 +692,17 @@ export async function POST(request: NextRequest) {
         });
         return errorResponse("Missing or invalid 'model' field", 400);
       }
+      if (modelName.includes("/")) {
+        await writeRequestLog({
+          endpointType: "CODEX",
+          requestedModel: modelName,
+          isStream: body.stream !== false,
+          success: false,
+          statusCode: 400,
+          errorMsg: "统一模式下不允许使用 channelName/modelName 格式",
+        });
+        return errorResponse("统一模式下不允许使用 channelName/modelName 格式", 400);
+      }
     }
 
     const hasFileRefs = fileRefs.length > 0;
