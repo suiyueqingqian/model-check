@@ -10,6 +10,7 @@ import {
   createProxyRequestId,
   getUpstreamPathFromUrl,
   markProxyChannelKeyUnavailable,
+  normalizeRequestedModelForProxy,
   proxyRequest,
   recordProxyModelResult,
   recordProxyRequestLog,
@@ -670,13 +671,27 @@ export async function POST(request: NextRequest) {
         return errorResponse("Missing or invalid 'model' field", 400);
       }
     }
+    const { modelName: routedModelName, errorMsg: normalizedModelError } =
+      typeof modelName === "string"
+        ? await normalizeRequestedModelForProxy(modelName, keyResult!)
+        : { modelName: "" };
+    if (normalizedModelError) {
+      await writeRequestLog({
+        endpointType: "CHAT",
+        requestedModel: modelName,
+        isStream: body.stream === true,
+        success: false,
+        statusCode: 400,
+        errorMsg: normalizedModelError,
+      });
+      return errorResponse(normalizedModelError, 400);
+    }
 
     const hasFileRefs = fileRefs.length > 0;
 
     if (
       hasFileRefs &&
-      typeof modelName === "string" &&
-      shouldUseResponsesOnlyForChatModel(modelName)
+      shouldUseResponsesOnlyForChatModel(routedModelName)
     ) {
       await writeRequestLog({
         endpointType: "CHAT",
@@ -691,8 +706,7 @@ export async function POST(request: NextRequest) {
 
     if (
       hasFileRefs &&
-      typeof modelName === "string" &&
-      (isClaudeModelName(modelName) || isGeminiModelName(modelName))
+      (isClaudeModelName(routedModelName) || isGeminiModelName(routedModelName))
     ) {
       await writeRequestLog({
         endpointType: "CHAT",
@@ -725,16 +739,16 @@ export async function POST(request: NextRequest) {
     }
 
     const requestedEndpointType =
-      typeof modelName === "string" && isClaudeModelName(modelName)
+      isClaudeModelName(routedModelName)
         ? "CLAUDE"
-        : typeof modelName === "string" && isGeminiModelName(modelName)
+        : isGeminiModelName(routedModelName)
           ? "GEMINI"
-          : typeof modelName === "string" && shouldUseResponsesOnlyForChatModel(modelName)
+          : shouldUseResponsesOnlyForChatModel(routedModelName)
             ? "CODEX"
           : "CHAT";
 
     const candidateResult = await getProxyChannelCandidatesWithPermission(
-      modelName,
+      routedModelName,
       keyResult!,
       requestedEndpointType
     );
@@ -769,7 +783,7 @@ export async function POST(request: NextRequest) {
     }
 
     const isStream = body.stream === true;
-    const shouldTryResponsesFallback = !hasFileRefs && shouldTryResponsesFallbackForChatModel(modelName);
+    const shouldTryResponsesFallback = !hasFileRefs && shouldTryResponsesFallbackForChatModel(routedModelName);
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
     let finalFailureLog: {

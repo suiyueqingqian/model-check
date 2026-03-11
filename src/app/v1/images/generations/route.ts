@@ -8,6 +8,7 @@ import {
   createProxyRequestId,
   getUpstreamPathFromUrl,
   markProxyChannelKeyUnavailable,
+  normalizeRequestedModelForProxy,
   proxyRequest,
   recordProxyModelResult,
   recordProxyRequestLog,
@@ -112,8 +113,21 @@ export async function POST(request: NextRequest) {
         return errorResponse("Missing or invalid 'model' field", 400);
       }
     }
+    const { modelName: routedModelName, errorMsg: normalizedModelError } =
+      typeof modelName === "string"
+        ? await normalizeRequestedModelForProxy(modelName, keyResult!)
+        : { modelName: "" };
+    if (normalizedModelError) {
+      await writeRequestLog({
+        requestedModel: modelName,
+        success: false,
+        statusCode: 400,
+        errorMsg: normalizedModelError,
+      });
+      return errorResponse(normalizedModelError, 400);
+    }
 
-    const { candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "IMAGE");
+    const { candidates } = await getProxyChannelCandidatesWithPermission(routedModelName, keyResult!, "IMAGE");
     if (candidates.length === 0) {
       await writeRequestLog({
         requestedModel: modelName,

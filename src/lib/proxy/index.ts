@@ -22,6 +22,7 @@ import {
 } from "@/lib/utils/proxy-key";
 import {
   supportsOpenAIEndpointFallback,
+  getLastSegmentModelName,
 } from "@/lib/utils/model-name";
 
 // Round-robin counter: 优先使用 Redis INCR（多实例安全），无 Redis 时退回内存 Map
@@ -816,6 +817,46 @@ function buildProxyChannelCandidate(
   };
 }
 
+function getUnifiedModelName(modelName: string): string {
+  return getLastSegmentModelName(modelName);
+}
+
+async function hasChannelPrefixInUnifiedMode(modelName: string): Promise<boolean> {
+  const slashIndex = modelName.indexOf("/");
+  if (slashIndex <= 0 || slashIndex >= modelName.length - 1) {
+    return false;
+  }
+
+  const channel = await prisma.channel.findUnique({
+    where: { name: modelName.slice(0, slashIndex) },
+    select: { id: true },
+  });
+
+  return !!channel;
+}
+
+export async function normalizeRequestedModelForProxy(
+  modelName: string,
+  keyResult?: ValidateKeyResult
+): Promise<{ modelName: string; errorMsg?: string }> {
+  const trimmedModelName = modelName.trim();
+
+  if (keyResult?.keyRecord?.unifiedMode !== true) {
+    return { modelName: trimmedModelName };
+  }
+
+  if (await hasChannelPrefixInUnifiedMode(trimmedModelName)) {
+    return {
+      modelName: trimmedModelName,
+      errorMsg: "统一模型模式下不允许使用渠道名前缀，请只传模型名称",
+    };
+  }
+
+  return {
+    modelName: getUnifiedModelName(trimmedModelName),
+  };
+}
+
 async function orderModelsWithinChannel(
   counterKey: string,
   group: RoutedModelRecord[]
@@ -1342,11 +1383,15 @@ async function getUnifiedModelCandidates(
   keyResult: ValidateKeyResult,
   preferredEndpoint?: string
 ): Promise<ProxyChannelCandidate[]> {
+  const unifiedModelName = getUnifiedModelName(modelName);
   const models = await prisma.model.findMany({
     where: {
-      modelName,
       channel: { enabled: true },
       lastStatus: true,
+      OR: [
+        { modelName: unifiedModelName },
+        { modelName: { endsWith: `/${unifiedModelName}` } },
+      ],
     },
     select: routedModelSelect,
     orderBy: [
@@ -1358,7 +1403,9 @@ async function getUnifiedModelCandidates(
   });
 
   // 按端点类型过滤：只选择 detectedEndpoints 包含请求端点的模型（有回退）
-  let endpointFiltered = models.filter((m) => isCredentialAvailableForModel(m));
+  let endpointFiltered = models.filter((m) =>
+    isCredentialAvailableForModel(m) && getUnifiedModelName(m.modelName) === unifiedModelName
+  );
   if (preferredEndpoint && models.length > 0) {
     endpointFiltered = endpointFiltered.filter((m: RoutedModelRecord) =>
       supportsPreferredEndpoint(m.modelName, m.detectedEndpoints, preferredEndpoint)
@@ -1372,30 +1419,20 @@ async function getUnifiedModelCandidates(
     return [];
   }
 
-  // 统一模式权限过滤
   const keyRecord = keyResult.keyRecord;
   let permittedModels = endpointFiltered;
   if (keyRecord && !keyRecord.allowAllModels) {
-    const allowedUnified = parseStringArray(keyRecord.allowedUnifiedModels);
-    if (allowedUnified && allowedUnified.length > 0) {
-      // 用 allowedUnifiedModels 做裸模型名匹配
-      if (!allowedUnified.includes(modelName)) {
-        return [];
-      }
-    } else {
-      // 回退到现有 channelIds/modelIds 检查
-      const allowedChannelIds = parseStringArray(keyRecord.allowedChannelIds);
-      const allowedModelIds = parseStringArray(keyRecord.allowedModelIds);
-      const hasChannelPerms = allowedChannelIds !== null && allowedChannelIds.length > 0;
-      const hasModelPerms = allowedModelIds !== null && allowedModelIds.length > 0;
-      if (!hasChannelPerms && !hasModelPerms) return [];
-      permittedModels = endpointFiltered.filter((m) => {
-        if (hasChannelPerms && allowedChannelIds!.includes(m.channel.id)) return true;
-        if (hasModelPerms && allowedModelIds!.includes(m.id)) return true;
-        return false;
-      });
-      if (permittedModels.length === 0) return [];
-    }
+    const allowedChannelIds = parseStringArray(keyRecord.allowedChannelIds);
+    const allowedModelIds = parseStringArray(keyRecord.allowedModelIds);
+    const hasChannelPerms = allowedChannelIds !== null && allowedChannelIds.length > 0;
+    const hasModelPerms = allowedModelIds !== null && allowedModelIds.length > 0;
+    if (!hasChannelPerms && !hasModelPerms) return [];
+    permittedModels = endpointFiltered.filter((m) => {
+      if (hasChannelPerms && allowedChannelIds!.includes(m.channel.id)) return true;
+      if (hasModelPerms && allowedModelIds!.includes(m.id)) return true;
+      return false;
+    });
+    if (permittedModels.length === 0) return [];
   }
 
   // 同渠道多 key 全部进入候选列表，组内顺序按 routeStrategy 排
@@ -1411,9 +1448,9 @@ async function getUnifiedModelCandidates(
 
   const orderedCandidates: ProxyChannelCandidate[] = [];
   for (const [channelId, group] of channelGroups) {
-    const orderedModels = await orderModelsWithinChannel(`unified:${channelId}:${modelName}`, group);
+    const orderedModels = await orderModelsWithinChannel(`unified:${channelId}:${unifiedModelName}`, group);
     orderedCandidates.push(
-      ...orderedModels.map((selected) => buildProxyChannelCandidate(selected, modelName))
+      ...orderedModels.map((selected) => buildProxyChannelCandidate(selected, selected.modelName))
     );
   }
 
@@ -1489,10 +1526,9 @@ export async function findChannelByModelWithPermission(
   keyResult: ValidateKeyResult,
   preferredEndpoint?: string
 ): Promise<ProxyChannelCandidate | null> {
-  // 统一模式：裸模型名（不含 /）走跨渠道路由
   const isUnifiedMode = keyResult.keyRecord?.unifiedMode === true;
-  if (isUnifiedMode && !modelName.includes("/")) {
-    return findChannelByUnifiedModel(modelName, keyResult, preferredEndpoint);
+  if (isUnifiedMode) {
+    return findChannelByUnifiedModel(getUnifiedModelName(modelName), keyResult, preferredEndpoint);
   }
 
   const candidates = await filterTemporarilyStoppedCandidates(
@@ -1526,16 +1562,17 @@ export async function getProxyChannelCandidatesWithPermission(
   preferredEndpoint?: string
 ): Promise<ProxyChannelCandidateResult> {
   const isUnifiedMode = keyResult.keyRecord?.unifiedMode === true;
-  const isUnifiedRouting = isUnifiedMode && !modelName.includes("/");
+  const unifiedModelName = isUnifiedMode ? getUnifiedModelName(modelName) : modelName;
+  const isUnifiedRouting = isUnifiedMode;
 
   if (isUnifiedRouting) {
     const candidates = await filterTemporarilyStoppedCandidates(
-      await getUnifiedModelCandidates(modelName, keyResult, preferredEndpoint)
+      await getUnifiedModelCandidates(unifiedModelName, keyResult, preferredEndpoint)
     );
     return {
       isUnifiedRouting: true,
       candidates: await orderUnifiedCandidates(
-        modelName,
+        unifiedModelName,
         preferredEndpoint,
         candidates,
         keyResult.keyRecord?.unifiedRouteStrategy
@@ -1725,7 +1762,6 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
     { lastStatus: true },
   ];
 
-  // If key has restricted permissions, filter by allowed channels/models
   if (keyResult?.keyRecord && !keyResult.keyRecord.allowAllModels) {
     const allowedChannelIds = parseStringArray(keyResult.keyRecord.allowedChannelIds);
     const allowedModelIds = parseStringArray(keyResult.keyRecord.allowedModelIds);
@@ -1733,12 +1769,10 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
     const hasChannelPerms = allowedChannelIds !== null && allowedChannelIds.length > 0;
     const hasModelPerms = allowedModelIds !== null && allowedModelIds.length > 0;
 
-    // If no explicit permissions configured, return empty (deny all)
     if (!hasChannelPerms && !hasModelPerms) {
       return [];
     }
 
-    // Build OR condition: channel match OR model match
     if (hasChannelPerms && hasModelPerms) {
       whereConditions.push({
         OR: [
@@ -1753,13 +1787,6 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
     } else if (hasModelPerms) {
       whereConditions.push({
         id: { in: allowedModelIds },
-      });
-    }
-
-    const allowedUnified = parseStringArray(keyResult.keyRecord.allowedUnifiedModels);
-    if (allowedUnified && allowedUnified.length > 0) {
-      whereConditions.push({
-        modelName: { in: allowedUnified },
       });
     }
   }
@@ -1820,11 +1847,11 @@ export async function getAllModelsWithChannelsUnified(keyResult?: ValidateKeyRes
   if (!keyResult?.keyRecord?.unifiedMode) {
     return models;
   }
-  // 统一模式：按 modelName 去重，channelName 置空
   const seen = new Map<string, { id: string; modelName: string; channelName: string; channelId: string }>();
   for (const m of models) {
-    if (!seen.has(m.modelName)) {
-      seen.set(m.modelName, { ...m, channelName: "" });
+    const unifiedModelName = getUnifiedModelName(m.modelName);
+    if (!seen.has(unifiedModelName)) {
+      seen.set(unifiedModelName, { ...m, modelName: unifiedModelName, channelName: "" });
     }
   }
   return Array.from(seen.values());

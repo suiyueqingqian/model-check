@@ -10,6 +10,7 @@ import {
   createProxyRequestId,
   getUpstreamPathFromUrl,
   markProxyChannelKeyUnavailable,
+  normalizeRequestedModelForProxy,
   proxyRequest,
   recordProxyModelResult,
   recordProxyRequestLog,
@@ -693,13 +694,27 @@ export async function POST(request: NextRequest) {
         return errorResponse("Missing or invalid 'model' field", 400);
       }
     }
+    const { modelName: routedModelName, errorMsg: normalizedModelError } =
+      typeof modelName === "string"
+        ? await normalizeRequestedModelForProxy(modelName, keyResult!)
+        : { modelName: "" };
+    if (normalizedModelError) {
+      await writeRequestLog({
+        endpointType: "CODEX",
+        requestedModel: modelName,
+        isStream: body.stream !== false,
+        success: false,
+        statusCode: 400,
+        errorMsg: normalizedModelError,
+      });
+      return errorResponse(normalizedModelError, 400);
+    }
 
     const hasFileRefs = fileRefs.length > 0;
 
     if (
       hasFileRefs &&
-      typeof modelName === "string" &&
-      (isClaudeModelName(modelName) || isGeminiModelName(modelName))
+      (isClaudeModelName(routedModelName) || isGeminiModelName(routedModelName))
     ) {
       await writeRequestLog({
         endpointType: "CODEX",
@@ -713,7 +728,7 @@ export async function POST(request: NextRequest) {
     }
 
     const preferChatCompletions =
-      typeof modelName === "string" && !hasFileRefs && shouldPreferChatCompletionsForModel(modelName);
+      !hasFileRefs && shouldPreferChatCompletionsForModel(routedModelName);
     const fileBindings = (await Promise.all(fileRefs.map((fileRef) => getProxyFileBinding(fileRef))))
       .filter((binding): binding is ProxyFileBinding => !!binding);
     const boundTargetKey = fileBindings.length > 0 ? buildProxyFileBindingKey(fileBindings[0]) : null;
@@ -734,16 +749,16 @@ export async function POST(request: NextRequest) {
     }
 
     const requestedEndpointType =
-      typeof modelName === "string" && isClaudeModelName(modelName)
+      isClaudeModelName(routedModelName)
         ? "CLAUDE"
-        : typeof modelName === "string" && isGeminiModelName(modelName)
+        : isGeminiModelName(routedModelName)
           ? "GEMINI"
-          : preferChatCompletions
-            ? "CHAT"
+        : preferChatCompletions
+          ? "CHAT"
           : "CODEX";
 
     const candidateResult = await getProxyChannelCandidatesWithPermission(
-      modelName,
+      routedModelName,
       keyResult!,
       requestedEndpointType
     );
@@ -779,7 +794,7 @@ export async function POST(request: NextRequest) {
 
     const isStream = body.stream !== false;
     const shouldTryChatFallback =
-      typeof modelName === "string" && !hasFileRefs && shouldTryChatFallbackForResponsesModel(modelName);
+      !hasFileRefs && shouldTryChatFallbackForResponsesModel(routedModelName);
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
     let finalFailureLog: {

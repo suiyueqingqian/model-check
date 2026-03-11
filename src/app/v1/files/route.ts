@@ -3,6 +3,7 @@ import {
   buildUpstreamHeaders,
   errorResponse,
   getProxyChannelCandidatesWithPermission,
+  normalizeRequestedModelForProxy,
   normalizeBaseUrl,
   type ProxyChannelCandidate,
   verifyProxyKeyAsync,
@@ -211,13 +212,19 @@ export async function POST(request: NextRequest) {
     }
 
     const requestedModel = model.trim();
-    const preferredEndpoint = isClaudeModelName(requestedModel)
+    const { modelName: routedModelName, errorMsg: normalizedModelError } =
+      await normalizeRequestedModelForProxy(requestedModel, keyResult!);
+    if (normalizedModelError) {
+      return errorResponse(normalizedModelError, 400);
+    }
+
+    const preferredEndpoint = isClaudeModelName(routedModelName)
       ? "CLAUDE"
-      : isGeminiModelName(requestedModel)
+      : isGeminiModelName(routedModelName)
         ? "GEMINI"
         : "CODEX";
     const { candidates } = await getProxyChannelCandidatesWithPermission(
-      requestedModel,
+      routedModelName,
       keyResult!,
       preferredEndpoint
     );
@@ -270,19 +277,19 @@ export async function POST(request: NextRequest) {
       await bindUploadedReference(
         typeof payload.id === "string" ? payload.id : null,
         channel,
-        requestedModel
+        routedModelName
       );
 
       await bindUploadedReference(
         typeof payload.file?.name === "string" ? payload.file.name : null,
         channel,
-        requestedModel
+        routedModelName
       );
 
       await bindUploadedReference(
         typeof payload.file?.uri === "string" ? payload.file.uri : null,
         channel,
-        requestedModel
+        routedModelName
       );
     } catch {
     }

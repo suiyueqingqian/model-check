@@ -48,12 +48,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
   const [selectedModelIds, setSelectedModelIds] = useState<Record<string, string[]>>({});
 
-  // 统一模式状态
   const [unifiedMode, setUnifiedMode] = useState(true);
-  const [unifiedModels, setUnifiedModels] = useState<string[]>([]);
-  const [selectedUnifiedModels, setSelectedUnifiedModels] = useState<string[]>([]);
-  const [loadingUnifiedModels, setLoadingUnifiedModels] = useState(false);
-  const [unifiedSearchQuery, setUnifiedSearchQuery] = useState("");
   const [temporaryStopValue, setTemporaryStopValue] = useState(10);
   const [temporaryStopUnit, setTemporaryStopUnit] = useState<"second" | "minute" | "hour" | "day">("minute");
   const [unifiedRouteStrategy, setUnifiedRouteStrategy] = useState<"round_robin" | "random">("round_robin");
@@ -106,40 +101,6 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
     return () => controller.abort();
   }, [isOpen, token, authFetch]);
 
-  // 加载统一模式可用模型列表
-  useEffect(() => {
-    if (!isOpen || !token || !unifiedMode) return;
-
-    const controller = new AbortController();
-
-    const loadUnifiedModels = async () => {
-      setLoadingUnifiedModels(true);
-      try {
-        const response = await authFetch("/api/proxy-keys/unified-models", {
-          signal: controller.signal,
-        });
-
-        if (controller.signal.aborted) return;
-
-        if (response.ok) {
-          const data = await response.json();
-          if (!controller.signal.aborted) {
-            setUnifiedModels(data.models || []);
-          }
-        }
-      } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") return;
-      } finally {
-        if (!controller.signal.aborted) {
-          setLoadingUnifiedModels(false);
-        }
-      }
-    };
-
-    loadUnifiedModels();
-    return () => controller.abort();
-  }, [isOpen, token, unifiedMode, authFetch]);
-
   // 初始化基础表单字段（仅在 editingKey/isOpen 变化时触发）
   useEffect(() => {
     if (editingKey) {
@@ -148,9 +109,6 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
       setAllowAllModels(editingKey.allowAllModels);
       setGeneratedKey(editingKey.source !== "database" ? editingKey.key : "");
       setUnifiedMode(editingKey.unifiedMode ?? true);
-      setSelectedUnifiedModels(
-        Array.isArray(editingKey.allowedUnifiedModels) ? editingKey.allowedUnifiedModels : []
-      );
       setTemporaryStopValue(editingKey.temporaryStopValue ?? 10);
       setTemporaryStopUnit(editingKey.temporaryStopUnit ?? "minute");
       setUnifiedRouteStrategy(editingKey.unifiedRouteStrategy ?? "round_robin");
@@ -161,7 +119,6 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
       setSelectedChannelIds([]);
       setSelectedModelIds({});
       setUnifiedMode(true);
-      setSelectedUnifiedModels([]);
       setTemporaryStopValue(10);
       setTemporaryStopUnit("minute");
       setUnifiedRouteStrategy("round_robin");
@@ -257,7 +214,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
                   allowedChannelIds: allowAllModels ? null : (effectiveChannelIds.length > 0 ? effectiveChannelIds : null),
                   allowedModelIds: allowAllModels ? null : (effectiveModelIds.length > 0 ? effectiveModelIds : null),
                   unifiedMode,
-                  allowedUnifiedModels: unifiedMode && !allowAllModels ? (selectedUnifiedModels.length > 0 ? selectedUnifiedModels : null) : null,
+                  allowedUnifiedModels: null,
                   temporaryStopValue,
                   temporaryStopUnit,
                   unifiedRouteStrategy,
@@ -268,7 +225,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
                   allowedChannelIds: allowAllModels ? null : (effectiveChannelIds.length > 0 ? effectiveChannelIds : null),
                   allowedModelIds: allowAllModels ? null : (effectiveModelIds.length > 0 ? effectiveModelIds : null),
                   unifiedMode,
-                  allowedUnifiedModels: unifiedMode && !allowAllModels ? (selectedUnifiedModels.length > 0 ? selectedUnifiedModels : null) : null,
+                  allowedUnifiedModels: null,
                   temporaryStopValue,
                   temporaryStopUnit,
                   unifiedRouteStrategy,
@@ -297,7 +254,7 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
             allowedChannelIds: allowAllModels ? null : (effectiveChannelIds.length > 0 ? effectiveChannelIds : null),
             allowedModelIds: allowAllModels ? null : (effectiveModelIds.length > 0 ? effectiveModelIds : null),
             unifiedMode,
-            allowedUnifiedModels: unifiedMode && !allowAllModels ? (selectedUnifiedModels.length > 0 ? selectedUnifiedModels : null) : null,
+            allowedUnifiedModels: null,
             temporaryStopValue,
             temporaryStopUnit,
             unifiedRouteStrategy,
@@ -544,88 +501,29 @@ export function ProxyKeyModal({ isOpen, onClose, editingKey, onSuccess }: ProxyK
                 </div>
               </div>
 
-              {!allowAllModels && !unifiedMode && (
+              {!allowAllModels && (
                 <div className="border border-border rounded-md p-3">
                   {loadingChannels ? (
                     <div className="flex items-center justify-center py-4">
                       <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                     </div>
                   ) : (
-                    <ChannelModelSelector
-                      channels={channels}
-                      selectedChannelIds={selectedChannelIds}
-                      selectedModelIds={selectedModelIds}
-                      onSelectionChange={(channelIds, modelIds) => {
-                        setSelectedChannelIds(channelIds);
-                        setSelectedModelIds(modelIds);
-                      }}
-                      selectAllLabel="全选所有渠道"
-                    />
-                  )}
-                </div>
-              )}
-
-              {!allowAllModels && unifiedMode && (
-                <div className="border border-border rounded-md p-3">
-                  {loadingUnifiedModels ? (
-                    <div className="flex items-center justify-center py-4">
-                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : unifiedModels.length === 0 ? (
-                    <div className="text-sm text-muted-foreground text-center py-4">
-                      暂无可用模型
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium">选择允许的模型</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (selectedUnifiedModels.length === unifiedModels.length) {
-                              setSelectedUnifiedModels([]);
-                            } else {
-                              setSelectedUnifiedModels([...unifiedModels]);
-                            }
-                          }}
-                          className="text-xs text-primary hover:underline"
-                        >
-                          {selectedUnifiedModels.length === unifiedModels.length ? "取消全选" : "全选"}
-                        </button>
-                      </div>
-                      <input
-                        type="text"
-                        value={unifiedSearchQuery}
-                        onChange={(e) => setUnifiedSearchQuery(e.target.value)}
-                        className="w-full px-2 py-1 rounded border border-input bg-background text-sm mb-2"
-                        placeholder="搜索模型..."
-                      />
-                      <div className="max-h-72 overflow-y-auto space-y-1">
-                        {unifiedModels
-                          .filter((m) => !unifiedSearchQuery || m.toLowerCase().includes(unifiedSearchQuery.toLowerCase()))
-                          .map((modelName) => (
-                          <label key={modelName} className="flex items-center gap-2 cursor-pointer py-0.5">
-                            <input
-                              type="checkbox"
-                              checked={selectedUnifiedModels.includes(modelName)}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedUnifiedModels((prev) => [...prev, modelName]);
-                                } else {
-                                  setSelectedUnifiedModels((prev) => prev.filter((m) => m !== modelName));
-                                }
-                              }}
-                              className="w-3.5 h-3.5 text-primary rounded"
-                            />
-                            <span className="text-sm font-mono truncate">{modelName}</span>
-                          </label>
-                        ))}
-                      </div>
-                      {selectedUnifiedModels.length > 0 && (
-                        <div className="text-xs text-muted-foreground pt-1 border-t border-border">
-                          已选 {selectedUnifiedModels.length} / {unifiedModels.length} 个模型
-                        </div>
+                    <div className="space-y-3">
+                      {unifiedMode && (
+                        <p className="text-xs text-muted-foreground">
+                          统一模式下仍按渠道和模型授权，前台只是不需要再带渠道名前缀。
+                        </p>
                       )}
+                      <ChannelModelSelector
+                        channels={channels}
+                        selectedChannelIds={selectedChannelIds}
+                        selectedModelIds={selectedModelIds}
+                        onSelectionChange={(channelIds, modelIds) => {
+                          setSelectedChannelIds(channelIds);
+                          setSelectedModelIds(modelIds);
+                        }}
+                        selectAllLabel="全选所有渠道"
+                      />
                     </div>
                   )}
                 </div>

@@ -3,6 +3,11 @@ const GPT_VERSION_REGEX = /gpt-?(\d+(?:\.\d+)?)/i;
 export type OpenAIProxyEndpoint = "CHAT" | "CODEX";
 export type ModelFamily = "CLAUDE" | "GEMINI" | "CODEX" | "GPT" | "GROK" | "QWEN" | "DEEPSEEK" | "GLM" | "OTHER";
 
+export function getLastSegmentModelName(modelName: string): string {
+  const slashIndex = modelName.lastIndexOf("/");
+  return slashIndex >= 0 ? modelName.slice(slashIndex + 1) : modelName;
+}
+
 function getNormalizedModelName(modelName: string): string {
   const slashIndex = modelName.indexOf("/");
   const actualModelName = slashIndex > 0 ? modelName.slice(slashIndex + 1) : modelName;

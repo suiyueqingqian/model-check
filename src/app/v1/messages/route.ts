@@ -10,6 +10,7 @@ import {
   createProxyRequestId,
   getUpstreamPathFromUrl,
   markProxyChannelKeyUnavailable,
+  normalizeRequestedModelForProxy,
   proxyRequest,
   recordProxyModelResult,
   recordProxyRequestLog,
@@ -154,8 +155,22 @@ export async function POST(request: NextRequest) {
         return errorResponse("Missing or invalid 'model' field", 400);
       }
     }
+    const { modelName: routedModelName, errorMsg: normalizedModelError } =
+      typeof modelName === "string"
+        ? await normalizeRequestedModelForProxy(modelName, keyResult!)
+        : { modelName: "" };
+    if (normalizedModelError) {
+      await writeRequestLog({
+        requestedModel: modelName,
+        isStream: body.stream === true,
+        success: false,
+        statusCode: 400,
+        errorMsg: normalizedModelError,
+      });
+      return errorResponse(normalizedModelError, 400);
+    }
 
-    if (typeof modelName === "string" && !isClaudeModelName(modelName)) {
+    if (!isClaudeModelName(routedModelName)) {
       await writeRequestLog({
         requestedModel: modelName,
         isStream: body.stream === true,
@@ -184,7 +199,7 @@ export async function POST(request: NextRequest) {
       return errorResponse("请求里混用了不同上游渠道上传的文件，不能一起分析", 400);
     }
 
-    const candidateResult = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "CLAUDE");
+    const candidateResult = await getProxyChannelCandidatesWithPermission(routedModelName, keyResult!, "CLAUDE");
     const { isUnifiedRouting } = candidateResult;
     let { candidates } = candidateResult;
 

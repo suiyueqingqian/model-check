@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/middleware/auth";
 import prisma from "@/lib/prisma";
+import { getLastSegmentModelName } from "@/lib/utils/model-name";
 
 export async function GET(request: NextRequest) {
   const authError = requireAuth(request);
@@ -16,11 +17,14 @@ export async function GET(request: NextRequest) {
         channel: { enabled: true },
       },
       select: { modelName: true },
-      distinct: ["modelName"],
       orderBy: { modelName: "asc" },
     });
 
-    return NextResponse.json({ models: models.map((m) => m.modelName) });
+    const unifiedModels = Array.from(
+      new Set(models.map((m) => getLastSegmentModelName(m.modelName)))
+    ).sort((a, b) => a.localeCompare(b));
+
+    return NextResponse.json({ models: unifiedModels });
   } catch {
     return NextResponse.json(
       { error: "Failed to fetch unified models", code: "FETCH_ERROR" },

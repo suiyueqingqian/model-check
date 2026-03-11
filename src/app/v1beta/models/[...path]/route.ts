@@ -11,6 +11,7 @@ import {
   createProxyRequestId,
   getUpstreamPathFromUrl,
   markProxyChannelKeyUnavailable,
+  normalizeRequestedModelForProxy,
   proxyRequest,
   recordProxyModelResult,
   recordProxyRequestLog,
@@ -150,8 +151,19 @@ export async function POST(
         return errorResponse("Missing or invalid model name in path", 400);
       }
     }
+    const { modelName: routedModelName, errorMsg: normalizedModelError } =
+      await normalizeRequestedModelForProxy(modelName, keyResult!);
+    if (normalizedModelError) {
+      await writeRequestLog({
+        requestedModel: modelName,
+        success: false,
+        statusCode: 400,
+        errorMsg: normalizedModelError,
+      });
+      return errorResponse(normalizedModelError, 400);
+    }
 
-    if (!isGeminiModelName(modelName)) {
+    if (!isGeminiModelName(routedModelName)) {
       await writeRequestLog({
         requestedModel: modelName,
         success: false,
@@ -181,7 +193,7 @@ export async function POST(
       return errorResponse("请求里混用了不同上游渠道上传的文件，不能一起分析", 400);
     }
 
-    const candidateResult = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "GEMINI");
+    const candidateResult = await getProxyChannelCandidatesWithPermission(routedModelName, keyResult!, "GEMINI");
     const { isUnifiedRouting } = candidateResult;
     let { candidates } = candidateResult;
 
@@ -535,8 +547,19 @@ export async function GET(
         return errorResponse("Missing or invalid model name in path", 400);
       }
     }
+    const { modelName: routedModelName, errorMsg: normalizedModelError } =
+      await normalizeRequestedModelForProxy(modelName, keyResult!);
+    if (normalizedModelError) {
+      await writeRequestLog({
+        requestedModel: modelName,
+        success: false,
+        statusCode: 400,
+        errorMsg: normalizedModelError,
+      });
+      return errorResponse(normalizedModelError, 400);
+    }
 
-    if (!isGeminiModelName(modelName)) {
+    if (!isGeminiModelName(routedModelName)) {
       await writeRequestLog({
         requestedModel: modelName,
         success: false,
@@ -546,7 +569,11 @@ export async function GET(
       return errorResponse("仅 Gemini 模型支持 /v1beta/models 接口", 400);
     }
 
-    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "GEMINI");
+    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(
+      routedModelName,
+      keyResult!,
+      "GEMINI"
+    );
     if (candidates.length === 0) {
       await writeRequestLog({
         requestedModel: modelName,
