@@ -29,7 +29,8 @@ interface Keyword {
 
 interface ChannelModelData {
   allModels: string[];
-  selectedModels: Set<string>;
+  manualSelectedModels: Set<string>;
+  excludedAutoModels: Set<string>;
   modelPairs: Array<{ modelName: string; keyId: string | null }>;
 }
 
@@ -61,12 +62,12 @@ export function ModelFilterModal({
   const [collapsedRight, setCollapsedRight] = useState<Set<string>>(new Set());
 
   const [keywords, setKeywords] = useState<Keyword[]>([]);
+  const [selectedKeywordIds, setSelectedKeywordIds] = useState<Set<string>>(new Set());
   const [searchText, setSearchText] = useState("");
   const [selectedSearchText, setSelectedSearchText] = useState("");
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-  const [togglingAll, setTogglingAll] = useState(false);
 
   const headers = useMemo(
     () => ({ "Content-Type": "application/json" }),
@@ -155,12 +156,18 @@ export function ModelFilterModal({
           if (result.status === "fulfilled") {
             newData.set(result.value.channelId, {
               allModels: result.value.models,
-              selectedModels: result.value.preSelected,
+              manualSelectedModels: result.value.preSelected,
+              excludedAutoModels: new Set(),
               modelPairs: result.value.modelPairs,
             });
           } else {
             batchFailed++;
-            newData.set(ch.id, { allModels: [], selectedModels: new Set(), modelPairs: [] });
+            newData.set(ch.id, {
+              allModels: [],
+              manualSelectedModels: new Set(),
+              excludedAutoModels: new Set(),
+              modelPairs: [],
+            });
           }
         });
         setFetchProgress(prev => ({
@@ -194,23 +201,31 @@ export function ModelFilterModal({
   }, [token, fetchModels, targetChannels.length]);
 
   // Filter logic
-  const enabledKeywords = useMemo(
-    () => keywords.filter((k) => k.enabled).map((k) => k.keyword.toLowerCase()),
-    [keywords]
-  );
-
   const filterTerms = useMemo(() => {
-    const terms = [...enabledKeywords];
-    if (searchText.trim()) terms.push(searchText.trim().toLowerCase());
-    return terms;
-  }, [enabledKeywords, searchText]);
+    return keywords
+      .filter((k) => selectedKeywordIds.has(k.id))
+      .map((k) => k.keyword.toLowerCase());
+  }, [keywords, selectedKeywordIds]);
 
   const matchesFilter = useCallback(
     (name: string) => {
-      if (filterTerms.length === 0) return true;
+      if (filterTerms.length === 0) return false;
       return filterTerms.some((term) => name.toLowerCase().includes(term));
     },
     [filterTerms]
+  );
+
+  const getSelectedSet = useCallback(
+    (data: ChannelModelData) => {
+      const selected = new Set(data.manualSelectedModels);
+      for (const name of data.allModels) {
+        if (matchesFilter(name) && !data.excludedAutoModels.has(name)) {
+          selected.add(name);
+        }
+      }
+      return selected;
+    },
+    [matchesFilter]
   );
 
   // Per-channel helpers
@@ -218,21 +233,23 @@ export function ModelFilterModal({
     (chId: string) => {
       const d = channelData.get(chId);
       if (!d) return [];
-      return d.allModels.filter((n) => !d.selectedModels.has(n) && matchesFilter(n));
+      const selected = getSelectedSet(d);
+      return d.allModels.filter((n) => !selected.has(n));
     },
-    [channelData, matchesFilter]
+    [channelData, getSelectedSet]
   );
 
   const getSelected = useCallback(
     (chId: string) => {
       const d = channelData.get(chId);
       if (!d) return [];
-      const selected = d.allModels.filter((n) => d.selectedModels.has(n));
+      const selectedSet = getSelectedSet(d);
+      const selected = d.allModels.filter((n) => selectedSet.has(n));
       if (!selectedSearchText.trim()) return selected;
       const term = selectedSearchText.trim().toLowerCase();
       return selected.filter((n) => n.toLowerCase().includes(term));
     },
-    [channelData, selectedSearchText]
+    [channelData, getSelectedSet, selectedSearchText]
   );
 
   // Model actions
@@ -241,9 +258,11 @@ export function ModelFilterModal({
       const next = new Map(prev);
       const d = next.get(chId);
       if (d) {
-        const s = new Set(d.selectedModels);
-        s.add(name);
-        next.set(chId, { ...d, selectedModels: s });
+        const manualSelectedModels = new Set(d.manualSelectedModels);
+        const excludedAutoModels = new Set(d.excludedAutoModels);
+        manualSelectedModels.add(name);
+        excludedAutoModels.delete(name);
+        next.set(chId, { ...d, manualSelectedModels, excludedAutoModels });
       }
       return next;
     });
@@ -254,9 +273,15 @@ export function ModelFilterModal({
       const next = new Map(prev);
       const d = next.get(chId);
       if (d) {
-        const s = new Set(d.selectedModels);
-        s.delete(name);
-        next.set(chId, { ...d, selectedModels: s });
+        const manualSelectedModels = new Set(d.manualSelectedModels);
+        const excludedAutoModels = new Set(d.excludedAutoModels);
+        manualSelectedModels.delete(name);
+        if (matchesFilter(name)) {
+          excludedAutoModels.add(name);
+        } else {
+          excludedAutoModels.delete(name);
+        }
+        next.set(chId, { ...d, manualSelectedModels, excludedAutoModels });
       }
       return next;
     });
@@ -267,11 +292,16 @@ export function ModelFilterModal({
       const next = new Map(prev);
       const d = next.get(chId);
       if (d) {
-        const s = new Set(d.selectedModels);
+        const manualSelectedModels = new Set(d.manualSelectedModels);
+        const excludedAutoModels = new Set(d.excludedAutoModels);
+        const selected = getSelectedSet(d);
         for (const n of d.allModels) {
-          if (!s.has(n) && matchesFilter(n)) s.add(n);
+          if (!selected.has(n)) {
+            manualSelectedModels.add(n);
+            excludedAutoModels.delete(n);
+          }
         }
-        next.set(chId, { ...d, selectedModels: s });
+        next.set(chId, { ...d, manualSelectedModels, excludedAutoModels });
       }
       return next;
     });
@@ -281,7 +311,13 @@ export function ModelFilterModal({
     setChannelData((prev) => {
       const next = new Map(prev);
       const d = next.get(chId);
-      if (d) next.set(chId, { ...d, selectedModels: new Set() });
+      if (d) {
+        next.set(chId, {
+          ...d,
+          manualSelectedModels: new Set(),
+          excludedAutoModels: new Set(d.allModels.filter((name) => matchesFilter(name))),
+        });
+      }
       return next;
     });
   };
@@ -290,11 +326,16 @@ export function ModelFilterModal({
     setChannelData((prev) => {
       const next = new Map(prev);
       for (const [chId, d] of next) {
-        const s = new Set(d.selectedModels);
+        const manualSelectedModels = new Set(d.manualSelectedModels);
+        const excludedAutoModels = new Set(d.excludedAutoModels);
+        const selected = getSelectedSet(d);
         for (const n of d.allModels) {
-          if (!s.has(n) && matchesFilter(n)) s.add(n);
+          if (!selected.has(n)) {
+            manualSelectedModels.add(n);
+            excludedAutoModels.delete(n);
+          }
         }
-        next.set(chId, { ...d, selectedModels: s });
+        next.set(chId, { ...d, manualSelectedModels, excludedAutoModels });
       }
       return next;
     });
@@ -304,7 +345,11 @@ export function ModelFilterModal({
     setChannelData((prev) => {
       const next = new Map(prev);
       for (const [chId, d] of next) {
-        next.set(chId, { ...d, selectedModels: new Set() });
+        next.set(chId, {
+          ...d,
+          manualSelectedModels: new Set(),
+          excludedAutoModels: new Set(d.allModels.filter((name) => matchesFilter(name))),
+        });
       }
       return next;
     });
@@ -332,10 +377,10 @@ export function ModelFilterModal({
         body: JSON.stringify({ keyword: searchText.trim() }),
       });
       if (!res.ok) throw new Error();
-      const kwRes = await authFetch("/api/model-keywords");
-      if (kwRes.ok) {
-        const data = await kwRes.json();
-        setKeywords(data.keywords || []);
+      const data = await res.json();
+      if (data.keyword) {
+        setKeywords((prev) => [data.keyword, ...prev]);
+        setSelectedKeywordIds((prev) => new Set(prev).add(data.keyword.id));
       }
       setSearchText("");
     } catch (error) {
@@ -350,67 +395,40 @@ export function ModelFilterModal({
     try {
       await authFetch(`/api/model-keywords?id=${id}`, { method: "DELETE", headers });
       setKeywords((prev) => prev.filter((k) => k.id !== id));
+      setSelectedKeywordIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
     } catch (error) {
       logWarn("[ModelFilter] 删除关键词失败", error);
       toast("删除失败", "error");
     }
   };
 
-  const handleToggleKeyword = async (id: string, enabled: boolean) => {
-    setKeywords((prev) => prev.map((k) => (k.id === id ? { ...k, enabled } : k)));
-    try {
-      const res = await authFetch("/api/model-keywords", {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({ id, enabled }),
-      });
-      if (!res.ok) throw new Error();
-    } catch (error) {
-      logWarn("[ModelFilter] 切换关键词状态失败", error);
-      setKeywords((prev) => prev.map((k) => (k.id === id ? { ...k, enabled: !enabled } : k)));
-      toast("更新失败", "error");
-    }
+  const handleToggleKeyword = (id: string) => {
+    setSelectedKeywordIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
-  const handleToggleAllKeywords = async (enabled: boolean) => {
-    setTogglingAll(true);
-    const previous = keywords.map((k) => ({ ...k }));
-    setKeywords((prev) => prev.map((k) => ({ ...k, enabled })));
-    try {
-      const res = await authFetch("/api/model-keywords/toggle-all", {
-        method: "PUT",
-        headers,
-        body: JSON.stringify({ enabled }),
-      });
-      if (!res.ok) throw new Error();
-    } catch (error) {
-      logWarn("[ModelFilter] 批量切换关键词失败", error);
-      setKeywords(previous);
-      toast("批量更新失败", "error");
-    } finally {
-      setTogglingAll(false);
-    }
+  const handleToggleAllKeywords = () => {
+    setSelectedKeywordIds(new Set(keywords.map((k) => k.id)));
   };
 
-  const handleInvertKeywords = async () => {
-    const previous = keywords.map((k) => ({ ...k }));
-    const inverted = keywords.map((k) => ({ ...k, enabled: !k.enabled }));
-    setKeywords(inverted);
-    try {
-      await Promise.all(
-        inverted.map((k) =>
-          authFetch("/api/model-keywords", {
-            method: "PUT",
-            headers,
-            body: JSON.stringify({ id: k.id, enabled: k.enabled }),
-          })
-        )
-      );
-    } catch (error) {
-      logWarn("[ModelFilter] 反转关键词状态失败", error);
-      setKeywords(previous);
-      toast("更新失败", "error");
-    }
+  const handleInvertKeywords = () => {
+    setSelectedKeywordIds((prev) => {
+      const next = new Set<string>();
+      for (const keyword of keywords) {
+        if (!prev.has(keyword.id)) {
+          next.add(keyword.id);
+        }
+      }
+      return next;
+    });
   };
 
   const handleEditSave = async (id: string) => {
@@ -448,9 +466,10 @@ export function ModelFilterModal({
         const results = await Promise.allSettled(
           batch.map(async (ch) => {
             const d = channelData.get(ch.id);
-            const selected = d ? Array.from(d.selectedModels) : [];
+            const selectedSet = d ? getSelectedSet(d) : new Set<string>();
+            const selected = Array.from(selectedSet);
             const selectedModelPairs = d
-              ? d.modelPairs.filter((pair) => d.selectedModels.has(pair.modelName))
+              ? d.modelPairs.filter((pair) => selectedSet.has(pair.modelName))
               : [];
             const res = await authFetch(`/api/channel/${ch.id}/sync`, {
               method: "POST",
@@ -504,9 +523,9 @@ export function ModelFilterModal({
   // Stats
   const totalSelected = useMemo(() => {
     let count = 0;
-    for (const d of channelData.values()) count += d.selectedModels.size;
+    for (const d of channelData.values()) count += getSelectedSet(d).size;
     return count;
-  }, [channelData]);
+  }, [channelData, getSelectedSet]);
 
   const totalFetched = useMemo(() => {
     let count = 0;
@@ -514,7 +533,7 @@ export function ModelFilterModal({
     return count;
   }, [channelData]);
 
-  const allKeywordsEnabled = keywords.length > 0 && keywords.every((k) => k.enabled);
+  const allKeywordsEnabled = keywords.length > 0 && selectedKeywordIds.size === keywords.length;
   const isMultiChannel = targetChannels.length > 1;
 
   // Render channel model list for left column (available)
@@ -571,7 +590,7 @@ export function ModelFilterModal({
     if (available.length === 0) {
       return (
         <p className="text-sm text-muted-foreground text-center py-8">
-          {filterTerms.length > 0 ? "没有匹配的模型" : "所有模型已选择"}
+          所有模型已选择
         </p>
       );
     }
@@ -694,7 +713,7 @@ export function ModelFilterModal({
                   if (e.key === "Enter") { e.preventDefault(); handleAddKeyword(); }
                 }}
                 className="flex-1 px-3 py-1.5 rounded-md border border-input bg-background text-sm"
-                placeholder="输入关键词筛选模型，回车保存..."
+                placeholder="输入关键词名称，回车保存..."
               />
               <button
                 onClick={handleAddKeyword}
@@ -707,15 +726,14 @@ export function ModelFilterModal({
             {keywords.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
                 <button
-                  onClick={() => handleToggleAllKeywords(true)}
-                  disabled={togglingAll || allKeywordsEnabled}
+                  onClick={handleToggleAllKeywords}
+                  disabled={allKeywordsEnabled}
                   className="text-xs px-1.5 py-0.5 rounded border border-input bg-background hover:bg-accent disabled:opacity-50 transition-colors text-muted-foreground"
                 >
                   全选
                 </button>
                 <button
                   onClick={handleInvertKeywords}
-                  disabled={togglingAll}
                   className="text-xs px-1.5 py-0.5 rounded border border-input bg-background hover:bg-accent disabled:opacity-50 transition-colors text-muted-foreground"
                 >
                   反选
@@ -725,7 +743,7 @@ export function ModelFilterModal({
                     key={kw.id}
                     className={cn(
                       "inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs cursor-pointer transition-colors",
-                      kw.enabled
+                      selectedKeywordIds.has(kw.id)
                         ? "border-primary/50 bg-primary/10 text-foreground"
                         : "border-border bg-muted text-muted-foreground"
                     )}
@@ -749,8 +767,8 @@ export function ModelFilterModal({
                     ) : (
                       <>
                         <button
-                          onClick={() => handleToggleKeyword(kw.id, !kw.enabled)}
-                          className={cn("transition-colors", !kw.enabled && "line-through")}
+                          onClick={() => handleToggleKeyword(kw.id)}
+                          className={cn("transition-colors", !selectedKeywordIds.has(kw.id) && "line-through")}
                         >
                           {kw.keyword}
                         </button>
@@ -796,7 +814,7 @@ export function ModelFilterModal({
                 <div className="flex items-center justify-between mb-2 shrink-0">
                   <h3 className="text-sm font-medium">
                     获取的模型
-                    {filterTerms.length > 0 && <span className="text-muted-foreground ml-1">(筛选中)</span>}
+                    {filterTerms.length > 0 && <span className="text-muted-foreground ml-1">(右侧已自动加入标签命中项)</span>}
                   </h3>
                   <button
                     onClick={selectAllVisible}
@@ -836,7 +854,7 @@ export function ModelFilterModal({
                   {renderSelectedList()}
                   {totalSelected === 0 && (
                     <p className="text-sm text-muted-foreground text-center py-8">
-                      点击左侧模型添加
+                      点击上方标签或左侧模型添加
                     </p>
                   )}
                 </div>
