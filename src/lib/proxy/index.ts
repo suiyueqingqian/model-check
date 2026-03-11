@@ -838,7 +838,8 @@ async function orderModelsWithinChannel(
 
 async function fetchModelCandidatesByName(
   modelName: string,
-  preferredEndpoint?: string
+  preferredEndpoint?: string,
+  allowChannelPrefixFallback = true
 ): Promise<{
   actualModelName: string;
   validModels: RoutedModelRecord[];
@@ -859,7 +860,7 @@ async function fetchModelCandidatesByName(
     take: 200,
   }) as RoutedModelRecord[];
 
-  if (models.length === 0) {
+  if (allowChannelPrefixFallback && models.length === 0) {
     const slashIndex = modelName.indexOf("/");
     if (slashIndex > 0) {
       actualModelName = modelName.slice(slashIndex + 1);
@@ -903,9 +904,14 @@ async function fetchModelCandidatesByName(
 
 async function getOrderedChannelCandidatesByModel(
   modelName: string,
-  preferredEndpoint?: string
+  preferredEndpoint?: string,
+  allowChannelPrefixFallback = true
 ): Promise<ProxyChannelCandidate[]> {
-  const { actualModelName, validModels } = await fetchModelCandidatesByName(modelName, preferredEndpoint);
+  const { actualModelName, validModels } = await fetchModelCandidatesByName(
+    modelName,
+    preferredEndpoint,
+    allowChannelPrefixFallback
+  );
   if (validModels.length === 0) {
     return [];
   }
@@ -1490,7 +1496,7 @@ export async function findChannelByModelWithPermission(
   }
 
   const candidates = await filterTemporarilyStoppedCandidates(
-    await getOrderedChannelCandidatesByModel(modelName, preferredEndpoint)
+    await getOrderedChannelCandidatesByModel(modelName, preferredEndpoint, !isUnifiedMode)
   );
   if (candidates.length === 0) {
     return null;
@@ -1519,7 +1525,8 @@ export async function getProxyChannelCandidatesWithPermission(
   keyResult: ValidateKeyResult,
   preferredEndpoint?: string
 ): Promise<ProxyChannelCandidateResult> {
-  const isUnifiedRouting = keyResult.keyRecord?.unifiedMode === true && !modelName.includes("/");
+  const isUnifiedMode = keyResult.keyRecord?.unifiedMode === true;
+  const isUnifiedRouting = isUnifiedMode && !modelName.includes("/");
 
   if (isUnifiedRouting) {
     const candidates = await filterTemporarilyStoppedCandidates(
@@ -1536,7 +1543,11 @@ export async function getProxyChannelCandidatesWithPermission(
     };
   }
 
-  const candidates = await getOrderedChannelCandidatesByModel(modelName, preferredEndpoint);
+  const candidates = await getOrderedChannelCandidatesByModel(
+    modelName,
+    preferredEndpoint,
+    !isUnifiedMode
+  );
   const permittedCandidates: ProxyChannelCandidate[] = [];
   for (const candidate of candidates) {
     const hasPermission = await canAccessModel(
