@@ -25,6 +25,12 @@ import {
   looksLikeSsePayload,
 } from "@/lib/proxy/compat";
 import { createAsyncErrorHandler } from "@/lib/utils/error";
+import {
+  buildProxyFileBindingKey,
+  extractProxyFileReferences,
+  getProxyFileBinding,
+  type ProxyFileBinding,
+} from "@/lib/proxy/file-bindings";
 
 type ProxyAttemptFailure = {
   modelId: string;
@@ -111,6 +117,7 @@ export async function POST(request: NextRequest) {
     // Parse request body
     const body = await request.json();
     const modelName = body.model;
+    const fileRefs = Array.from(extractProxyFileReferences(body));
 
     if (!modelName) {
       await writeRequestLog({
@@ -159,21 +166,62 @@ export async function POST(request: NextRequest) {
       return errorResponse("仅 Claude 模型支持 /v1/messages 接口", 400);
     }
 
-    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "CLAUDE");
+    const fileBindings = (await Promise.all(fileRefs.map((fileRef) => getProxyFileBinding(fileRef))))
+      .filter((binding): binding is ProxyFileBinding => !!binding);
+    const boundTargetKey = fileBindings.length > 0 ? buildProxyFileBindingKey(fileBindings[0]) : null;
+
+    if (
+      boundTargetKey &&
+      fileBindings.some((binding) => buildProxyFileBindingKey(binding) !== boundTargetKey)
+    ) {
+      await writeRequestLog({
+        requestedModel: modelName,
+        isStream: body.stream === true,
+        success: false,
+        statusCode: 400,
+        errorMsg: "请求里混用了不同上游渠道上传的文件，不能一起分析",
+      });
+      return errorResponse("请求里混用了不同上游渠道上传的文件，不能一起分析", 400);
+    }
+
+    const candidateResult = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "CLAUDE");
+    const { isUnifiedRouting } = candidateResult;
+    let { candidates } = candidateResult;
+
+    if (boundTargetKey) {
+      candidates = candidates.filter((candidate) =>
+        candidate.channelKeyId
+          ? `key:${candidate.channelKeyId}` === boundTargetKey
+          : `channel:${candidate.channelId}` === boundTargetKey
+      );
+    }
+
     if (candidates.length === 0) {
       await writeRequestLog({
         requestedModel: modelName,
         isStream: body.stream === true,
         success: false,
         statusCode: 404,
-        errorMsg: `Model not found or access denied: ${modelName}`,
+        errorMsg: boundTargetKey
+          ? `文件所属上游渠道与当前模型不匹配: ${modelName}`
+          : `Model not found or access denied: ${modelName}`,
       });
-      return errorResponse(`Model not found or access denied: ${modelName}`, 404);
+      return errorResponse(
+        boundTargetKey
+          ? `文件所属上游渠道与当前模型不匹配: ${modelName}`
+          : `Model not found or access denied: ${modelName}`,
+        404
+      );
     }
 
     const isStream = body.stream === true;
     const anthropicVersion = request.headers.get("anthropic-version") || "2023-06-01";
     const anthropicBeta = request.headers.get("anthropic-beta");
+    const effectiveAnthropicBeta = fileRefs.length > 0
+      ? anthropicBeta
+        ? `${anthropicBeta},files-api-2025-04-14`
+        : "files-api-2025-04-14"
+      : anthropicBeta;
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
     let finalFailureLog: {
@@ -197,8 +245,8 @@ export async function POST(request: NextRequest) {
         const extraHeaders: Record<string, string> = {
           "anthropic-version": anthropicVersion,
         };
-        if (anthropicBeta) {
-          extraHeaders["anthropic-beta"] = anthropicBeta;
+        if (effectiveAnthropicBeta) {
+          extraHeaders["anthropic-beta"] = effectiveAnthropicBeta;
         }
 
         const headers = buildUpstreamHeaders(channel.apiKey, "anthropic", extraHeaders);

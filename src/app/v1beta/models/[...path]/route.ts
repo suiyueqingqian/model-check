@@ -21,6 +21,12 @@ import {
   verifyProxyKeyAsync,
 } from "@/lib/proxy";
 import { createAsyncErrorHandler } from "@/lib/utils/error";
+import {
+  buildProxyFileBindingKey,
+  extractProxyFileReferences,
+  getProxyFileBinding,
+  type ProxyFileBinding,
+} from "@/lib/proxy/file-bindings";
 
 type ProxyAttemptFailure = {
   modelId: string;
@@ -155,20 +161,54 @@ export async function POST(
       return errorResponse("仅 Gemini 模型支持 /v1beta/models 接口", 400);
     }
 
-    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "GEMINI");
+    // Parse request body
+    const body = await request.json();
+    const fileRefs = Array.from(extractProxyFileReferences(body));
+    const fileBindings = (await Promise.all(fileRefs.map((fileRef) => getProxyFileBinding(fileRef))))
+      .filter((binding): binding is ProxyFileBinding => !!binding);
+    const boundTargetKey = fileBindings.length > 0 ? buildProxyFileBindingKey(fileBindings[0]) : null;
+
+    if (
+      boundTargetKey &&
+      fileBindings.some((binding) => buildProxyFileBindingKey(binding) !== boundTargetKey)
+    ) {
+      await writeRequestLog({
+        requestedModel: modelName,
+        success: false,
+        statusCode: 400,
+        errorMsg: "请求里混用了不同上游渠道上传的文件，不能一起分析",
+      });
+      return errorResponse("请求里混用了不同上游渠道上传的文件，不能一起分析", 400);
+    }
+
+    const candidateResult = await getProxyChannelCandidatesWithPermission(modelName, keyResult!, "GEMINI");
+    const { isUnifiedRouting } = candidateResult;
+    let { candidates } = candidateResult;
+
+    if (boundTargetKey) {
+      candidates = candidates.filter((candidate) =>
+        candidate.channelKeyId
+          ? `key:${candidate.channelKeyId}` === boundTargetKey
+          : `channel:${candidate.channelId}` === boundTargetKey
+      );
+    }
+
     if (candidates.length === 0) {
       await writeRequestLog({
         requestedModel: modelName,
         success: false,
         statusCode: 404,
-        errorMsg: `Model not found or access denied: ${modelName}`,
+        errorMsg: boundTargetKey
+          ? `文件所属上游渠道与当前模型不匹配: ${modelName}`
+          : `Model not found or access denied: ${modelName}`,
       });
-      return errorResponse(`Model not found or access denied: ${modelName}`, 404);
+      return errorResponse(
+        boundTargetKey
+          ? `文件所属上游渠道与当前模型不匹配: ${modelName}`
+          : `Model not found or access denied: ${modelName}`,
+        404
+      );
     }
-
-    // Parse request body
-    const body = await request.json();
-
     const isStream = method === "streamGenerateContent";
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;

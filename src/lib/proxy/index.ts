@@ -564,6 +564,7 @@ export interface ProxyRequestLogInput {
 export interface ProxyChannelCandidate {
   channelId: string;
   channelName: string;
+  channelKeyId: string | null;
   baseUrl: string;
   apiKey: string;
   proxy: string | null;
@@ -800,6 +801,7 @@ function buildProxyChannelCandidate(
   return {
     channelId: model.channel.id,
     channelName: model.channel.name,
+    channelKeyId: model.channelKeyId ?? null,
     baseUrl: model.channel.baseUrl.replace(/\/$/, ""),
     apiKey: model.channelKey?.apiKey ?? model.channel.apiKey,
     proxy: model.channel.proxy,
@@ -1823,11 +1825,16 @@ export async function getAllModelsWithChannelsUnified(keyResult?: ValidateKeyRes
 export function buildUpstreamHeaders(
   apiKey: string,
   apiType: ApiType,
-  extraHeaders?: Record<string, string>
+  extraHeaders?: Record<string, string>,
+  options?: {
+    includeContentType?: boolean;
+  }
 ): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  const headers: Record<string, string> = {};
+
+  if (options?.includeContentType !== false) {
+    headers["Content-Type"] = "application/json";
+  }
 
   switch (apiType) {
     case "openai":

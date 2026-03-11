@@ -43,6 +43,12 @@ import {
   shouldUseResponsesOnlyForChatModel,
 } from "@/lib/utils/model-name";
 import { createAsyncErrorHandler, isExpectedCloseError, logWarn } from "@/lib/utils/error";
+import {
+  buildProxyFileBindingKey,
+  extractProxyFileReferences,
+  getProxyFileBinding,
+  type ProxyFileBinding,
+} from "@/lib/proxy/file-bindings";
 
 const CLI_DETECT_PROMPT = process.env.DETECT_PROMPT || "1+1=2? yes or no";
 const RESPONSES_FALLBACK_HEADERS = {
@@ -624,6 +630,7 @@ export async function POST(request: NextRequest) {
     // Parse request body
     const body = await request.json();
     const modelName = body.model;
+    const fileRefs = Array.from(extractProxyFileReferences(body));
 
     if (!modelName) {
       await writeRequestLog({
@@ -664,6 +671,59 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const hasFileRefs = fileRefs.length > 0;
+
+    if (
+      hasFileRefs &&
+      typeof modelName === "string" &&
+      shouldUseResponsesOnlyForChatModel(modelName)
+    ) {
+      await writeRequestLog({
+        endpointType: "CHAT",
+        requestedModel: modelName,
+        isStream: body.stream === true,
+        success: false,
+        statusCode: 400,
+        errorMsg: "当前模型带文件时请改用 /v1/responses，不支持经 /v1/chat/completions 兼容转换",
+      });
+      return errorResponse("当前模型带文件时请改用 /v1/responses，不支持经 /v1/chat/completions 兼容转换", 400);
+    }
+
+    if (
+      hasFileRefs &&
+      typeof modelName === "string" &&
+      (isClaudeModelName(modelName) || isGeminiModelName(modelName))
+    ) {
+      await writeRequestLog({
+        endpointType: "CHAT",
+        requestedModel: modelName,
+        isStream: body.stream === true,
+        success: false,
+        statusCode: 400,
+        errorMsg: "带文件时不支持通过 /v1/chat/completions 转成 Claude 或 Gemini，请改用原生端点",
+      });
+      return errorResponse("带文件时不支持通过 /v1/chat/completions 转成 Claude 或 Gemini，请改用原生端点", 400);
+    }
+
+    const fileBindings = (await Promise.all(fileRefs.map((fileRef) => getProxyFileBinding(fileRef))))
+      .filter((binding): binding is ProxyFileBinding => !!binding);
+    const boundTargetKey = fileBindings.length > 0 ? buildProxyFileBindingKey(fileBindings[0]) : null;
+
+    if (
+      boundTargetKey &&
+      fileBindings.some((binding) => buildProxyFileBindingKey(binding) !== boundTargetKey)
+    ) {
+      await writeRequestLog({
+        endpointType: "CHAT",
+        requestedModel: modelName,
+        isStream: body.stream === true,
+        success: false,
+        statusCode: 400,
+        errorMsg: "请求里混用了不同上游渠道上传的文件，不能一起分析",
+      });
+      return errorResponse("请求里混用了不同上游渠道上传的文件，不能一起分析", 400);
+    }
+
     const requestedEndpointType =
       typeof modelName === "string" && isClaudeModelName(modelName)
         ? "CLAUDE"
@@ -673,11 +733,22 @@ export async function POST(request: NextRequest) {
             ? "CODEX"
           : "CHAT";
 
-    const { isUnifiedRouting, candidates } = await getProxyChannelCandidatesWithPermission(
+    const candidateResult = await getProxyChannelCandidatesWithPermission(
       modelName,
       keyResult!,
       requestedEndpointType
     );
+    const { isUnifiedRouting } = candidateResult;
+    let { candidates } = candidateResult;
+
+    if (boundTargetKey) {
+      candidates = candidates.filter((candidate) =>
+        candidate.channelKeyId
+          ? `key:${candidate.channelKeyId}` === boundTargetKey
+          : `channel:${candidate.channelId}` === boundTargetKey
+      );
+    }
+
     if (candidates.length === 0) {
       await writeRequestLog({
         endpointType: requestedEndpointType,
@@ -685,13 +756,20 @@ export async function POST(request: NextRequest) {
         isStream: body.stream === true,
         success: false,
         statusCode: 404,
-        errorMsg: `Model not found or access denied: ${modelName}`,
+        errorMsg: boundTargetKey
+          ? `文件所属上游渠道与当前模型不匹配: ${modelName}`
+          : `Model not found or access denied: ${modelName}`,
       });
-      return errorResponse(`Model not found or access denied: ${modelName}`, 404);
+      return errorResponse(
+        boundTargetKey
+          ? `文件所属上游渠道与当前模型不匹配: ${modelName}`
+          : `Model not found or access denied: ${modelName}`,
+        404
+      );
     }
 
     const isStream = body.stream === true;
-    const shouldTryResponsesFallback = shouldTryResponsesFallbackForChatModel(modelName);
+    const shouldTryResponsesFallback = !hasFileRefs && shouldTryResponsesFallbackForChatModel(modelName);
     let lastErrorMessage = `Model not found or access denied: ${modelName}`;
     let lastStatus = 404;
     let finalFailureLog: {
