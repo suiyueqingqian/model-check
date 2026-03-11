@@ -1000,6 +1000,14 @@ export async function markProxyChannelKeyUnavailable(
             lastCheckedAt: now,
           },
         });
+
+        await tx.model.updateMany({
+          where: { channelKeyId: model.channelKeyId },
+          data: {
+            lastStatus: false,
+            lastCheckedAt: now,
+          },
+        });
       } else {
         await tx.channel.update({
           where: { id: model.channelId },
@@ -1008,12 +1016,18 @@ export async function markProxyChannelKeyUnavailable(
             mainKeyLastCheckedAt: now,
           },
         });
-      }
 
-      await tx.model.update({
-        where: { id: modelId },
-        data: { lastStatus: false },
-      });
+        await tx.model.updateMany({
+          where: {
+            channelId: model.channelId,
+            channelKeyId: null,
+          },
+          data: {
+            lastStatus: false,
+            lastCheckedAt: now,
+          },
+        });
+      }
     });
   } catch (error) {
     logWarn("[Proxy] 标记模型不可用失败", error);
@@ -1061,11 +1075,13 @@ function groupCandidatesByChannel(candidates: ProxyChannelCandidate[]): ProxyCha
 }
 
 function shouldDisableChannelCredential(statusCode?: number, errorMsg?: string): boolean {
-  return classifyProxyFailure(statusCode, errorMsg) === "AUTH_INVALID";
+  const category = classifyProxyFailure(statusCode, errorMsg);
+  return category === "AUTH_INVALID" || category === "CREDENTIAL_EXHAUSTED";
 }
 
 type ProxyFailureCategory =
   | "AUTH_INVALID"
+  | "CREDENTIAL_EXHAUSTED"
   | "RATE_LIMIT"
   | "MODEL_UNAVAILABLE"
   | "ENDPOINT_UNAVAILABLE"
@@ -1157,14 +1173,11 @@ function classifyProxyFailure(statusCode?: number, errorMsg?: string): ProxyFail
     return "AUTH_INVALID";
   }
 
-  if (statusCode === 402 || statusCode === 429) {
-    return "RATE_LIMIT";
+  if (statusCode === 402) {
+    return "CREDENTIAL_EXHAUSTED";
   }
 
-  const rateLimitPatterns = [
-    "rate limit",
-    "rate_limit",
-    "too many requests",
+  const credentialExhaustedPatterns = [
     "quota exceeded",
     "insufficient_quota",
     "insufficient quota",
@@ -1172,12 +1185,33 @@ function classifyProxyFailure(statusCode?: number, errorMsg?: string): ProxyFail
     "credits exhausted",
     "credit balance is too low",
     "account balance is insufficient",
-    "overloaded",
-    "overloaded_error",
-    "requests are too frequent",
+    "quota not enough",
+    "not enough quota",
+    "quota is not enough",
+    "quota is insufficient",
+    "token quota is not enough",
+    "token quota not enough",
+    "token quota is insufficient",
     "余额不足",
     "配额不足",
     "额度不足",
+  ];
+
+  if (includesAnyPattern(normalizedMessage, credentialExhaustedPatterns)) {
+    return "CREDENTIAL_EXHAUSTED";
+  }
+
+  if (statusCode === 429) {
+    return "RATE_LIMIT";
+  }
+
+  const rateLimitPatterns = [
+    "rate limit",
+    "rate_limit",
+    "too many requests",
+    "overloaded",
+    "overloaded_error",
+    "requests are too frequent",
     "请求过多",
     "频率过高",
     "限流",

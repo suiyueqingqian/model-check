@@ -114,80 +114,106 @@ export async function GET(request: NextRequest) {
         }>;
       }>;
     }>;
-    let totalFilteredChannels: number;
-
-    if (endpointFilter === "all") {
-      // DB 级分页，不加载全量数据
-      const [count, pageData] = await Promise.all([
-        prisma.channel.count({ where: channelWhere }),
-        prisma.channel.findMany({
-          where: channelWhere,
-          select: fullSelect,
-          orderBy: channelOrderBy,
-          skip: (page - 1) * pageSize,
-          take: pageSize,
-        }),
-      ]);
-      totalFilteredChannels = count;
-        channels = pageData;
-    } else {
-      // endpointFilter 依赖 JS 逻辑，先轻量查询筛选 ID，再加载当前页完整数据
-      const lightChannels = await prisma.channel.findMany({
+    const [lightChannels, summaryModels] = await Promise.all([
+      prisma.channel.findMany({
         where: channelWhere,
         select: {
           id: true,
           models: {
             where: modelWhere,
-            select: { modelName: true, detectedEndpoints: true },
+            select: {
+              id: true,
+              modelName: true,
+              detectedEndpoints: true,
+            },
           },
         },
         orderBy: channelOrderBy,
-      });
-
-      const filteredIds = lightChannels
-        .filter((ch) =>
-          ch.models.some((m) =>
-            supportsDisplayEndpoint(m.modelName, m.detectedEndpoints || [], endpointFilter)
-          )
-        )
-        .map((ch) => ch.id);
-
-      totalFilteredChannels = filteredIds.length;
-      const pageIds = filteredIds.slice((page - 1) * pageSize, page * pageSize);
-
-      if (pageIds.length > 0) {
-        const pageData = await prisma.channel.findMany({
-          where: { id: { in: pageIds } },
-          select: fullSelect,
-          orderBy: channelOrderBy,
-        });
-        // 过滤模型，只保留匹配端点的
-        channels = pageData.map((ch) => ({
-          ...ch,
-          models: ch.models.filter((m) =>
-            supportsDisplayEndpoint(m.modelName, m.detectedEndpoints || [], endpointFilter)
-          ),
-        }));
-      } else {
-        channels = [];
-      }
-    }
-
-    const modelIds = channels.flatMap((channel) => channel.models.map((model) => model.id));
-    const temporaryStoppedCredentialByModelId = authenticated
-      ? await getTemporaryStoppedChannelCredentialsByModelIds(modelIds)
-      : {};
-
-    // Calculate summary statistics using aggregate counts (avoid loading all models + logs)
-    const [totalChannelsCount, totalModels, healthyModels] = await Promise.all([
-      prisma.channel.count({ where: { enabled: true } }),
-      prisma.model.count({
-        where: { channel: { enabled: true } },
       }),
-      prisma.model.count({
-        where: { channel: { enabled: true }, lastStatus: true },
+      prisma.model.findMany({
+        where: {
+          channel: { enabled: true },
+        },
+        select: {
+          id: true,
+          channelId: true,
+          lastStatus: true,
+        },
       }),
     ]);
+
+    const trackedModelIds = Array.from(
+      new Set([
+        ...lightChannels.flatMap((channel) => channel.models.map((model) => model.id)),
+        ...summaryModels.map((model) => model.id),
+      ])
+    );
+    const temporaryStoppedCredentialByModelId = await getTemporaryStoppedChannelCredentialsByModelIds(trackedModelIds);
+
+    const filteredIds = lightChannels
+      .filter((channel) =>
+        channel.models.some((model) => {
+          if (temporaryStoppedCredentialByModelId[model.id]) {
+            return false;
+          }
+
+          if (endpointFilter === "all") {
+            return true;
+          }
+
+          return supportsDisplayEndpoint(
+            model.modelName,
+            model.detectedEndpoints || [],
+            endpointFilter
+          );
+        })
+      )
+      .map((channel) => channel.id);
+
+    const totalFilteredChannels = filteredIds.length;
+    const pageIds = filteredIds.slice((page - 1) * pageSize, page * pageSize);
+
+    if (pageIds.length > 0) {
+      const pageData = await prisma.channel.findMany({
+        where: { id: { in: pageIds } },
+        select: fullSelect,
+        orderBy: channelOrderBy,
+      });
+
+      channels = pageData
+        .map((channel) => ({
+          ...channel,
+          models: channel.models.filter((model) => {
+            if (temporaryStoppedCredentialByModelId[model.id]) {
+              return false;
+            }
+
+            if (endpointFilter === "all") {
+              return true;
+            }
+
+            return supportsDisplayEndpoint(
+              model.modelName,
+              model.detectedEndpoints || [],
+              endpointFilter
+            );
+          }),
+        }))
+        .filter((channel) => channel.models.length > 0);
+    } else {
+      channels = [];
+    }
+
+    const visibleSummaryModels = summaryModels.filter(
+      (model) => !temporaryStoppedCredentialByModelId[model.id]
+    );
+    const totalChannelsCount = new Set(
+      visibleSummaryModels.map((model) => model.channelId)
+    ).size;
+    const totalModels = visibleSummaryModels.length;
+    const healthyModels = visibleSummaryModels.filter(
+      (model) => model.lastStatus === true
+    ).length;
 
     const totalPages = Math.ceil(totalFilteredChannels / pageSize);
 
@@ -210,7 +236,9 @@ export async function GET(request: NextRequest) {
         ...channel,
         models: channel.models.map((model) => ({
           ...model,
-          temporaryStoppedCredential: temporaryStoppedCredentialByModelId[model.id] || null,
+          temporaryStoppedCredential: authenticated
+            ? temporaryStoppedCredentialByModelId[model.id] || null
+            : null,
         })),
       })),
     });
