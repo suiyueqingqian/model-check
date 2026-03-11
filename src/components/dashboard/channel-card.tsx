@@ -11,7 +11,7 @@ import { useAuth } from "@/components/providers/auth-provider";
 
 const EMPTY_SET = new Set<string>();
 import { useToast } from "@/components/ui/toast";
-import { getDisplayEndpoints, isCodexNamedModel, supportsDisplayEndpoint } from "@/lib/utils/model-name";
+import { getDisplayEndpoints, isCodexNamedModel } from "@/lib/utils/model-name";
 
 interface CheckLog {
   id: string;
@@ -71,11 +71,75 @@ function isGarbageContent(text: string): boolean {
   return false;
 }
 
+function findNestedMessage(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const message = findNestedMessage(item);
+      if (message) {
+        return message;
+      }
+    }
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const candidateKeys = ["message", "error", "detail", "details", "msg", "reason"];
+
+  for (const key of candidateKeys) {
+    const message = findNestedMessage(record[key]);
+    if (message) {
+      return message;
+    }
+  }
+
+  return null;
+}
+
+function extractReadableMessage(text: string): string {
+  const trimmed = text.trim();
+  const jsonStart = (() => {
+    const objectIndex = trimmed.indexOf("{");
+    const arrayIndex = trimmed.indexOf("[");
+
+    if (objectIndex === -1) return arrayIndex;
+    if (arrayIndex === -1) return objectIndex;
+    return Math.min(objectIndex, arrayIndex);
+  })();
+
+  if (jsonStart === -1) {
+    return text;
+  }
+
+  const prefix = trimmed.slice(0, jsonStart).trim();
+  const jsonText = trimmed.slice(jsonStart);
+
+  try {
+    const parsed = JSON.parse(jsonText);
+    const message = findNestedMessage(parsed);
+    if (message) {
+      return prefix ? `${prefix} ${message}` : message;
+    }
+  } catch {
+    return text;
+  }
+
+  return text;
+}
+
 /** Truncate and clean message for display */
 function truncateMessage(text: string, max: number): string {
-  if (isGarbageContent(text)) return "";
-  if (text.length <= max) return text;
-  return text.slice(0, max) + "...";
+  const normalized = extractReadableMessage(text);
+  if (isGarbageContent(normalized)) return "";
+  if (normalized.length <= max) return normalized;
+  return normalized.slice(0, max) + "...";
 }
 
 /** Log message display */
@@ -141,8 +205,10 @@ function splitLogsBySource(checkLogs: CheckLog[]) {
 }
 
 function getModelDisplayStatus(model: Model): DisplayStatus {
-  const { detectionLogs } = splitLogsBySource(model.checkLogs);
-  if (detectionLogs.length === 0) {
+  const endpointStatuses = getPreferredEndpointStatuses(model.checkLogs);
+  const latestByEndpoint = Object.values(endpointStatuses);
+
+  if (latestByEndpoint.length === 0) {
     return model.lastStatus === true
       ? "healthy"
       : model.lastStatus === false
@@ -150,16 +216,40 @@ function getModelDisplayStatus(model: Model): DisplayStatus {
         : "unknown";
   }
 
-  const endpointStatuses = getEndpointStatuses(detectionLogs);
-  const latestByEndpoint = Object.values(endpointStatuses);
-
-  if (latestByEndpoint.length === 0) {
-    return "unknown";
-  }
-
   return latestByEndpoint.some((log) => log.status === "SUCCESS")
     ? "healthy"
     : "unhealthy";
+}
+
+function hasActuallyDetectedEndpoint(model: Model, endpointType: string): boolean {
+  const detectedEndpoints = model.detectedEndpoints || [];
+
+  if (isCodexNamedModel(model.modelName) && endpointType === "CODEX") {
+    return detectedEndpoints.includes("CODEX") || detectedEndpoints.includes("CHAT");
+  }
+
+  return detectedEndpoints.includes(endpointType);
+}
+
+function isDisplayEndpointAvailable(model: Model, endpointType: string): boolean {
+  const endpointStatuses = getPreferredEndpointStatuses(model.checkLogs);
+  const log = getDisplayEndpointLog(model.modelName, endpointStatuses, endpointType);
+
+  if (log) {
+    return log.status === "SUCCESS";
+  }
+
+  return hasActuallyDetectedEndpoint(model, endpointType);
+}
+
+function getAvailableDisplayEndpoints(model: Model): string[] {
+  const allEndpoints = getDisplayEndpointsFromLogs(
+    model.modelName,
+    (model.detectedEndpoints || []) as string[],
+    getPreferredEndpointStatuses(model.checkLogs)
+  );
+
+  return allEndpoints.filter((endpoint) => isDisplayEndpointAvailable(model, endpoint));
 }
 
 export function ChannelCard({
@@ -228,7 +318,7 @@ export function ChannelCard({
   // Filter models by endpoint if local filter is active
   const displayedModels = currentFilter
     ? channel.models.filter((m) =>
-        supportsDisplayEndpoint(m.modelName, m.detectedEndpoints || [], currentFilter)
+        isDisplayEndpointAvailable(m, currentFilter)
       )
     : channel.models;
 
@@ -243,7 +333,7 @@ export function ChannelCard({
   // Group models by endpoint type
   const endpointCounts = channel.models.reduce(
     (acc, model) => {
-      const endpoints = getDisplayEndpoints(model.modelName, model.detectedEndpoints || []);
+      const endpoints = getAvailableDisplayEndpoints(model);
       endpoints.forEach((ep) => {
         acc[ep] = (acc[ep] || 0) + 1;
       });
@@ -655,7 +745,12 @@ function getDisplayEndpointsFromLogs(
 
 function getLatestDisplayLog(checkLogs: CheckLog[]): CheckLog | undefined {
   const { detectionLogs, proxyLogs } = splitLogsBySource(checkLogs);
-  return detectionLogs[0] || proxyLogs[0];
+  return proxyLogs[0] || detectionLogs[0];
+}
+
+function getDisplayHistoryLogs(checkLogs: CheckLog[]): CheckLog[] {
+  const { detectionLogs, proxyLogs } = splitLogsBySource(checkLogs);
+  return proxyLogs.length > 0 ? proxyLogs : detectionLogs;
 }
 
 // Endpoint badge component with status
@@ -764,7 +859,7 @@ function ModelItem({
   const isUnknown = displayStatus === "unknown";
 
   const latestLog = getLatestDisplayLog(model.checkLogs);
-  const heatmapLogs = splitLogsBySource(model.checkLogs).detectionLogs;
+  const heatmapLogs = getDisplayHistoryLogs(model.checkLogs);
   const isResettingTemporaryStop = resettingTemporaryStopModelId === model.id;
 
   return (
