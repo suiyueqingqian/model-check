@@ -35,8 +35,10 @@ import {
   extractTextFromGemini,
   extractTextFromResponsesSse,
   isClaudeModelName,
+  isGemmaModelName,
   isGeminiModelName,
   looksLikeSsePayload,
+  sanitizeOpenAiChatBodyForGemma,
 } from "@/lib/proxy/compat";
 import {
   getOpenAIEndpointOrder,
@@ -457,11 +459,15 @@ function buildAttemptList(
   preferredProxyEndpoint: "CHAT" | "CODEX" | null,
   shouldTryResponsesFallback: boolean
 ): ProxyAttempt[] {
+  const normalizedRequestedBody = isGemmaModelName(actualModelName)
+    ? sanitizeOpenAiChatBodyForGemma(requestedBody)
+    : requestedBody;
+
   if (isClaudeModelName(actualModelName)) {
     return [{
       endpointType: "CLAUDE",
       url: `${baseUrl}/v1/messages`,
-      body: buildClaudeBodyFromChatRequest({ ...requestedBody, stream: true }, actualModelName),
+      body: buildClaudeBodyFromChatRequest({ ...normalizedRequestedBody, stream: true }, actualModelName),
       apiType: "anthropic",
     }];
   }
@@ -473,7 +479,7 @@ function buildAttemptList(
     return [{
       endpointType: "GEMINI",
       url: `${geminiBaseUrl}/v1beta/models/${actualModelName}:generateContent`,
-      body: buildGeminiBodyFromChatRequest(requestedBody),
+      body: buildGeminiBodyFromChatRequest(normalizedRequestedBody),
       apiType: "gemini",
     }];
   }
@@ -483,17 +489,17 @@ function buildAttemptList(
       endpointType: "CHAT" as const,
       url: `${baseUrl}/v1/chat/completions`,
       body: {
-        ...requestedBody,
+        ...normalizedRequestedBody,
         model: actualModelName,
         stream: true,
-        messages: normalizeMessagesForGeminiCli(requestedBody.messages),
+        messages: normalizeMessagesForGeminiCli(normalizedRequestedBody.messages),
       },
       apiType: "openai" as const,
     },
     CODEX: {
       endpointType: "CODEX" as const,
       url: `${baseUrl}/v1/responses`,
-      body: buildResponsesFallbackBody(requestedBody, actualModelName),
+      body: buildResponsesFallbackBody(normalizedRequestedBody, actualModelName),
       apiType: "openai" as const,
       extraHeaders: RESPONSES_FALLBACK_HEADERS,
     },

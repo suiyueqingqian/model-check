@@ -72,7 +72,7 @@ export function getEndpointsToTest(modelName: string): EndpointType[] {
   }
 
   if (family === "CLAUDE") {
-    return [EndpointType.CLAUDE];
+    return [EndpointType.CLAUDE, EndpointType.CHAT];
   }
 
   if (family === "GEMINI") {

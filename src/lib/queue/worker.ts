@@ -338,6 +338,15 @@ async function processDetectionJob(
       // Use atomic operations to avoid race conditions when updating detectedEndpoints
       // Multiple detection jobs for the same model can run in parallel
       await prisma.$transaction(async (tx) => {
+        const checkedAt = new Date();
+        const modelCredential = await tx.model.findUnique({
+          where: { id: data.modelId },
+          select: {
+            channelId: true,
+            channelKeyId: true,
+          },
+        });
+
         if (result.status === "SUCCESS") {
           // Atomically add endpoint to array if not already present (PostgreSQL array operation)
           // Use result.endpointType (may differ from job's when CHAT falls back to CODEX)
@@ -350,9 +359,27 @@ async function processDetectionJob(
               END,
               "last_status" = true,
               "last_latency" = ${result.latency},
-              "last_checked_at" = ${new Date()}
+              "last_checked_at" = ${checkedAt}
             WHERE id = ${data.modelId}
           `;
+
+          if (modelCredential?.channelKeyId) {
+            await tx.channelKey.update({
+              where: { id: modelCredential.channelKeyId },
+              data: {
+                lastValid: true,
+                lastCheckedAt: checkedAt,
+              },
+            });
+          } else if (modelCredential) {
+            await tx.channel.update({
+              where: { id: modelCredential.channelId },
+              data: {
+                mainKeyLastValid: true,
+                mainKeyLastCheckedAt: checkedAt,
+              },
+            });
+          }
         } else {
           // Atomically remove endpoint from array (PostgreSQL array_remove)
           await tx.$executeRaw`
@@ -360,7 +387,7 @@ async function processDetectionJob(
             SET "detected_endpoints" = array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}),
               "last_status" = COALESCE(array_length(array_remove(COALESCE("detected_endpoints", ARRAY[]::text[]), ${result.endpointType}), 1), 0) > 0,
               "last_latency" = NULL,
-              "last_checked_at" = ${new Date()}
+              "last_checked_at" = ${checkedAt}
             WHERE id = ${data.modelId}
           `;
         }

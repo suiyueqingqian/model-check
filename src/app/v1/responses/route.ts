@@ -35,8 +35,10 @@ import {
   extractTextFromGemini,
   extractTextFromResponsesSse,
   isClaudeModelName,
+  isGemmaModelName,
   isGeminiModelName,
   looksLikeSsePayload,
+  sanitizeOpenAiResponsesBodyForGemma,
 } from "@/lib/proxy/compat";
 import {
   getOpenAIEndpointOrder,
@@ -476,11 +478,15 @@ function buildAttemptList(
   shouldTryChatFallback: boolean,
   preferChatCompletions: boolean
 ): ProxyAttempt[] {
+  const normalizedRequestedBody = isGemmaModelName(actualModelName)
+    ? sanitizeOpenAiResponsesBodyForGemma(requestedBody)
+    : requestedBody;
+
   if (isClaudeModelName(actualModelName)) {
     return [{
       endpointType: "CLAUDE",
       url: `${baseUrl}/v1/messages`,
-      body: buildClaudeBodyFromResponsesRequest({ ...requestedBody, stream: true }, actualModelName),
+      body: buildClaudeBodyFromResponsesRequest({ ...normalizedRequestedBody, stream: true }, actualModelName),
       apiType: "anthropic",
     }];
   }
@@ -492,7 +498,7 @@ function buildAttemptList(
     return [{
       endpointType: "GEMINI",
       url: `${geminiBaseUrl}/v1beta/models/${actualModelName}:generateContent`,
-      body: buildGeminiBodyFromResponsesRequest(requestedBody),
+      body: buildGeminiBodyFromResponsesRequest(normalizedRequestedBody),
       apiType: "gemini",
     }];
   }
@@ -501,13 +507,13 @@ function buildAttemptList(
     CHAT: {
       endpointType: "CHAT" as const,
       url: `${baseUrl}/v1/chat/completions`,
-      body: buildChatFallbackBody(requestedBody, actualModelName),
+      body: buildChatFallbackBody(normalizedRequestedBody, actualModelName),
       apiType: "openai" as const,
     },
     CODEX: {
       endpointType: "CODEX" as const,
       url: `${baseUrl}/v1/responses`,
-      body: { ...requestedBody, model: actualModelName, stream: true },
+      body: { ...normalizedRequestedBody, model: actualModelName, stream: true },
       apiType: "openai" as const,
       extraHeaders: RESPONSES_HEADERS,
     },

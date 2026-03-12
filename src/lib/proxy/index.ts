@@ -1083,6 +1083,7 @@ type ProxyFailureCategory =
   | "AUTH_INVALID"
   | "CREDENTIAL_EXHAUSTED"
   | "RATE_LIMIT"
+  | "MODEL_CAPABILITY"
   | "MODEL_UNAVAILABLE"
   | "ENDPOINT_UNAVAILABLE"
   | "MODEL_PERMISSION"
@@ -1219,6 +1220,22 @@ function classifyProxyFailure(statusCode?: number, errorMsg?: string): ProxyFail
 
   if (includesAnyPattern(normalizedMessage, rateLimitPatterns)) {
     return "RATE_LIMIT";
+  }
+
+  const capabilityPatterns = [
+    "developer instruction is not enabled",
+    "developer instructions are not enabled",
+    "system instruction is not enabled",
+    "system instructions are not enabled",
+    "instruction is not enabled for models/",
+    "developer instruction is unsupported",
+    "system instruction is unsupported",
+    "unsupported developer instruction",
+    "unsupported system instruction",
+  ];
+
+  if (includesAnyPattern(normalizedMessage, capabilityPatterns)) {
+    return "MODEL_CAPABILITY";
   }
 
   const endpointNotFoundPatterns = [
@@ -1367,6 +1384,10 @@ function isTransientProxyFailure(statusCode?: number, errorMsg?: string): boolea
 
 function isRateLimitProxyFailure(statusCode?: number, errorMsg?: string): boolean {
   return classifyProxyFailure(statusCode, errorMsg) === "RATE_LIMIT";
+}
+
+function isModelCapabilityProxyFailure(statusCode?: number, errorMsg?: string): boolean {
+  return classifyProxyFailure(statusCode, errorMsg) === "MODEL_CAPABILITY";
 }
 
 function shouldUpdateModelAvailability(success: boolean, statusCode?: number, errorMsg?: string): boolean {
@@ -1707,7 +1728,10 @@ export async function recordProxyModelResult(
     shouldTemporaryStop = !success &&
       temporaryStopDurationMs > 0 &&
       !hasAlternateDetectedEndpoints &&
-      isRateLimitProxyFailure(options?.statusCode, options?.errorMsg);
+      (
+        isRateLimitProxyFailure(options?.statusCode, options?.errorMsg) ||
+        isModelCapabilityProxyFailure(options?.statusCode, options?.errorMsg)
+      );
 
     await tx.model.update({
       where: { id: modelId },
@@ -1829,9 +1853,19 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
     where: { AND: whereConditions },
     select: {
       id: true,
+      channelKeyId: true,
       modelName: true,
       channel: {
-        select: { id: true, name: true },
+        select: {
+          id: true,
+          name: true,
+          mainKeyLastValid: true,
+        },
+      },
+      channelKey: {
+        select: {
+          lastValid: true,
+        },
       },
     },
     distinct: ["channelId", "modelName"],
@@ -1850,6 +1884,13 @@ export async function getAllModelsWithChannels(keyResult?: ValidateKeyResult): P
   }>();
 
   for (const m of models) {
+    const credentialAvailable = m.channelKeyId
+      ? m.channelKey?.lastValid !== false
+      : m.channel.mainKeyLastValid !== false;
+    if (!credentialAvailable) {
+      continue;
+    }
+
     const dedupeKey = `${m.channel.id}\u0000${m.modelName}`;
     if (!uniqueModels.has(dedupeKey)) {
       uniqueModels.set(dedupeKey, {
