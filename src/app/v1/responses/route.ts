@@ -482,13 +482,30 @@ function buildAttemptList(
     ? sanitizeOpenAiResponsesBodyForGemma(requestedBody)
     : requestedBody;
 
+  const chatAttempt: ProxyAttempt = {
+    endpointType: "CHAT",
+    url: `${baseUrl}/v1/chat/completions`,
+    body: buildChatFallbackBody(normalizedRequestedBody, actualModelName),
+    apiType: "openai",
+  };
+
   if (isClaudeModelName(actualModelName)) {
-    return [{
-      endpointType: "CLAUDE",
-      url: `${baseUrl}/v1/messages`,
-      body: buildClaudeBodyFromResponsesRequest({ ...normalizedRequestedBody, stream: true }, actualModelName),
-      apiType: "anthropic",
-    }];
+    const attempts: ProxyAttempt[] = [];
+
+    if (detectedEndpoints.length === 0 || detectedEndpoints.includes("CLAUDE")) {
+      attempts.push({
+        endpointType: "CLAUDE",
+        url: `${baseUrl}/v1/messages`,
+        body: buildClaudeBodyFromResponsesRequest({ ...normalizedRequestedBody, stream: true }, actualModelName),
+        apiType: "anthropic",
+      });
+    }
+
+    if (detectedEndpoints.length === 0 || detectedEndpoints.includes("CHAT")) {
+      attempts.push(chatAttempt);
+    }
+
+    return attempts;
   }
 
   if (isGeminiModelName(actualModelName)) {
@@ -504,12 +521,7 @@ function buildAttemptList(
   }
 
   const attempts = {
-    CHAT: {
-      endpointType: "CHAT" as const,
-      url: `${baseUrl}/v1/chat/completions`,
-      body: buildChatFallbackBody(normalizedRequestedBody, actualModelName),
-      apiType: "openai" as const,
-    },
+    CHAT: chatAttempt,
     CODEX: {
       endpointType: "CODEX" as const,
       url: `${baseUrl}/v1/responses`,

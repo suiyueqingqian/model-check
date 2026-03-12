@@ -502,6 +502,16 @@ function supportsPreferredEndpoint(
   }
 
   if (
+    preferredEndpoint === "CLAUDE" &&
+    modelName.toLowerCase().includes("claude")
+  ) {
+    return (
+      detectedEndpoints.includes("CLAUDE") ||
+      detectedEndpoints.includes("CHAT")
+    );
+  }
+
+  if (
     supportsOpenAIEndpointFallback(modelName) &&
     (preferredEndpoint === "CHAT" || preferredEndpoint === "CODEX")
   ) {
