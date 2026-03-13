@@ -1,10 +1,10 @@
 // Channel Import API - Import channels from configuration
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
 import { requireAuth } from "@/lib/middleware/auth";
-import { appendChannelToWebDAV, updateChannelInWebDAV, syncAllChannelsToWebDAV, isWebDAVConfigured } from "@/lib/webdav/sync";
+import { syncAllChannelsToWebDAV, isWebDAVConfigured } from "@/lib/webdav/sync";
 import type { ChannelExportData } from "../export/route";
+import { importSiteBackupData, parseSiteBackupData } from "@/lib/site-backup";
 
 // POST /api/channel/import - Import channels
 export async function POST(request: NextRequest) {
@@ -13,245 +13,32 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { channels, mode = "merge" } = body as {
-      channels?: ChannelExportData["channels"];
+    const { mode = "merge" } = body as {
       mode?: "merge" | "replace";
     };
-
-    // Support both direct channels array and full export format
-    const channelsToImport = channels || (body as ChannelExportData).channels;
-
-    if (!channelsToImport || !Array.isArray(channelsToImport)) {
-      return NextResponse.json(
-        { error: "Invalid import data: channels array required", code: "INVALID_DATA" },
-        { status: 400 }
-      );
-    }
-
-    // Validate channels
-    for (const ch of channelsToImport) {
-      if (!ch.name || !ch.baseUrl || !ch.apiKey) {
-        return NextResponse.json(
-          { error: `Invalid channel data: name, baseUrl, and apiKey are required`, code: "INVALID_DATA" },
-          { status: 400 }
-        );
-      }
-    }
-
-    let imported = 0;
-    let updated = 0;
-    let skipped = 0;
-    let duplicates = 0;
-    const importedChannelIdSet = new Set<string>();
-
-    // Track channels for WebDAV sync
-    const channelsToSync: Array<{
-      name: string;
-      baseUrl: string;
-      apiKey: string;
-      proxy: string | null;
-      enabled: boolean;
-      keyMode?: string;
-      routeStrategy?: string;
-      channelKeys?: { apiKey: string; name: string | null }[];
-      action: "create" | "update";
-    }> = [];
-
-    // If replace mode, collect old channel IDs for deferred cleanup (avoid data loss on failure)
-    const replaceOldIds = mode === "replace"
-      ? new Set((await prisma.channel.findMany({ select: { id: true } })).map(c => c.id))
-      : null;
-
-    // Build set of existing channels by baseUrl+apiKey for duplicate detection
-    const existingChannels = await prisma.channel.findMany({
-      select: { id: true, name: true, baseUrl: true, apiKey: true },
-    });
-    const existingKeySet = new Set(
-      existingChannels.map((ch) => `${ch.baseUrl.replace(/\/$/, "")}|${ch.apiKey}`)
-    );
-    const existingNameMap = new Map(
-      existingChannels.map((ch) => [ch.name, ch])
-    );
-
-    // Also track duplicates within the import data itself
-    const importKeySet = new Set<string>();
-
-    await prisma.$transaction(async (tx) => {
-    for (const ch of channelsToImport) {
-      const normalizedBaseUrl = ch.baseUrl.replace(/\/$/, "");
-      const channelKey = `${normalizedBaseUrl}|${ch.apiKey}`;
-
-      // Check for duplicate within import data
-      if (importKeySet.has(channelKey)) {
-        duplicates++;
-        continue;
-      }
-      importKeySet.add(channelKey);
-
-      // Check for duplicate with existing channels (by baseUrl+apiKey)
-      if (mode !== "replace" && existingKeySet.has(channelKey)) {
-        duplicates++;
-        continue;
-      }
-
-      // Check if channel with same name exists
-      const existing = existingNameMap.get(ch.name);
-
-      if (existing) {
-        if (mode === "merge" || mode === "replace") {
-          // Update existing channel
-          await tx.channel.update({
-            where: { id: existing.id },
-            data: {
-              baseUrl: normalizedBaseUrl,
-              apiKey: ch.apiKey,
-              proxy: ch.proxy || null,
-              enabled: ch.enabled ?? true,
-              keyMode: ch.keyMode || "single",
-              routeStrategy: ch.routeStrategy || "round_robin",
-            },
-          });
-          // Import channel keys if present
-          if (ch.channelKeys && Array.isArray(ch.channelKeys) && ch.channelKeys.length > 0) {
-            await tx.channelKey.deleteMany({ where: { channelId: existing.id } });
-            await tx.channelKey.createMany({
-              data: ch.channelKeys
-                .filter((k: { apiKey?: string }) => k.apiKey?.trim())
-                .map((k: { apiKey: string; name?: string | null }) => ({
-                  channelId: existing.id,
-                  apiKey: k.apiKey.trim(),
-                  name: k.name?.trim() || null,
-                })),
-            });
-          }
-          importedChannelIdSet.add(existing.id);
-          updated++;
-          // Track for WebDAV sync
-          channelsToSync.push({
-            name: existing.name,
-            baseUrl: normalizedBaseUrl,
-            apiKey: ch.apiKey,
-            proxy: ch.proxy || null,
-            enabled: ch.enabled ?? true,
-            keyMode: ch.keyMode || "single",
-            routeStrategy: ch.routeStrategy || "round_robin",
-            channelKeys: ch.channelKeys,
-            action: "update",
-          });
-        } else {
-          skipped++;
-        }
-      } else {
-        // Create new channel
-        const newChannel = await tx.channel.create({
-          data: {
-            name: ch.name,
-            baseUrl: normalizedBaseUrl,
-            apiKey: ch.apiKey,
-            proxy: ch.proxy || null,
-            enabled: ch.enabled ?? true,
-            keyMode: ch.keyMode || "single",
-            routeStrategy: ch.routeStrategy || "round_robin",
-          },
-        });
-        // Import channel keys if present
-        if (ch.channelKeys && Array.isArray(ch.channelKeys) && ch.channelKeys.length > 0) {
-          await tx.channelKey.createMany({
-            data: ch.channelKeys
-              .filter((k: { apiKey?: string }) => k.apiKey?.trim())
-              .map((k: { apiKey: string; name?: string | null }) => ({
-                channelId: newChannel.id,
-                apiKey: k.apiKey.trim(),
-                name: k.name?.trim() || null,
-              })),
-          });
-        }
-        importedChannelIdSet.add(newChannel.id);
-        imported++;
-        existingNameMap.set(newChannel.name, {
-          id: newChannel.id,
-          name: newChannel.name,
-          baseUrl: normalizedBaseUrl,
-          apiKey: ch.apiKey,
-        });
-        // Track for WebDAV sync
-        channelsToSync.push({
-          name: newChannel.name,
-          baseUrl: normalizedBaseUrl,
-          apiKey: ch.apiKey,
-          proxy: ch.proxy || null,
-          enabled: ch.enabled ?? true,
-          keyMode: ch.keyMode || "single",
-          routeStrategy: ch.routeStrategy || "round_robin",
-          channelKeys: ch.channelKeys,
-          action: "create",
-        });
-      }
-    }
-
-    // Replace mode: delete old channels not touched by import
-    if (replaceOldIds && replaceOldIds.size > 0) {
-      const untouchedIds = [...replaceOldIds].filter((id) => !importedChannelIdSet.has(id));
-      if (untouchedIds.length > 0) {
-        await tx.channel.deleteMany({ where: { id: { in: untouchedIds } } });
-      }
-    }
-    });
+    const backupData = await parseSiteBackupData(body as ChannelExportData);
+    const result = await importSiteBackupData(backupData, mode);
 
     // Sync to WebDAV if configured
     const webdavStatus = { synced: false, error: null as string | null };
-    if (isWebDAVConfigured() && channelsToSync.length > 0) {
+    if (isWebDAVConfigured() && result.total > 0) {
       try {
-        if (mode === "replace") {
-          // For replace mode, sync all channels at once
-          const allChannels = await prisma.channel.findMany({
-            select: {
-              name: true,
-              baseUrl: true,
-              apiKey: true,
-              proxy: true,
-              enabled: true,
-              keyMode: true,
-              routeStrategy: true,
-              channelKeys: { select: { apiKey: true, name: true } },
-            },
-          });
-          await syncAllChannelsToWebDAV(allChannels);
-        } else {
-          // For merge mode, sync each channel individually
-          for (const ch of channelsToSync) {
-            if (ch.action === "create") {
-              await appendChannelToWebDAV(ch);
-            } else {
-              await updateChannelInWebDAV(ch);
-            }
-          }
-        }
+        await syncAllChannelsToWebDAV();
         webdavStatus.synced = true;
       } catch (err) {
         webdavStatus.error = err instanceof Error ? err.message : "WebDAV sync failed";
       }
     }
 
-    // 获取导入的渠道名称列表，供前端打开筛选弹窗
-    let importedChannels: { id: string; name: string }[] = [];
-    const importedChannelIds = Array.from(importedChannelIdSet);
-    if (importedChannelIds.length > 0) {
-      importedChannels = await prisma.channel.findMany({
-        where: { id: { in: importedChannelIds } },
-        select: { id: true, name: true },
-      });
-    }
-
     return NextResponse.json({
       success: true,
-      imported,
-      updated,
-      skipped,
-      duplicates,
-      total: channelsToImport.length,
+      imported: result.imported,
+      updated: result.updated,
+      skipped: result.skipped,
+      duplicates: result.duplicates,
+      total: result.total,
       webdav: webdavStatus,
-      importedChannels,
+      importedChannels: result.importedChannels,
     });
   } catch {
     return NextResponse.json(

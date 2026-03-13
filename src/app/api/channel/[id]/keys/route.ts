@@ -63,7 +63,13 @@ export async function POST(
     }
 
     // Verify channel exists
-    const channel = await prisma.channel.findUnique({ where: { id } });
+    const channel = await prisma.channel.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        keyMode: true,
+      },
+    });
     if (!channel) {
       return NextResponse.json(
         { error: "渠道不存在", code: "NOT_FOUND" },
@@ -71,12 +77,23 @@ export async function POST(
       );
     }
 
-    const key = await prisma.channelKey.create({
-      data: {
-        channelId: id,
-        apiKey: apiKey.trim(),
-        name: name?.trim() || null,
-      },
+    const key = await prisma.$transaction(async (tx) => {
+      const createdKey = await tx.channelKey.create({
+        data: {
+          channelId: id,
+          apiKey: apiKey.trim(),
+          name: name?.trim() || null,
+        },
+      });
+
+      if (channel.keyMode !== "multi") {
+        await tx.channel.update({
+          where: { id },
+          data: { keyMode: "multi" },
+        });
+      }
+
+      return createdKey;
     });
 
     return NextResponse.json({
@@ -188,7 +205,20 @@ export async function DELETE(
       );
     }
 
-    await prisma.channelKey.delete({ where: { id: existing.id } });
+    await prisma.$transaction(async (tx) => {
+      await tx.channelKey.delete({ where: { id: existing.id } });
+
+      const remainingKeyCount = await tx.channelKey.count({
+        where: { channelId: id },
+      });
+
+      if (remainingKeyCount === 0) {
+        await tx.channel.update({
+          where: { id },
+          data: { keyMode: "single" },
+        });
+      }
+    });
 
     return NextResponse.json({ success: true });
   } catch {

@@ -1,18 +1,20 @@
 // WebDAV Sync API - Sync channels to/from WebDAV server
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
 import { requireAuth } from "@/lib/middleware/auth";
-import { logError } from "@/lib/utils/error";
 import type { ChannelExportData } from "../export/route";
+import {
+  buildSiteBackupData,
+  importSiteBackupData,
+  mergeSiteBackupData,
+  parseSiteBackupData,
+} from "@/lib/site-backup";
 
 // Environment variables for WebDAV configuration
 const ENV_WEBDAV_URL = process.env.WEBDAV_URL;
 const ENV_WEBDAV_USERNAME = process.env.WEBDAV_USERNAME;
 const ENV_WEBDAV_PASSWORD = process.env.WEBDAV_PASSWORD;
 const ENV_WEBDAV_FILENAME = process.env.WEBDAV_FILENAME;
-const ENV_AUTO_DETECT_ALL_CHANNELS = process.env.AUTO_DETECT_ALL_CHANNELS !== "false";
-
 interface WebDAVConfig {
   url: string;
   username?: string;
@@ -152,57 +154,11 @@ export async function POST(request: NextRequest) {
     const headers = buildWebDAVHeaders(config);
 
     if (action === "upload") {
-      // Export channels and upload to WebDAV
-      const channels = await prisma.channel.findMany({
-        select: {
-          name: true,
-          baseUrl: true,
-          apiKey: true,
-          proxy: true,
-          enabled: true,
-          keyMode: true,
-          routeStrategy: true,
-          channelKeys: {
-            select: { apiKey: true, name: true },
-          },
-        },
-        orderBy: { createdAt: "asc" },
-      });
-
-      // Also export scheduler config and proxy keys
-      const schedulerConfig = await prisma.schedulerConfig.findUnique({
-        where: { id: "default" },
-      });
-
-      const proxyKeys = await prisma.proxyKey.findMany({
-        select: {
-          name: true,
-          enabled: true,
-          allowAllModels: true,
-          allowedChannelIds: true,
-          allowedModelIds: true,
-        },
-      });
-
-      // Build local export data
-      const localChannels = channels.map((ch) => ({
-        name: ch.name,
-        baseUrl: ch.baseUrl.replace(/\/$/, ""),
-        apiKey: ch.apiKey,
-        proxy: ch.proxy,
-        enabled: ch.enabled,
-        keyMode: ch.keyMode,
-        routeStrategy: ch.routeStrategy,
-        ...(ch.channelKeys.length > 0 && {
-          channelKeys: ch.channelKeys.map((k) => ({ apiKey: k.apiKey, name: k.name })),
-        }),
-      }));
-
-      const finalChannels = localChannels;
+      const localBackup = await buildSiteBackupData();
+      let finalBackup = localBackup;
       let merged = 0;
       let replaced = 0;
 
-      // If merge mode, first download existing data and merge
       if (mode === "merge") {
         try {
           const downloadResponse = await fetch(webdavUrl, {
@@ -211,89 +167,23 @@ export async function POST(request: NextRequest) {
           });
 
           if (downloadResponse.ok) {
-            const remoteData = await downloadResponse.json() as {
-              channels?: Array<{
-                name: string;
-                baseUrl: string;
-                apiKey: string;
-                proxy?: string | null;
-                enabled?: boolean;
-                keyMode?: string;
-                routeStrategy?: string;
-                channelKeys?: { apiKey: string; name: string | null }[];
-              }>;
-            };
-
-            if (remoteData.channels && Array.isArray(remoteData.channels)) {
-              // Build set of local channels by baseUrl+apiKey for deduplication
-              const localKeySet = new Set(
-                localChannels.map((ch) => `${ch.baseUrl}|${ch.apiKey}`)
-              );
-
-              // Add remote channels that don't exist locally (by baseUrl+apiKey)
-              for (const remoteCh of remoteData.channels) {
-                if (!remoteCh.name || !remoteCh.baseUrl || !remoteCh.apiKey) {
-                  continue;
-                }
-                const remoteKey = `${remoteCh.baseUrl.replace(/\/$/, "")}|${remoteCh.apiKey}`;
-
-                if (!localKeySet.has(remoteKey)) {
-                  finalChannels.push({
-                    name: remoteCh.name,
-                    baseUrl: remoteCh.baseUrl.replace(/\/$/, ""),
-                    apiKey: remoteCh.apiKey,
-                    proxy: remoteCh.proxy || null,
-                    enabled: remoteCh.enabled ?? true,
-                    keyMode: remoteCh.keyMode || "single",
-                    routeStrategy: remoteCh.routeStrategy || "round_robin",
-                    ...(remoteCh.channelKeys?.length && { channelKeys: remoteCh.channelKeys }),
-                  });
-                  merged++;
-                }
-              }
-            }
+            const remoteBackup = await parseSiteBackupData((await downloadResponse.json()) as ChannelExportData);
+            finalBackup = mergeSiteBackupData(localBackup, remoteBackup);
+            merged = Math.max(0, finalBackup.channels.length - localBackup.channels.length);
           }
-          // If 404 or other error, just upload local data (no remote to merge)
         } catch {
-          // Network error - proceed with local data only
+          finalBackup = localBackup;
         }
       } else {
-        replaced = 1; // Flag that we're replacing
+        replaced = 1;
       }
 
-      const exportData = {
-        version: "2.0",
-        exportedAt: new Date().toISOString(),
-        channels: finalChannels,
-        schedulerConfig: schedulerConfig ? {
-          enabled: schedulerConfig.enabled,
-          cronSchedule: schedulerConfig.cronSchedule,
-          timezone: schedulerConfig.timezone,
-          channelConcurrency: schedulerConfig.channelConcurrency,
-          maxGlobalConcurrency: schedulerConfig.maxGlobalConcurrency,
-          minDelayMs: schedulerConfig.minDelayMs,
-          maxDelayMs: schedulerConfig.maxDelayMs,
-          detectAllChannels: schedulerConfig.detectAllChannels,
-          selectedChannelIds: schedulerConfig.selectedChannelIds,
-          selectedModelIds: schedulerConfig.selectedModelIds,
-        } : undefined,
-        proxyKeys: proxyKeys.map((pk) => ({
-          name: pk.name,
-          enabled: pk.enabled,
-          allowAllModels: pk.allowAllModels,
-          allowedChannelIds: pk.allowedChannelIds,
-          allowedModelIds: pk.allowedModelIds,
-        })),
-      };
-
-      // Ensure parent directories exist before uploading
-      // Pass base URL and filename separately so MKCOL only creates subdirs in filename
       await ensureParentDirectories(finalUrl, finalFilename || "channels.json", headers);
 
       const response = await fetch(webdavUrl, {
         method: "PUT",
         headers,
-        body: JSON.stringify(exportData, null, 2),
+        body: JSON.stringify(finalBackup, null, 2),
       });
 
       if (!response.ok && response.status !== 201 && response.status !== 204) {
@@ -305,14 +195,13 @@ export async function POST(request: NextRequest) {
         success: true,
         action: "upload",
         mode,
-        localCount: localChannels.length,
+        localCount: localBackup.channels.length,
         mergedFromRemote: merged,
-        totalUploaded: finalChannels.length,
+        totalUploaded: finalBackup.channels.length,
         replaced: replaced === 1,
         url: webdavUrl,
       });
     } else if (action === "download") {
-      // Download from WebDAV and import channels
       const response = await fetch(webdavUrl, {
         method: "GET",
         headers,
@@ -328,309 +217,20 @@ export async function POST(request: NextRequest) {
         throw new Error(`WebDAV download failed: ${response.status} ${response.statusText}`);
       }
 
-      const data = (await response.json()) as ChannelExportData & {
-        schedulerConfig?: Record<string, unknown>;
-        proxyKeys?: Array<Record<string, unknown>>;
-      };
-
-      if (!data.channels || !Array.isArray(data.channels)) {
-        return NextResponse.json(
-          { error: "Invalid remote data format", code: "INVALID_DATA" },
-          { status: 400 }
-        );
-      }
-
-      let imported = 0;
-      let updated = 0;
-      let skipped = 0;
-      let duplicates = 0;
-      const importedChannelIds: string[] = [];
-
-      // Validate all channels before any database changes
-      const validChannels: Array<{
-        name: string;
-        baseUrl: string;
-        apiKey: string;
-        proxy?: string | null;
-        enabled?: boolean;
-        keyMode?: string;
-        routeStrategy?: string;
-        channelKeys?: { apiKey: string; name: string | null }[];
-      }> = [];
-
-      for (const ch of data.channels) {
-        if (!ch.name || !ch.baseUrl || !ch.apiKey) {
-          skipped++;
-          continue;
-        }
-        validChannels.push({
-          name: ch.name,
-          baseUrl: ch.baseUrl.replace(/\/$/, ""),
-          apiKey: ch.apiKey,
-          proxy: ch.proxy || null,
-          enabled: ch.enabled ?? true,
-          keyMode: ch.keyMode,
-          routeStrategy: ch.routeStrategy,
-          channelKeys: ch.channelKeys,
-        });
-      }
-
-      // If replace mode, use transaction to ensure atomicity
-      if (mode === "replace") {
-        // Safety check: require at least 1 valid channel before deleting
-        if (validChannels.length === 0) {
-          return NextResponse.json(
-            { error: "Remote data contains no valid channels. Replace cancelled to prevent data loss.", code: "NO_VALID_CHANNELS" },
-            { status: 400 }
-          );
-        }
-
-        // Perform delete and insert in a transaction
-        await prisma.$transaction(async (tx) => {
-          await tx.channel.deleteMany({});
-
-          // Track duplicates within import data
-          const importKeySet = new Set<string>();
-
-          for (const ch of validChannels) {
-            const channelKey = `${ch.baseUrl}|${ch.apiKey}`;
-
-            if (importKeySet.has(channelKey)) {
-              duplicates++;
-              continue;
-            }
-            importKeySet.add(channelKey);
-
-            const newChannel = await tx.channel.create({
-              data: {
-                name: ch.name,
-                baseUrl: ch.baseUrl,
-                apiKey: ch.apiKey,
-                proxy: ch.proxy,
-                enabled: ch.enabled,
-                keyMode: ch.keyMode || "single",
-                routeStrategy: ch.routeStrategy || "round_robin",
-              },
-            });
-            // Restore channel keys if present
-            if (ch.channelKeys && ch.channelKeys.length > 0) {
-              await tx.channelKey.createMany({
-                data: ch.channelKeys
-                  .filter((k) => k.apiKey?.trim())
-                  .map((k) => ({
-                    channelId: newChannel.id,
-                    apiKey: k.apiKey.trim(),
-                    name: k.name?.trim() || null,
-                  })),
-              });
-            }
-            importedChannelIds.push(newChannel.id);
-            imported++;
-          }
-        });
-      } else {
-        // Merge mode - add new channels, update if baseUrl+apiKey already exists
-        // Build set/map of existing channels by baseUrl+apiKey
-        const existingChannels = await prisma.channel.findMany({
-          select: { id: true, name: true, baseUrl: true, apiKey: true },
-        });
-        const existingByKey = new Map<string, (typeof existingChannels)[number]>(
-          existingChannels.map((ch) => [`${ch.baseUrl.replace(/\/$/, "")}|${ch.apiKey}`, ch] as const)
-        );
-        const existingKeySet = new Set(existingByKey.keys());
-        const existingNameSet = new Set(
-          existingChannels.map((ch) => ch.name)
-        );
-
-        // Also track duplicates within the import data itself
-        const importKeySet = new Set<string>();
-        const importNameSet = new Set<string>();
-
-        // Helper function to generate unique name
-        const generateUniqueName = (baseName: string): string => {
-          let name = baseName;
-          let suffix = 1;
-          while (existingNameSet.has(name) || importNameSet.has(name)) {
-            name = `${baseName}-${suffix}`;
-            suffix++;
-          }
-          return name;
-        };
-
-        for (const ch of validChannels) {
-          const channelKey = `${ch.baseUrl}|${ch.apiKey}`;
-
-          // Check for duplicate within import data (by baseUrl+apiKey)
-          if (importKeySet.has(channelKey)) {
-            duplicates++;
-            continue;
-          }
-          importKeySet.add(channelKey);
-
-          // If same baseUrl+apiKey exists locally, update that channel.
-          if (existingKeySet.has(channelKey)) {
-            const existing = existingByKey.get(channelKey);
-            if (!existing) {
-              duplicates++;
-              continue;
-            }
-
-            // 把 update + channelKey 操作放在同一个事务里
-            await prisma.$transaction(async (tx) => {
-              await tx.channel.update({
-                where: { id: existing.id },
-                data: {
-                  baseUrl: ch.baseUrl,
-                  apiKey: ch.apiKey,
-                  proxy: ch.proxy,
-                  enabled: ch.enabled,
-                  keyMode: ch.keyMode || "single",
-                  routeStrategy: ch.routeStrategy || "round_robin",
-                },
-              });
-
-              await tx.channelKey.deleteMany({ where: { channelId: existing.id } });
-              if (ch.channelKeys && ch.channelKeys.length > 0) {
-                await tx.channelKey.createMany({
-                  data: ch.channelKeys
-                    .filter((k) => k.apiKey?.trim())
-                    .map((k) => ({
-                      channelId: existing.id,
-                      apiKey: k.apiKey.trim(),
-                      name: k.name?.trim() || null,
-                    })),
-                });
-              }
-            });
-
-            importedChannelIds.push(existing.id);
-            updated++;
-            continue;
-          }
-
-          // Generate unique name if name already exists
-          // (same name but different apiKey = create new channel with unique name)
-          const finalName = generateUniqueName(ch.name);
-          importNameSet.add(finalName);
-
-          // Always create new channel in merge mode
-          const newChannel = await prisma.channel.create({
-            data: {
-              name: finalName,
-              baseUrl: ch.baseUrl,
-              apiKey: ch.apiKey,
-              proxy: ch.proxy,
-              enabled: ch.enabled,
-              keyMode: ch.keyMode || "single",
-              routeStrategy: ch.routeStrategy || "round_robin",
-            },
-          });
-          // Restore channel keys if present
-          if (ch.channelKeys && ch.channelKeys.length > 0) {
-            await prisma.channelKey.createMany({
-              data: ch.channelKeys
-                .filter((k) => k.apiKey?.trim())
-                .map((k) => ({
-                  channelId: newChannel.id,
-                  apiKey: k.apiKey.trim(),
-                  name: k.name?.trim() || null,
-                })),
-            });
-          }
-          importedChannelIds.push(newChannel.id);
-          imported++;
-        }
-      }
-
-      // 不再自动同步模型，由前端打开模型筛选弹窗让用户选择
-      // 获取导入的渠道名称列表
-      let importedChannels: { id: string; name: string }[] = [];
-      if (importedChannelIds.length > 0) {
-        importedChannels = await prisma.channel.findMany({
-          where: { id: { in: importedChannelIds } },
-          select: { id: true, name: true },
-        });
-      }
-
-      // Import scheduler config if present
-      let schedulerConfigRestored = false;
-      if (data.schedulerConfig) {
-        try {
-          await prisma.schedulerConfig.upsert({
-            where: { id: "default" },
-            update: {
-              enabled: data.schedulerConfig.enabled as boolean ?? true,
-              cronSchedule: data.schedulerConfig.cronSchedule as string ?? "0 0,8,12,16,20 * * *",
-              timezone: data.schedulerConfig.timezone as string ?? "Asia/Shanghai",
-              channelConcurrency: data.schedulerConfig.channelConcurrency as number ?? 5,
-              maxGlobalConcurrency: data.schedulerConfig.maxGlobalConcurrency as number ?? 30,
-              minDelayMs: data.schedulerConfig.minDelayMs as number ?? 3000,
-              maxDelayMs: data.schedulerConfig.maxDelayMs as number ?? 5000,
-              detectAllChannels: data.schedulerConfig.detectAllChannels as boolean ?? ENV_AUTO_DETECT_ALL_CHANNELS,
-              selectedChannelIds: data.schedulerConfig.selectedChannelIds as string[] ?? null,
-              selectedModelIds: data.schedulerConfig.selectedModelIds as Record<string, string[]> ?? null,
-            },
-            create: {
-              id: "default",
-              enabled: data.schedulerConfig.enabled as boolean ?? true,
-              cronSchedule: data.schedulerConfig.cronSchedule as string ?? "0 0,8,12,16,20 * * *",
-              timezone: data.schedulerConfig.timezone as string ?? "Asia/Shanghai",
-              channelConcurrency: data.schedulerConfig.channelConcurrency as number ?? 5,
-              maxGlobalConcurrency: data.schedulerConfig.maxGlobalConcurrency as number ?? 30,
-              minDelayMs: data.schedulerConfig.minDelayMs as number ?? 3000,
-              maxDelayMs: data.schedulerConfig.maxDelayMs as number ?? 5000,
-              detectAllChannels: data.schedulerConfig.detectAllChannels as boolean ?? ENV_AUTO_DETECT_ALL_CHANNELS,
-              selectedChannelIds: data.schedulerConfig.selectedChannelIds as string[] ?? null,
-              selectedModelIds: data.schedulerConfig.selectedModelIds as Record<string, string[]> ?? null,
-            },
-          });
-          schedulerConfigRestored = true;
-        } catch (error) {
-          logError("[WebDAV] 恢复调度配置失败", error);
-        }
-      }
-
-      // Import proxy keys if present (config only, no key values for security)
-      let proxyKeysRestored = 0;
-      if (data.proxyKeys && Array.isArray(data.proxyKeys)) {
-        for (const pk of data.proxyKeys) {
-          try {
-            // Check if key with same name exists
-            const existing = await prisma.proxyKey.findFirst({
-              where: { name: pk.name as string },
-            });
-
-            if (existing) {
-              // Update config (not the key value itself)
-              await prisma.proxyKey.update({
-                where: { id: existing.id },
-                data: {
-                  enabled: pk.enabled as boolean ?? true,
-                  allowAllModels: pk.allowAllModels as boolean ?? true,
-                  allowedChannelIds: pk.allowedChannelIds as string[] ?? null,
-                  allowedModelIds: pk.allowedModelIds as string[] ?? null,
-                },
-              });
-              proxyKeysRestored++;
-            }
-            // Don't create new keys from WebDAV (security: keys should be created locally)
-          } catch (error) {
-            logError(`[WebDAV] 恢复代理 key 配置失败: ${String(pk.name ?? "unknown")}`, error);
-          }
-        }
-      }
+      const data = await parseSiteBackupData((await response.json()) as ChannelExportData);
+      const result = await importSiteBackupData(data, mode);
 
       return NextResponse.json({
         success: true,
         action: "download",
-        imported,
-        updated,
-        skipped,
-        duplicates,
-        total: data.channels.length,
-        importedChannels,
-        schedulerConfigRestored,
-        proxyKeysRestored,
+        imported: result.imported,
+        updated: result.updated,
+        skipped: result.skipped,
+        duplicates: result.duplicates,
+        total: result.total,
+        importedChannels: result.importedChannels,
+        schedulerConfigRestored: data.schedulerConfig !== null,
+        proxyKeysRestored: data.proxyKeys.length,
         remoteVersion: data.version,
         remoteExportedAt: data.exportedAt,
       });

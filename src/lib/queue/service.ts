@@ -3,6 +3,7 @@
 import prisma from "@/lib/prisma";
 import { getEndpointsToTest, fetchModels } from "@/lib/detection";
 import { EndpointType } from "@/generated/prisma";
+import { isMultiKeyChannel } from "@/lib/channel/key-mode";
 import {
   getModelFamily,
   isResponsesCompatibleChatModel,
@@ -384,13 +385,24 @@ export async function syncChannelModels(
 
     const selectedChannel = await prisma.channel.findUnique({
       where: { id: channelId },
-      select: { id: true, keyMode: true },
+      select: {
+        id: true,
+        keyMode: true,
+        channelKeys: {
+          select: { id: true },
+        },
+      },
     });
     if (!selectedChannel) {
       throw new Error(`Channel not found: ${channelId}`);
     }
 
-    if (selectedChannel.keyMode === "multi" && selectedModelPairs && selectedModelPairs.length > 0) {
+    const useMultiKeyMode = isMultiKeyChannel(
+      selectedChannel.keyMode,
+      selectedChannel.channelKeys.length
+    );
+
+    if (useMultiKeyMode && selectedModelPairs && selectedModelPairs.length > 0) {
       const selectedNameSet = new Set(uniqueSelectedModels);
       const targetPairMap = new Map<string, { modelName: string; channelKeyId: string | null }>();
       for (const pair of selectedModelPairs) {
@@ -505,6 +517,7 @@ export async function syncChannelModels(
   if (!channel) {
     throw new Error(`Channel not found: ${channelId}`);
   }
+  const useMultiKeyMode = isMultiKeyChannel(channel.keyMode, channel.channelKeys.length);
 
   // Collect all keys. In multi mode, main key should also participate.
   const rawKeys: { keyId: string | null; apiKey: string }[] = [
@@ -540,7 +553,7 @@ export async function syncChannelModels(
     if (result.status === "fulfilled" && !result.value.error) {
       hasAnySuccess = true;
       for (const modelName of result.value.models) {
-        if (channel.keyMode === "multi") {
+        if (useMultiKeyMode) {
           modelKeyPairs.push({ modelName, keyId: result.value.keyId });
         } else if (!modelKeyMap.has(modelName)) {
           modelKeyMap.set(modelName, result.value.keyId);
@@ -569,7 +582,7 @@ export async function syncChannelModels(
   // Apply keyword filtering (case-insensitive)
   if (keywords.length > 0) {
     const lowerKeywords = keywords.map((k) => k.keyword.toLowerCase());
-    if (channel.keyMode === "multi") {
+    if (useMultiKeyMode) {
       const filteredPairsMap = new Map<string, { modelName: string; keyId: string | null }>();
       for (const entry of modelKeyPairs) {
         const lowerName = entry.modelName.toLowerCase();
@@ -597,7 +610,7 @@ export async function syncChannelModels(
       }
     }
   } else {
-    if (channel.keyMode === "multi") {
+    if (useMultiKeyMode) {
       const dedupPairsMap = new Map<string, { modelName: string; keyId: string | null }>();
       for (const entry of modelKeyPairs) {
         const pairKey = `${entry.modelName}\u0000${entry.keyId ?? "__main__"}`;
@@ -615,7 +628,7 @@ export async function syncChannelModels(
     select: { id: true, modelName: true, channelKeyId: true },
   });
 
-  const targetModels = channel.keyMode === "multi"
+  const targetModels = useMultiKeyMode
     ? modelKeyPairs.map(({ modelName, keyId }) => ({
       modelName,
       channelKeyId: keyId,
